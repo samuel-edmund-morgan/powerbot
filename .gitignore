@@ -70,3 +70,4 @@ htmlcov/
 .coverage.*
 coverage.xml
 *.cover
+.github/
