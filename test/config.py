@@ -12,7 +12,7 @@ load_dotenv(env_path)
 @dataclass
 class Config:
     token: str
-    home_ips: list[str]  # Список IP адрес для моніторингу
+    home_ips: list[str]  # Список IP адрес для моніторингу (DEPRECATED - буде видалено)
     check_interval: int
     fails_to_down: int
     successes_to_up: int
@@ -30,6 +30,10 @@ class Config:
     elevator_phones: str
     # API тривог
     alerts_api_key: str
+    # API сервер для ESP32 сенсорів
+    api_port: int  # Порт для HTTP API сервера
+    sensor_api_key: str  # API ключ для сенсорів
+    sensor_timeout: int  # Таймаут в секундах для визначення відключення
 
 
 def parse_ips(env_value: str) -> list[str]:
@@ -52,7 +56,7 @@ def parse_admin_ids(env_value: str) -> list[int]:
 
 CFG = Config(
     token=os.environ["BOT_TOKEN"],
-    home_ips=parse_ips(os.environ["HOME_IP"]),
+    home_ips=parse_ips(os.getenv("HOME_IP", "")),  # DEPRECATED
     check_interval=int(os.getenv("CHECK_INTERVAL_SEC", "15")),
     fails_to_down=int(os.getenv("FAILS_TO_DECLARE_DOWN", "150")),
     successes_to_up=int(os.getenv("SUCCESSES_TO_DECLARE_UP", "1")),
@@ -68,6 +72,10 @@ CFG = Config(
     electrician_phone=os.getenv("ELECTRICIAN_PHONE", "").strip().strip('"').strip("'"),
     elevator_phones=os.getenv("ELEVATOR_PHONES", "").strip().strip('"').strip("'"),
     alerts_api_key=os.getenv("ALERTS_API_KEY", "").strip().strip('"').strip("'"),
+    # API сервер
+    api_port=int(os.getenv("API_PORT", "8080")),
+    sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),
+    sensor_timeout=int(os.getenv("SENSOR_TIMEOUT_SEC", "150")),
 )
 
 # Шлях до БД відносно робочого каталогу

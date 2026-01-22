@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timedelta
 
 from aiogram import Bot
-from icmplib import ping
 
 from config import CFG
 from database import (
@@ -11,16 +10,111 @@ from database import (
     get_events_since, reset_votes, save_notification, get_active_notifications, 
     delete_notification, clear_all_notifications, get_heating_stats, get_water_stats,
     get_subscribers_for_light_notification, get_subscribers_for_alert_notification,
-    NEWCASTLE_BUILDING_ID
+    NEWCASTLE_BUILDING_ID, get_all_active_sensors, get_building_power_state,
+    set_building_power_state, get_sensors_by_building, get_building_by_id,
+    get_sensors_count_by_building,
 )
 
 
+# ============ Нова система моніторингу через ESP32 сенсори ============
+
+async def check_sensors_timeout() -> dict[int, bool]:
+    """
+    Перевіряє таймаути всіх сенсорів.
+    
+    Повертає словник {building_id: is_up}
+    де is_up = True якщо хоча б один сенсор будинку "живий"
+    """
+    sensors = await get_all_active_sensors()
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    
+    # Групуємо сенсори по будинках
+    buildings_sensors: dict[int, list[dict]] = {}
+    for sensor in sensors:
+        bid = sensor["building_id"]
+        if bid not in buildings_sensors:
+            buildings_sensors[bid] = []
+        buildings_sensors[bid].append(sensor)
+    
+    # Визначаємо стан кожного будинку
+    result = {}
+    for building_id, building_sensors in buildings_sensors.items():
+        # Будинок UP якщо хоча б один сенсор "живий"
+        is_up = False
+        for sensor in building_sensors:
+            if sensor["last_heartbeat"]:
+                time_since_heartbeat = now - sensor["last_heartbeat"]
+                if time_since_heartbeat < timeout:
+                    is_up = True
+                    break
+        result[building_id] = is_up
+    
+    return result
+
+
+async def get_building_sensors_status(building_id: int) -> dict:
+    """
+    Отримати детальний статус сенсорів будинку.
+    
+    Повертає:
+    {
+        "building_id": 1,
+        "building_name": "Ньюкасл",
+        "is_up": True/False,
+        "sensors_total": 3,
+        "sensors_online": 2,
+        "sensors": [
+            {"uuid": "...", "name": "...", "is_online": True, "last_seen": datetime}
+        ]
+    }
+    """
+    building = get_building_by_id(building_id)
+    if not building:
+        return None
+    
+    sensors = await get_sensors_by_building(building_id)
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    
+    sensors_status = []
+    online_count = 0
+    
+    for sensor in sensors:
+        is_online = False
+        if sensor["last_heartbeat"]:
+            time_since = now - sensor["last_heartbeat"]
+            is_online = time_since < timeout
+        
+        if is_online:
+            online_count += 1
+        
+        sensors_status.append({
+            "uuid": sensor["uuid"],
+            "name": sensor["name"],
+            "is_online": is_online,
+            "last_seen": sensor["last_heartbeat"],
+        })
+    
+    return {
+        "building_id": building_id,
+        "building_name": building["name"],
+        "is_up": online_count > 0,
+        "sensors_total": len(sensors),
+        "sensors_online": online_count,
+        "sensors": sensors_status,
+    }
+
+
+# ============ Застарілі функції (для зворотної сумісності) ============
+
 def ping_ip(ip: str) -> bool:
     """
+    DEPRECATED: Використовуйте систему ESP32 сенсорів.
     Один пінг до конкретної IP адреси.
-    Працює без root після налаштування net.ipv4.ping_group_range.
     """
     try:
+        from icmplib import ping
         r = ping(ip, count=1, timeout=CFG.timeout_sec, privileged=False)
         return r.is_alive
     except Exception:
@@ -29,9 +123,11 @@ def ping_ip(ip: str) -> bool:
 
 async def ping_all_ips() -> tuple[int, int]:
     """
+    DEPRECATED: Використовуйте систему ESP32 сенсорів.
     Пінгує всі IP адреси паралельно.
-    Повертає (кількість успішних, загальна кількість).
     """
+    if not CFG.home_ips:
+        return 0, 0
     tasks = [asyncio.to_thread(ping_ip, ip) for ip in CFG.home_ips]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -43,17 +139,18 @@ async def ping_all_ips() -> tuple[int, int]:
 
 async def evaluate_state() -> bool:
     """
+    DEPRECATED: Використовуйте check_sensors_timeout() для нової системи.
     Оцінка поточного стану на основі кількох IP.
-    
-    Логіка:
-    - Пінгуємо всі IP адреси
-    - Якщо відсоток недоступних >= DOWN_THRESHOLD → стан DOWN
-    - Інакше стан UP
-    
-    Для захисту від хибних спрацювань перевіряємо кілька разів.
     """
-    # Швидка перевірка — якщо не досягли мінімальної кількості недоступних IP або
-    # частка нижча за поріг, одразу UP.
+    if not CFG.home_ips:
+        # Якщо IP не налаштовані, використовуємо нову систему сенсорів
+        states = await check_sensors_timeout()
+        # Для сумісності повертаємо стан першого будинку з сенсором
+        if states:
+            return list(states.values())[0]
+        return True  # За замовчуванням світло є
+    
+    # Стара логіка для зворотної сумісності
     for _ in range(CFG.successes_to_up):
         successful, total = await ping_all_ips()
         if total == 0:
@@ -67,7 +164,6 @@ async def evaluate_state() -> bool:
             return True
         await asyncio.sleep(0.15)
 
-    # Детальна перевірка — кілька спроб підряд
     fail_count = 0
     for _ in range(CFG.fails_to_down):
         successful, total = await ping_all_ips()
@@ -481,3 +577,141 @@ async def alert_monitor_loop(bot: Bot):
             logging.exception("alert_monitor_loop error")
         
         await asyncio.sleep(ALERT_CHECK_INTERVAL)
+
+
+async def sensors_monitor_loop(bot: Bot):
+    """
+    Цикл моніторингу ESP32 сенсорів.
+    Перевіряє таймаути heartbeat і надсилає сповіщення при зміні стану будинку.
+    """
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    # Зберігаємо попередні стани будинків
+    previous_states: dict[int, bool] = {}
+    
+    # Ініціалізуємо стани з БД
+    from database import get_all_buildings_power_state
+    initial_states = await get_all_buildings_power_state()
+    for building_id, state in initial_states.items():
+        previous_states[building_id] = state["is_up"]
+    
+    # Інтервал перевірки (секунди)
+    CHECK_INTERVAL = 10
+    
+    while True:
+        try:
+            # Перевіряємо таймаути всіх сенсорів
+            current_states = await check_sensors_timeout()
+            
+            for building_id, is_up in current_states.items():
+                # Отримуємо попередній стан
+                prev_is_up = previous_states.get(building_id)
+                
+                # Якщо стан не змінився - пропускаємо
+                if prev_is_up == is_up:
+                    continue
+                
+                # Оновлюємо стан в БД
+                state_changed = await set_building_power_state(building_id, is_up)
+                if not state_changed and prev_is_up is not None:
+                    continue
+                
+                # Оновлюємо локальний кеш
+                previous_states[building_id] = is_up
+                
+                # Отримуємо інформацію про будинок
+                building = get_building_by_id(building_id)
+                if not building:
+                    continue
+                
+                building_name = building["name"]
+                
+                # Скидаємо голоси за опалення/воду при зміні стану світла
+                await reset_votes(building_id)
+                
+                # Отримуємо тривалість попереднього стану
+                duration_text = ""
+                power_state = await get_building_power_state(building_id)
+                if power_state and power_state["last_change"]:
+                    # Для нового стану - показуємо скільки був попередній
+                    # Але last_change вже оновлено, тому пропускаємо
+                    pass
+                
+                # Записуємо подію в історію
+                event_type = "up" if is_up else "down"
+                await add_event(event_type)
+                
+                logging.info(f"Building {building_name} power state changed to: {'UP' if is_up else 'DOWN'}")
+                
+                # Формуємо текст сповіщення
+                if is_up:
+                    status_emoji = "✅"
+                    status_text = "Є світло!"
+                    advice = (
+                        "💡 Якщо у вашій квартирі відсутнє світло — "
+                        "ймовірно, вибило автомат у вашій квартирі або секції."
+                    )
+                else:
+                    status_emoji = "❌"
+                    status_text = "Немає світла"
+                    advice = (
+                        "💡 Якщо у вас світло досі є — "
+                        "це означає, що відсутня електроенергія в одній із секцій будинку."
+                    )
+                
+                # Інформація про сенсори
+                sensors_count = await get_sensors_count_by_building(building_id)
+                sensors_info = f"\n📡 Дані з {sensors_count} сенсор(ів)" if sensors_count > 1 else ""
+                
+                # Погода
+                from weather import get_weather_line
+                weather_text = await get_weather_line()
+                
+                # Голосування
+                vote_text = "\n\n👇 <b>Допоможи сусідам!</b> Повідом, чи є опалення та вода:"
+                
+                phone = CFG.electrician_phone
+                phone_text = f"\n📞 Черговий електрик: <code>{phone}</code>" if phone else ""
+                
+                text = f"{status_emoji} <b>{building_name}:</b> {status_text}{sensors_info}{weather_text}\n\n{advice}{phone_text}{vote_text}"
+                
+                # Перевіряємо глобальний прапорець сповіщень
+                global_enabled = (await db_get("light_notifications_global")) != "off"
+                if not global_enabled:
+                    logging.info("Light notifications are globally disabled; skipping send")
+                    continue
+                
+                # Клавіатура для голосування
+                vote_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="♨️ Є опалення", callback_data="vote_heating_yes"),
+                        InlineKeyboardButton(text="❄️ Немає", callback_data="vote_heating_no"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="💧 Є вода", callback_data="vote_water_yes"),
+                        InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu"),
+                    ],
+                ])
+                
+                # Очищаємо старі сповіщення
+                await clear_all_notifications()
+                
+                # Надсилаємо підписникам цього будинку
+                current_hour = datetime.now().hour
+                subscribers = await get_subscribers_for_light_notification(current_hour, building_id)
+                
+                for chat_id in subscribers:
+                    try:
+                        msg = await bot.send_message(chat_id, text, reply_markup=vote_keyboard)
+                        await save_notification(chat_id, msg.message_id)
+                    except Exception:
+                        logging.exception("Failed to notify chat_id=%s", chat_id)
+                    await asyncio.sleep(0.04)  # 40ms затримка
+        
+        except Exception:
+            logging.exception("sensors_monitor_loop error")
+        
+        await asyncio.sleep(CHECK_INTERVAL)

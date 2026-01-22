@@ -7,7 +7,7 @@ from aiogram.types import (
     FSInputFile
 )
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import CFG
 from database import (
@@ -24,18 +24,33 @@ async def format_light_status(user_id: int) -> str:
     """
     Форматувати статус світла зі шкалою для будинку користувача.
     Показує стан тільки по будинку на який підписаний користувач.
+    Використовує нову систему ESP32 сенсорів.
     """
     from database import (
         get_subscriber_building, get_building_by_id, 
-        NEWCASTLE_BUILDING_ID, get_last_event
+        NEWCASTLE_BUILDING_ID, get_last_event,
+        get_building_power_state, get_sensors_by_building
     )
     
     user_building_id = await get_subscriber_building(user_id)
     user_building = get_building_by_id(user_building_id) if user_building_id else None
     
-    # Отримуємо поточний стан світла (для Ньюкасла)
-    last_state = await db_get("last_state")
-    is_up = last_state == "up" if last_state else True
+    # Отримуємо поточний стан світла з нової системи сенсорів
+    power_state = await get_building_power_state(user_building_id) if user_building_id else None
+    # power_state: True = світло є, False = світла немає, None = невідомо
+    is_up = power_state if power_state is not None else False
+    
+    # Отримуємо інформацію про сенсори будинку
+    sensors = await get_sensors_by_building(user_building_id) if user_building_id else []
+    sensors_count = len(sensors)
+    
+    # Рахуємо онлайн сенсори
+    sensors_online = 0
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    for s in sensors:
+        if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
+            sensors_online += 1
     
     # Отримуємо час останньої зміни
     last_event = await get_last_event()
@@ -59,23 +74,30 @@ async def format_light_status(user_id: int) -> str:
     display_name = f"{user_building['name']} ({user_building['address']})"
     
     # Показуємо шкалу для будинку користувача
-    if user_building_id == NEWCASTLE_BUILDING_ID:
-        # Ньюкасл - є сенсор
-        percent = 100 if is_up else 0
+    if sensors_count > 0:
+        # Є сенсори - показуємо реальний стан
+        if sensors_online == 0:
+            # Всі сенсори офлайн - світла немає
+            percent = 0
+            status_text = "❌ Світла немає"
+        else:
+            # Є онлайн сенсори
+            percent = 100 if is_up else 0
+            status_text = "✅ Світло є" if is_up else "❌ Світла немає"
+        
         bar_length = 10
         filled = round(percent / 100 * bar_length)
         bar = "🟩" * filled + "🟥" * (bar_length - filled)
-        status_icon = "✅" if is_up else "❌"
         
         lines.append(f"🏠 <b>{display_name}</b>")
         lines.append(f"{bar} <b>{percent}%</b>")
-        lines.append(f"{status_icon} (на основі 1 сенсора)")
+        lines.append(f"{status_text} (сенсорів онлайн: {sensors_online}/{sensors_count})")
     else:
-        # Інші будинки - сенсорів немає
-        bar = "🟥" * 10
+        # Немає сенсорів
+        bar = "⬜" * 10
         lines.append(f"🏠 <b>{display_name}</b>")
-        lines.append(f"{bar} <b>0%</b>")
-        lines.append("⚠️ (сенсорів немає, в розробці)")
+        lines.append(f"{bar}")
+        lines.append("⚠️ Сенсорів немає (в розробці)")
     
     # Додаємо час останньої події
     if last_change_text:
@@ -83,7 +105,7 @@ async def format_light_status(user_id: int) -> str:
     
     # Поради
     phone = CFG.electrician_phone
-    if user_building_id == NEWCASTLE_BUILDING_ID:
+    if sensors_count > 0:
         if is_up:
             lines.append(
                 "\n💡 Якщо у вашій квартирі відсутнє світло — "
@@ -954,6 +976,248 @@ async def cb_quiet_set(callback: CallbackQuery):
 def is_admin(user_id: int) -> bool:
     """Перевірити чи є користувач адміном."""
     return user_id in CFG.admin_ids
+
+
+async def _get_admin_panel_content():
+    """Генерує текст і клавіатуру для адмін-панелі."""
+    from database import db_get, get_all_active_sensors
+    from config import CFG
+    
+    light_notifications = await db_get("light_notifications_global")
+    light_status = "🟢 Увімкнені" if light_notifications != "off" else "🔴 Вимкнені"
+    
+    sensors = await get_all_active_sensors()
+    sensors_count = len(sensors)
+    sensors_online = 0
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    
+    for s in sensors:
+        if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
+            sensors_online += 1
+    
+    text = (
+        "🔧 <b>Адмін-панель</b>\n\n"
+        f"💡 <b>Сповіщення про світло:</b> {light_status}\n"
+        f"📡 <b>Сенсори:</b> {sensors_online}/{sensors_count} онлайн\n\n"
+        "📋 <b>Команди керування:</b>\n\n"
+        "<b>Сповіщення:</b>\n"
+        "• /light_notify on|off — увімкнути/вимкнути сповіщення про світло\n\n"
+        "<b>Розсилка:</b>\n"
+        "• /broadcast [текст] — надіслати повідомлення всім\n\n"
+        "<b>Статистика:</b>\n"
+        "• /subscribers — кількість підписників\n"
+        "• /sensors — статус ESP32 сенсорів\n\n"
+        "<b>Контент:</b>\n"
+        "• /add_general_service [назва] — додати категорію\n"
+        "  <i>Приклад:</i> <code>/add_general_service Кав'ярні</code>\n"
+        "• /add_place — додати заклад (інтерактивно)\n"
+        "  <i>Приклад:</i> <code>/add_place</code> → обрати категорію → ввести назву, адресу, опис\n"
+        "• /list_places — список всіх закладів\n"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔴 Вимкнути сповіщення" if light_notifications != "off" else "🟢 Увімкнути сповіщення",
+                callback_data="admin_toggle_light_notify"
+            )
+        ],
+        [
+            InlineKeyboardButton(text="📡 Статус сенсорів", callback_data="admin_sensors_status"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Статистика підписників", callback_data="admin_subscribers_stats"),
+        ],
+        [
+            InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu"),
+        ],
+    ])
+    
+    return text, keyboard
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """
+    Адмін-панель з усіма командами керування.
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Ця команда доступна тільки адміністраторам.")
+        return
+    
+    text, keyboard = await _get_admin_panel_content()
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "admin_toggle_light_notify")
+async def cb_admin_toggle_light_notify(callback: CallbackQuery):
+    """Перемикання глобальних сповіщень про світло."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Тільки для адмінів", show_alert=True)
+        return
+    
+    from database import db_get, db_set
+    
+    current = await db_get("light_notifications_global")
+    if current == "off":
+        await db_set("light_notifications_global", "on")
+        await callback.answer("✅ Сповіщення увімкнено")
+    else:
+        await db_set("light_notifications_global", "off")
+        await callback.answer("✅ Сповіщення вимкнено")
+    
+    # Оновлюємо панель
+    text, keyboard = await _get_admin_panel_content()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "admin_sensors_status")
+async def cb_admin_sensors_status(callback: CallbackQuery):
+    """Показати статус всіх сенсорів."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Тільки для адмінів", show_alert=True)
+        return
+    
+    from database import get_all_active_sensors, get_building_by_id
+    from config import CFG
+    
+    sensors = await get_all_active_sensors()
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    
+    if not sensors:
+        text = "📡 <b>Сенсори</b>\n\nНемає зареєстрованих сенсорів."
+    else:
+        text = "📡 <b>Статус сенсорів</b>\n\n"
+        for sensor in sensors:
+            building = get_building_by_id(sensor["building_id"])
+            building_name = building["name"] if building else f"ID:{sensor['building_id']}"
+            
+            if sensor["last_heartbeat"]:
+                time_ago = now - sensor["last_heartbeat"]
+                is_online = time_ago < timeout
+                status = "🟢" if is_online else "🔴"
+                
+                # Форматуємо час
+                if time_ago.total_seconds() < 60:
+                    time_str = f"{int(time_ago.total_seconds())} сек тому"
+                elif time_ago.total_seconds() < 3600:
+                    time_str = f"{int(time_ago.total_seconds() // 60)} хв тому"
+                else:
+                    time_str = f"{int(time_ago.total_seconds() // 3600)} год тому"
+            else:
+                status = "⚪"
+                time_str = "ніколи"
+            
+            sensor_name = sensor["name"] or sensor["uuid"][:12]
+            text += f"{status} <b>{building_name}</b>: {sensor_name}\n"
+            text += f"    Останній heartbeat: {time_str}\n\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_subscribers_stats")
+async def cb_admin_subscribers_stats(callback: CallbackQuery):
+    """Показати статистику підписників по будинках."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Тільки для адмінів", show_alert=True)
+        return
+    
+    from database import count_subscribers, get_subscribers_by_building, get_building_by_id
+    
+    total = await count_subscribers()
+    
+    text = f"📊 <b>Статистика підписників</b>\n\n"
+    text += f"<b>Всього:</b> {total}\n\n"
+    text += "<b>По будинках:</b>\n"
+    
+    building_stats = await get_subscribers_by_building()
+    for building_id, count in sorted(building_stats.items(), key=lambda x: -x[1]):
+        if building_id is None:
+            continue
+        building = get_building_by_id(building_id)
+        if building:
+            text += f"• {building['name']}: {count}\n"
+    
+    # Без будинку
+    no_building = building_stats.get(None, 0)
+    if no_building:
+        text += f"• Без будинку: {no_building}\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_back")
+async def cb_admin_back(callback: CallbackQuery):
+    """Повернутися до адмін-панелі."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Тільки для адмінів", show_alert=True)
+        return
+    
+    text, keyboard = await _get_admin_panel_content()
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.message(Command("sensors"))
+async def cmd_sensors(message: Message):
+    """Показати статус сенсорів (для адмінів)."""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Ця команда доступна тільки адміністраторам.")
+        return
+    
+    from database import get_all_active_sensors, get_building_by_id
+    from config import CFG
+    
+    sensors = await get_all_active_sensors()
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    
+    if not sensors:
+        await message.answer("📡 <b>Сенсори</b>\n\nНемає зареєстрованих сенсорів.")
+        return
+    
+    text = "📡 <b>Статус ESP32 сенсорів</b>\n\n"
+    for sensor in sensors:
+        building = get_building_by_id(sensor["building_id"])
+        building_name = building["name"] if building else f"ID:{sensor['building_id']}"
+        
+        if sensor["last_heartbeat"]:
+            time_ago = now - sensor["last_heartbeat"]
+            is_online = time_ago < timeout
+            status = "🟢 онлайн" if is_online else "🔴 офлайн"
+            
+            if time_ago.total_seconds() < 60:
+                time_str = f"{int(time_ago.total_seconds())} сек тому"
+            elif time_ago.total_seconds() < 3600:
+                time_str = f"{int(time_ago.total_seconds() // 60)} хв тому"
+            else:
+                time_str = sensor["last_heartbeat"].strftime("%d.%m %H:%M")
+        else:
+            status = "⚪ невідомо"
+            time_str = "ніколи"
+        
+        sensor_name = sensor["name"] or sensor["uuid"]
+        text += f"<b>{building_name}</b>\n"
+        text += f"  UUID: <code>{sensor['uuid']}</code>\n"
+        text += f"  Статус: {status}\n"
+        text += f"  Heartbeat: {time_str}\n\n"
+    
+    await message.answer(text)
 
 
 @router.message(Command("broadcast"))
