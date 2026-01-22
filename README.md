@@ -57,7 +57,7 @@ sudo su - powerbot
 
 # Клонуйте репозиторій
 cd /home/powerbot
-git clone https://github.com/YOUR_USERNAME/powerbot.git
+git clone https://github.com/samuel-edmund-morgan/powerbot.git
 cd powerbot
 ```
 
@@ -165,7 +165,7 @@ PLUMBER_PHONE="+380XXXXXXXXX"
 ELECTRICIAN_PHONE="+380XXXXXXXXX"
 ELEVATOR_PHONES="+380XXXXXXXXX"
 
-# API ключ для тривог (https://alerts.in.ua)
+# API ключ для тривог (https://api.ukrainealarm.com)
 ALERTS_API_KEY="your_alerts_api_key_here"
 ```
 
