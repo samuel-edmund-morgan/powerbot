@@ -232,6 +232,29 @@ async def init_db():
         except Exception:
             pass
         
+        # === НОВА ТАБЛИЦЯ: Сенсори ESP32 ===
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS sensors (
+                uuid TEXT PRIMARY KEY,
+                building_id INTEGER NOT NULL,
+                name TEXT,
+                last_heartbeat TEXT,
+                created_at TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                FOREIGN KEY (building_id) REFERENCES buildings(id)
+            )"""
+        )
+        
+        # Таблиця для стану будинків (світло є/немає)
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS building_power_state (
+                building_id INTEGER PRIMARY KEY,
+                is_up INTEGER DEFAULT 1,
+                last_change TEXT,
+                FOREIGN KEY (building_id) REFERENCES buildings(id)
+            )"""
+        )
+        
         await db.commit()
 
     # Після міграцій перебудовуємо keywords для всіх закладів
@@ -341,15 +364,27 @@ async def get_all_buildings() -> list[dict]:
             ]
 
 
-async def get_subscribers_by_building(building_id: int) -> list[int]:
-    """Отримати список chat_id підписників конкретного будинку."""
+async def get_subscribers_by_building(building_id: int = None) -> list[int] | dict[int, int]:
+    """
+    Отримати підписників.
+    Якщо building_id вказано - повертає list[chat_id] для цього будинку.
+    Якщо building_id=None - повертає dict{building_id: count} статистику по всіх будинках.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT chat_id FROM subscribers WHERE building_id = ?",
-            (building_id,)
-        ) as cur:
-            rows = await cur.fetchall()
-            return [r[0] for r in rows]
+        if building_id is not None:
+            async with db.execute(
+                "SELECT chat_id FROM subscribers WHERE building_id = ?",
+                (building_id,)
+            ) as cur:
+                rows = await cur.fetchall()
+                return [r[0] for r in rows]
+        else:
+            # Статистика по будинках
+            async with db.execute(
+                "SELECT building_id, COUNT(*) FROM subscribers GROUP BY building_id"
+            ) as cur:
+                rows = await cur.fetchall()
+                return {r[0]: r[1] for r in rows}
 
 
 async def remove_subscriber(chat_id: int):
@@ -389,6 +424,14 @@ async def list_subscribers() -> list[int]:
         async with db.execute("SELECT chat_id FROM subscribers") as cur:
             rows = await cur.fetchall()
             return [r[0] for r in rows]
+
+
+async def count_subscribers() -> int:
+    """Підрахувати кількість підписників."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM subscribers") as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
 
 
 # ============ Тихі години ============
@@ -1127,3 +1170,202 @@ async def delete_last_bot_message_record(chat_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM last_bot_message WHERE chat_id=?", (chat_id,))
         await db.commit()
+
+
+# ============ Сенсори ESP32 ============
+
+async def register_sensor(uuid: str, building_id: int, name: str | None = None) -> bool:
+    """
+    Реєстрація нового сенсора або оновлення існуючого.
+    Повертає True якщо сенсор новий, False якщо оновлений.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.now().isoformat()
+        
+        # Перевіряємо чи сенсор вже існує
+        async with db.execute("SELECT uuid FROM sensors WHERE uuid=?", (uuid,)) as cur:
+            exists = await cur.fetchone()
+        
+        if exists:
+            # Оновлюємо існуючий сенсор
+            await db.execute(
+                "UPDATE sensors SET building_id=?, name=?, is_active=1 WHERE uuid=?",
+                (building_id, name, uuid)
+            )
+            await db.commit()
+            return False
+        else:
+            # Створюємо новий сенсор
+            await db.execute(
+                "INSERT INTO sensors(uuid, building_id, name, created_at, is_active) VALUES(?, ?, ?, ?, 1)",
+                (uuid, building_id, name, now)
+            )
+            await db.commit()
+            return True
+
+
+async def update_sensor_heartbeat(uuid: str) -> bool:
+    """
+    Оновити час останнього heartbeat сенсора.
+    Повертає True якщо сенсор знайдено, False якщо ні.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.now().isoformat()
+        cursor = await db.execute(
+            "UPDATE sensors SET last_heartbeat=? WHERE uuid=? AND is_active=1",
+            (now, uuid)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_sensor_by_uuid(uuid: str) -> dict | None:
+    """Отримати сенсор за UUID."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT uuid, building_id, name, last_heartbeat, created_at, is_active FROM sensors WHERE uuid=?",
+            (uuid,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return {
+                    "uuid": row["uuid"],
+                    "building_id": row["building_id"],
+                    "name": row["name"],
+                    "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
+                    "created_at": datetime.fromisoformat(row["created_at"]),
+                    "is_active": bool(row["is_active"]),
+                }
+            return None
+
+
+async def get_sensors_by_building(building_id: int) -> list[dict]:
+    """Отримати всі активні сенсори будинку."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT uuid, building_id, name, last_heartbeat, created_at FROM sensors WHERE building_id=? AND is_active=1",
+            (building_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "uuid": row["uuid"],
+                    "building_id": row["building_id"],
+                    "name": row["name"],
+                    "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
+                    "created_at": datetime.fromisoformat(row["created_at"]),
+                }
+                for row in rows
+            ]
+
+
+async def get_all_active_sensors() -> list[dict]:
+    """Отримати всі активні сенсори."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT uuid, building_id, name, last_heartbeat, created_at FROM sensors WHERE is_active=1"
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "uuid": row["uuid"],
+                    "building_id": row["building_id"],
+                    "name": row["name"],
+                    "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
+                    "created_at": datetime.fromisoformat(row["created_at"]),
+                }
+                for row in rows
+            ]
+
+
+async def deactivate_sensor(uuid: str):
+    """Деактивувати сенсор."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE sensors SET is_active=0 WHERE uuid=?", (uuid,))
+        await db.commit()
+
+
+async def get_sensors_count_by_building(building_id: int) -> int:
+    """Отримати кількість активних сенсорів будинку."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM sensors WHERE building_id=? AND is_active=1",
+            (building_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+
+# ============ Стан електропостачання будинків ============
+
+async def get_building_power_state(building_id: int) -> dict | None:
+    """Отримати стан електропостачання будинку."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT building_id, is_up, last_change FROM building_power_state WHERE building_id=?",
+            (building_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return {
+                    "building_id": row["building_id"],
+                    "is_up": bool(row["is_up"]),
+                    "last_change": datetime.fromisoformat(row["last_change"]) if row["last_change"] else None,
+                }
+            return None
+
+
+async def set_building_power_state(building_id: int, is_up: bool) -> bool:
+    """
+    Встановити стан електропостачання будинку.
+    Повертає True якщо стан змінився, False якщо залишився тим самим.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.now().isoformat()
+        
+        # Отримуємо поточний стан
+        async with db.execute(
+            "SELECT is_up FROM building_power_state WHERE building_id=?",
+            (building_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        
+        if row is None:
+            # Створюємо новий запис
+            await db.execute(
+                "INSERT INTO building_power_state(building_id, is_up, last_change) VALUES(?, ?, ?)",
+                (building_id, 1 if is_up else 0, now)
+            )
+            await db.commit()
+            return True
+        
+        current_is_up = bool(row[0])
+        if current_is_up == is_up:
+            return False  # Стан не змінився
+        
+        # Оновлюємо стан
+        await db.execute(
+            "UPDATE building_power_state SET is_up=?, last_change=? WHERE building_id=?",
+            (1 if is_up else 0, now, building_id)
+        )
+        await db.commit()
+        return True
+
+
+async def get_all_buildings_power_state() -> dict[int, dict]:
+    """Отримати стан електропостачання всіх будинків."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT building_id, is_up, last_change FROM building_power_state") as cur:
+            rows = await cur.fetchall()
+            return {
+                row["building_id"]: {
+                    "is_up": bool(row["is_up"]),
+                    "last_change": datetime.fromisoformat(row["last_change"]) if row["last_change"] else None,
+                }
+                for row in rows
+            }
