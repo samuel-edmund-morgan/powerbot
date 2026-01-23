@@ -611,6 +611,10 @@ async def sensors_monitor_loop(bot: Bot):
                 if prev_is_up == is_up:
                     continue
                 
+                # Отримуємо попередній стан та час ПЕРЕД оновленням
+                old_power_state = await get_building_power_state(building_id)
+                old_last_change = old_power_state["last_change"] if old_power_state else None
+                
                 # Оновлюємо стан в БД
                 state_changed = await set_building_power_state(building_id, is_up)
                 if not state_changed and prev_is_up is not None:
@@ -629,13 +633,18 @@ async def sensors_monitor_loop(bot: Bot):
                 # Скидаємо голоси за опалення/воду при зміні стану світла
                 await reset_votes(building_id)
                 
-                # Отримуємо тривалість попереднього стану
+                # Обчислюємо тривалість попереднього стану
                 duration_text = ""
-                power_state = await get_building_power_state(building_id)
-                if power_state and power_state["last_change"]:
-                    # Для нового стану - показуємо скільки був попередній
-                    # Але last_change вже оновлено, тому пропускаємо
-                    pass
+                now = datetime.now()
+                if old_last_change:
+                    duration_seconds = (now - old_last_change).total_seconds()
+                    duration_formatted = format_duration(duration_seconds)
+                    if is_up:
+                        # Зараз увімкнули = до цього було без світла
+                        duration_text = f"⏱ Було без світла: {duration_formatted}"
+                    else:
+                        # Зараз вимкнули = до цього було світло
+                        duration_text = f"⏱ Було зі світлом: {duration_formatted}"
                 
                 # Записуємо подію в історію
                 event_type = "up" if is_up else "down"
@@ -659,9 +668,19 @@ async def sensors_monitor_loop(bot: Bot):
                         "це означає, що відсутня електроенергія в одній із секцій будинку."
                     )
                 
-                # Інформація про сенсори
-                sensors_count = await get_sensors_count_by_building(building_id)
-                sensors_info = f"\n📡 Дані з {sensors_count} сенсор(ів)" if sensors_count > 1 else ""
+                # Інформація про час зміни стану
+                time_str = now.strftime("%H:%M")
+                time_info = f"\n🕐 Час: {time_str}"
+                
+                # Додаємо тривалість попереднього стану
+                if duration_text:
+                    time_info += f"\n{duration_text}"
+                
+                # Статистика за сьогодні
+                stats = await calculate_stats(period_days=1)
+                today_uptime = format_duration(stats['total_uptime'])
+                today_downtime = format_duration(stats['total_downtime'])
+                stats_info = f"\n📊 Сьогодні: ✅ {today_uptime} | ❌ {today_downtime}"
                 
                 # Погода
                 from weather import get_weather_line
@@ -673,7 +692,7 @@ async def sensors_monitor_loop(bot: Bot):
                 phone = CFG.electrician_phone
                 phone_text = f"\n📞 Черговий електрик: <code>{phone}</code>" if phone else ""
                 
-                text = f"{status_emoji} <b>{building_name}:</b> {status_text}{sensors_info}{weather_text}\n\n{advice}{phone_text}{vote_text}"
+                text = f"{status_emoji} <b>{building_name}:</b> {status_text}{time_info}{stats_info}{weather_text}\n\n{advice}{phone_text}{vote_text}"
                 
                 # Перевіряємо глобальний прапорець сповіщень
                 global_enabled = (await db_get("light_notifications_global")) != "off"
