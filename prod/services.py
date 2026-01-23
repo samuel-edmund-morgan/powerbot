@@ -360,9 +360,10 @@ async def alert_monitor_loop(bot: Bot):
     last_alert_state = None if last is None else (last == "active")
     
     # Інтервал перевірки тривог (секунди)
-    # alerts.in.ua оновлюється кожні 15 сек, тому 30 сек оптимально
-    # ukrainealarm має rate limit, тому використовуємо його рідше (див. alerts.py)
-    ALERT_CHECK_INTERVAL = 30
+    # alerts.in.ua: soft limit 8-10 req/min, hard limit 12 req/min
+    # 2 боти на одній IP = max 6 req/min на бота
+    # 15 сек × 75% alerts.in.ua = ~3 req/min на бота (разом ~6, в межах soft limit)
+    ALERT_CHECK_INTERVAL = 15
     
     while True:
         try:
