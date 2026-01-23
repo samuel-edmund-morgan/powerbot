@@ -29,7 +29,7 @@
 #define BUILDING_ID     1
 
 // Унікальний ідентифікатор сенсора
-#define SENSOR_UUID     "esp32-newcastle-001"
+#define SENSOR_UUID     "esp32-newcastle-002"
 
 // Назва будинку (для логів)
 #define BUILDING_NAME   "Newcastle"
@@ -39,7 +39,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 // Інтервал відправки heartbeat (60 секунд)
-#define HEARTBEAT_INTERVAL_MS   60000
+#define HEARTBEAT_INTERVAL_MS   10000
 
 // Таймаут HTTP запиту (10 секунд)
 #define HTTP_TIMEOUT_MS         10000
