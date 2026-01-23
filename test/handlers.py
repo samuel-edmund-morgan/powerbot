@@ -6,6 +6,8 @@ from aiogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     FSInputFile
 )
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 import os
 from datetime import datetime, timedelta
 
@@ -18,6 +20,16 @@ from database import (
 from services import state_text, calculate_stats, format_duration
 
 router = Router()
+
+
+# ============ FSM States для інтерактивного додавання закладу ============
+
+class AddPlaceStates(StatesGroup):
+    waiting_for_category = State()
+    waiting_for_name = State()
+    waiting_for_description = State()
+    waiting_for_address = State()
+    waiting_for_keywords = State()
 
 
 async def format_light_status(user_id: int) -> str:
@@ -1046,7 +1058,6 @@ async def _get_admin_panel_content():
         "• /add_general_service [назва] — додати категорію\n"
         "  <i>Приклад:</i> <code>/add_general_service Кав'ярні</code>\n"
         "• /add_place — додати заклад (інтерактивно)\n"
-        "  <i>Приклад:</i> <code>/add_place</code> → обрати категорію → ввести назву, адресу, опис\n"
         "• /list_places — список всіх закладів\n"
     )
     
@@ -2046,55 +2057,220 @@ async def cmd_show_general_services(message: Message):
 
 
 @router.message(Command("add_place"))
-async def cmd_add_place(message: Message):
-    """Додати заклад."""
+async def cmd_add_place(message: Message, state: FSMContext):
+    """Інтерактивне додавання закладу."""
     if not is_admin(message.from_user.id):
         await message.answer("❌ Ця команда доступна тільки адміністраторам.")
         return
     
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer(
-            "❌ Невірний формат.\n\n"
-            "Використання: <code>/add_place ІД_категорії;Назва;Опис;Адреса;Ключові слова</code>\n"
-            "Приклад: <code>/add_place 1;Кав'ярня \"Світанок\";Смачна кава;вул. Центральна, 1;кава,сирники,сніданок</code>\n\n"
-            "⚠️ Ключові слова — необов'язковий параметр"
-        )
+    from database import get_all_general_services
+    
+    services = await get_all_general_services()
+    
+    if not services:
+        await message.answer("❌ Спочатку додайте категорії через /add_general_service")
         return
     
-    parts = args[1].split(";")
-    if len(parts) < 4:
-        await message.answer(
-            "❌ Потрібно мінімум 4 параметри розділені крапкою з комою (;):\n"
-            "<code>ІД_категорії;Назва;Опис;Адреса</code>\n"
-            "Або 5 з ключовими словами:\n"
-            "<code>ІД_категорії;Назва;Опис;Адреса;ключові,слова</code>"
-        )
+    # Створюємо кнопки для вибору категорії
+    buttons = []
+    for s in services:
+        buttons.append([InlineKeyboardButton(
+            text=s["name"],
+            callback_data=f"addplace_cat_{s['id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="addplace_cancel")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await message.answer(
+        "🏢 <b>Додавання закладу</b>\n\n"
+        "<b>Крок 1/5:</b> Оберіть категорію:",
+        reply_markup=keyboard
+    )
+    await state.set_state(AddPlaceStates.waiting_for_category)
+
+
+@router.callback_query(F.data.startswith("addplace_cat_"))
+async def process_category_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору категорії."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Тільки для адміністраторів", show_alert=True)
         return
     
-    try:
-        service_id = int(parts[0].strip())
-    except ValueError:
-        await message.answer("❌ ІД категорії має бути числом.")
+    service_id = int(callback.data.split("_")[2])
+    
+    from database import get_general_service
+    service = await get_general_service(service_id)
+    
+    if not service:
+        await callback.answer("❌ Категорію не знайдено", show_alert=True)
         return
     
-    name = parts[1].strip()
-    description = parts[2].strip()
-    address = parts[3].strip()
-    keywords = parts[4].strip() if len(parts) > 4 else None
+    await state.update_data(service_id=service_id, service_name=service["name"])
     
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="addplace_cancel")]
+    ])
+    
+    await callback.message.edit_text(
+        f"🏢 <b>Додавання закладу</b>\n\n"
+        f"✅ Категорія: <b>{service['name']}</b>\n\n"
+        f"<b>Крок 2/5:</b> Введіть назву закладу:",
+        reply_markup=cancel_kb
+    )
+    await state.set_state(AddPlaceStates.waiting_for_name)
+    await callback.answer()
+
+
+@router.message(AddPlaceStates.waiting_for_name)
+async def process_place_name(message: Message, state: FSMContext):
+    """Обробка введення назви."""
+    if not is_admin(message.from_user.id):
+        return
+    
+    name = message.text.strip()
+    if len(name) < 2:
+        await message.answer("❌ Назва занадто коротка. Введіть знову:")
+        return
+    
+    await state.update_data(name=name)
+    data = await state.get_data()
+    
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="addplace_cancel")]
+    ])
+    
+    await message.answer(
+        f"🏢 <b>Додавання закладу</b>\n\n"
+        f"✅ Категорія: <b>{data['service_name']}</b>\n"
+        f"✅ Назва: <b>{name}</b>\n\n"
+        f"<b>Крок 3/5:</b> Введіть опис закладу:",
+        reply_markup=cancel_kb
+    )
+    await state.set_state(AddPlaceStates.waiting_for_description)
+
+
+@router.message(AddPlaceStates.waiting_for_description)
+async def process_place_description(message: Message, state: FSMContext):
+    """Обробка введення опису."""
+    if not is_admin(message.from_user.id):
+        return
+    
+    description = message.text.strip()
+    await state.update_data(description=description)
+    data = await state.get_data()
+    
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="addplace_cancel")]
+    ])
+    
+    await message.answer(
+        f"🏢 <b>Додавання закладу</b>\n\n"
+        f"✅ Категорія: <b>{data['service_name']}</b>\n"
+        f"✅ Назва: <b>{data['name']}</b>\n"
+        f"✅ Опис: {description[:50]}{'...' if len(description) > 50 else ''}\n\n"
+        f"<b>Крок 4/5:</b> Введіть адресу:\n"
+        f"<i>Формат: Брістоль (24-б), зі сторони Бермінгема</i>",
+        reply_markup=cancel_kb
+    )
+    await state.set_state(AddPlaceStates.waiting_for_address)
+
+
+@router.message(AddPlaceStates.waiting_for_address)
+async def process_place_address(message: Message, state: FSMContext):
+    """Обробка введення адреси."""
+    if not is_admin(message.from_user.id):
+        return
+    
+    address = message.text.strip()
+    await state.update_data(address=address)
+    data = await state.get_data()
+    
+    skip_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустити", callback_data="addplace_skip_keywords")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="addplace_cancel")]
+    ])
+    
+    await message.answer(
+        f"🏢 <b>Додавання закладу</b>\n\n"
+        f"✅ Категорія: <b>{data['service_name']}</b>\n"
+        f"✅ Назва: <b>{data['name']}</b>\n"
+        f"✅ Опис: {data['description'][:50]}{'...' if len(data['description']) > 50 else ''}\n"
+        f"✅ Адреса: {address}\n\n"
+        f"<b>Крок 5/5:</b> Введіть ключові слова (через кому):\n"
+        f"<i>Приклад: кава,сирники,сніданок,wifi</i>\n\n"
+        f"Або натисніть \"Пропустити\" щоб залишити порожнім.",
+        reply_markup=skip_kb
+    )
+    await state.set_state(AddPlaceStates.waiting_for_keywords)
+
+
+@router.message(AddPlaceStates.waiting_for_keywords)
+async def process_place_keywords(message: Message, state: FSMContext):
+    """Обробка введення ключових слів."""
+    if not is_admin(message.from_user.id):
+        return
+    
+    keywords = message.text.strip()
+    await state.update_data(keywords=keywords)
+    
+    # Зберігаємо заклад
+    await save_new_place(message, state)
+
+
+@router.callback_query(F.data == "addplace_skip_keywords")
+async def skip_keywords(callback: CallbackQuery, state: FSMContext):
+    """Пропустити ключові слова."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Тільки для адміністраторів", show_alert=True)
+        return
+    
+    await state.update_data(keywords=None)
+    await callback.answer()
+    
+    # Зберігаємо заклад
+    await save_new_place(callback.message, state, edit_message=True)
+
+
+@router.callback_query(F.data == "addplace_cancel")
+async def cancel_add_place(callback: CallbackQuery, state: FSMContext):
+    """Скасувати додавання закладу."""
+    await state.clear()
+    await callback.message.edit_text("❌ Додавання закладу скасовано.")
+    await callback.answer()
+
+
+async def save_new_place(message: Message, state: FSMContext, edit_message: bool = False):
+    """Зберегти новий заклад в БД."""
     from database import add_place, get_general_service
     
-    service = await get_general_service(service_id)
-    if not service:
-        await message.answer(f"❌ Категорію з ID={service_id} не знайдено.")
-        return
+    data = await state.get_data()
     
-    place_id = await add_place(service_id, name, description, address, keywords)
-    keywords_text = f"\n🏷 Ключові слова: {keywords}" if keywords else ""
-    await message.answer(
-        f"✅ Заклад <b>{name}</b> додано до категорії <b>{service['name']}</b> (ID: {place_id}){keywords_text}"
+    place_id = await add_place(
+        service_id=data["service_id"],
+        name=data["name"],
+        description=data["description"],
+        address=data["address"],
+        keywords=data.get("keywords")
     )
+    
+    keywords_text = f"\n🏷 Ключові слова: {data['keywords']}" if data.get("keywords") else ""
+    
+    result_text = (
+        f"✅ <b>Заклад успішно додано!</b>\n\n"
+        f"📋 ID: <code>{place_id}</code>\n"
+        f"📁 Категорія: {data['service_name']}\n"
+        f"🏢 Назва: <b>{data['name']}</b>\n"
+        f"📝 Опис: {data['description'][:100]}{'...' if len(data['description']) > 100 else ''}\n"
+        f"📍 Адреса: {data['address']}{keywords_text}"
+    )
+    
+    if edit_message:
+        await message.edit_text(result_text)
+    else:
+        await message.answer(result_text)
+    
+    await state.clear()
 
 
 @router.message(Command("edit_place"))
@@ -2215,7 +2391,7 @@ async def cmd_delete_place(message: Message):
 
 @router.message(Command("list_places"))
 async def cmd_list_places(message: Message):
-    """Показати всі заклади."""
+    """Показати всі заклади з пагінацією."""
     if not is_admin(message.from_user.id):
         await message.answer("❌ Ця команда доступна тільки адміністраторам.")
         return
@@ -2228,19 +2404,53 @@ async def cmd_list_places(message: Message):
         await message.answer("📋 Закладів немає.")
         return
     
-    lines = ["📋 <b>Всі заклади:</b>\n"]
-    current_category = None
-    
+    # Групуємо заклади по категоріям
+    categories = {}
     for p in places:
-        if current_category != p["service_name"]:
-            current_category = p["service_name"]
-            lines.append(f"\n<b>{current_category}:</b>")
-        
-        lines.append(f"  • ID={p['id']}: {p['name']}")
-        if p["address"]:
-            lines.append(f"    📍 {p['address']}")
+        cat_name = p["service_name"]
+        if cat_name not in categories:
+            categories[cat_name] = []
+        categories[cat_name].append(p)
     
-    await message.answer("\n".join(lines))
+    # Формуємо повідомлення з урахуванням ліміту Telegram (4096 символів)
+    MAX_LENGTH = 3800  # Залишаємо запас
+    messages = []
+    current_msg = "📋 <b>Всі заклади:</b>\n"
+    
+    for cat_name, cat_places in categories.items():
+        cat_header = f"\n<b>{cat_name}:</b>\n"
+        cat_content = ""
+        
+        for p in cat_places:
+            place_line = f"  • ID={p['id']}: {p['name']}\n"
+            if p["address"]:
+                place_line += f"    📍 {p['address']}\n"
+            cat_content += place_line
+        
+        # Перевіряємо чи вміститься категорія в поточне повідомлення
+        if len(current_msg) + len(cat_header) + len(cat_content) > MAX_LENGTH:
+            # Зберігаємо поточне повідомлення і починаємо нове
+            if current_msg.strip():
+                messages.append(current_msg.strip())
+            current_msg = f"📋 <b>Всі заклади (продовження):</b>\n{cat_header}{cat_content}"
+        else:
+            current_msg += cat_header + cat_content
+    
+    # Додаємо останнє повідомлення
+    if current_msg.strip():
+        messages.append(current_msg.strip())
+    
+    # Відправляємо всі повідомлення
+    total = len(places)
+    for i, msg in enumerate(messages, 1):
+        if len(messages) > 1:
+            msg += f"\n\n<i>📊 Всього: {total} закладів (частина {i}/{len(messages)})</i>"
+        else:
+            msg += f"\n\n<i>📊 Всього: {total} закладів</i>"
+        await message.answer(msg)
+        if i < len(messages):
+            import asyncio
+            await asyncio.sleep(0.3)  # Невелика затримка між повідомленнями
 
 
 # ============ Голосування за опалення та воду ============

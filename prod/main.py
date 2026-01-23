@@ -4,11 +4,12 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import CFG
 from database import init_db
 from handlers import router
-from services import monitor_loop, alert_monitor_loop, sensors_monitor_loop
+from services import alert_monitor_loop, sensors_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
 
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +23,7 @@ async def main():
         token=CFG.token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
     # Запускаємо API сервер для ESP32 сенсорів
@@ -30,11 +31,7 @@ async def main():
     api_runner = await start_api_server(api_app)
     
     # Запускаємо фонові таски
-    # Стара система моніторингу (пінг IP) - для зворотної сумісності
-    if CFG.home_ips:
-        asyncio.create_task(monitor_loop(bot))
-    
-    # Нова система моніторингу (ESP32 сенсори)
+    # Моніторинг ESP32 сенсорів (основна система визначення стану світла)
     asyncio.create_task(sensors_monitor_loop(bot))
     
     # Моніторинг тривог
