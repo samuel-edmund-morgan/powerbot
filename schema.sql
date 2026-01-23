@@ -98,6 +98,25 @@ CREATE TABLE IF NOT EXISTS place_likes (
     FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
 );
 
+-- Сенсори (ESP32 heartbeat датчики)
+CREATE TABLE IF NOT EXISTS sensors (
+    uuid TEXT PRIMARY KEY,                   -- Унікальний ідентифікатор сенсора
+    building_id INTEGER NOT NULL,            -- FK на buildings
+    name TEXT,                               -- Назва сенсора (опціонально)
+    last_heartbeat TEXT,                     -- Час останнього heartbeat (ISO 8601)
+    created_at TEXT NOT NULL,                -- Час реєстрації (ISO 8601)
+    is_active INTEGER DEFAULT 1,             -- Активний (1/0)
+    FOREIGN KEY (building_id) REFERENCES buildings(id)
+);
+
+-- Стан електропостачання будинків
+CREATE TABLE IF NOT EXISTS building_power_state (
+    building_id INTEGER PRIMARY KEY,         -- FK на buildings
+    is_up INTEGER DEFAULT 1,                 -- Є світло (1/0)
+    last_change TEXT,                        -- Час останньої зміни (ISO 8601)
+    FOREIGN KEY (building_id) REFERENCES buildings(id)
+);
+
 -- =============================================================================
 -- Початкові дані (приклад - замініть на реальні)
 -- =============================================================================

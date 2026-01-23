@@ -320,10 +320,10 @@ class DatabaseMigrator:
                     log_action(f"Додаю колонку: {table}.{col['name']}")
                     self.add_column(table, col)
         
-        # Міграція статичних даних (places, general_services, buildings, kv)
+        # Міграція статичних даних (places, general_services, buildings, kv, sensors, building_power_state)
         print("")
         print(f"{Colors.BLUE}5. Міграція статичних даних{Colors.NC}")
-        static_tables = ["general_services", "places", "buildings", "kv"]
+        static_tables = ["general_services", "places", "buildings", "kv", "sensors", "building_power_state"]
         for table in static_tables:
             test_info = self.get_table_info(TEST_DB)
             if table in test_info:

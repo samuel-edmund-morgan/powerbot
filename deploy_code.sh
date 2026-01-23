@@ -53,6 +53,7 @@ CODE_FILES=(
     "services.py"
     "weather.py"
     "alerts.py"
+    "api_server.py"
     "fix_places.py"
     "populate_places.py"
 )
