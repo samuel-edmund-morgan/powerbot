@@ -18,9 +18,6 @@
 // Порт (80 через nginx)
 #define SERVER_PORT     80
 
-// Повний URL endpoint
-#define API_ENDPOINT    "http://" SERVER_IP "/api/v1/heartbeat"
-
 // API ключ (однаковий для всіх сенсорів)
 #define API_KEY         "e083c38d50d164ea1f9d4491147b73df1b42741675daa8e3f520800eccebd08c"
 
@@ -35,7 +32,7 @@
 #define SENSOR_UUID     "esp32-newcastle-001"
 
 // Назва будинку (для логів)
-#define BUILDING_NAME   "Ньюкасл (24-в)"
+#define BUILDING_NAME   "Newcastle"
 
 // ═══════════════════════════════════════════════════════════════
 // ТАЙМІНГИ
@@ -49,28 +46,29 @@
 
 // ═══════════════════════════════════════════════════════════════
 // WAVESHARE ESP32-S3-POE-ETH-CAM-KIT
-// W5500 Ethernet через SPI
+// W5500 Ethernet SPI pins (з офіційної документації Waveshare)
+// https://www.waveshare.com/wiki/ESP32-S3-ETH
 // ═══════════════════════════════════════════════════════════════
 
-#define ETH_TYPE_W5500
+// W5500 Chip Select
+#define ETH_PHY_CS      14    // GPIO14 - CS
 
-// W5500 SPI pins для Waveshare ESP32-S3-POE-ETH
-#define ETH_PHY_TYPE    ETH_PHY_W5500
-#define ETH_PHY_ADDR    1
-#define ETH_PHY_CS      14    // GPIO14 - Chip Select
-#define ETH_PHY_IRQ     -1    // Не використовується
-#define ETH_PHY_RST     -1    // Не використовується (підключений до EN)
+// W5500 Reset pin (ВАЖЛИВО!)
+#define ETH_PHY_RST     9     // GPIO9 - RST
 
-// SPI pins
-#define ETH_SPI_SCK     12    // GPIO12 - SCK
-#define ETH_SPI_MISO    13    // GPIO13 - MISO  
+// W5500 Interrupt pin (опціонально)
+#define ETH_PHY_INT     10    // GPIO10 - INT
+
+// SPI pins (ПРАВИЛЬНА РОЗПІНОВКА!)
+#define ETH_SPI_SCK     13    // GPIO13 - SCLK
+#define ETH_SPI_MISO    12    // GPIO12 - MISO  
 #define ETH_SPI_MOSI    11    // GPIO11 - MOSI
 
 // ═══════════════════════════════════════════════════════════════
 // LED ІНДИКАЦІЯ
 // ═══════════════════════════════════════════════════════════════
 
-// Waveshare має RGB LED на GPIO48
+// RGB LED на GPIO48 (або закоментуй якщо не потрібно)
 #define LED_PIN         48
 
 // ═══════════════════════════════════════════════════════════════
