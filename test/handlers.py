@@ -23,34 +23,35 @@ router = Router()
 async def format_light_status(user_id: int) -> str:
     """
     Форматувати статус світла зі шкалою для будинку користувача.
-    Показує стан тільки по будинку на який підписаний користувач.
-    Використовує нову систему ESP32 сенсорів.
+    
+    Логіка ESP32 сенсора:
+    - Сенсор вставлений в розетку і живиться від мережі
+    - Якщо heartbeat приходить → плата працює → світло Є
+    - Якщо heartbeat не приходить (timeout) → плата вимкнулась → світла НЕМАЄ
     """
     from database import (
         get_subscriber_building, get_building_by_id, 
-        NEWCASTLE_BUILDING_ID, get_last_event,
-        get_building_power_state, get_sensors_by_building
+        get_last_event, get_sensors_by_building
     )
     
     user_building_id = await get_subscriber_building(user_id)
     user_building = get_building_by_id(user_building_id) if user_building_id else None
     
-    # Отримуємо поточний стан світла з нової системи сенсорів
-    power_state = await get_building_power_state(user_building_id) if user_building_id else None
-    # power_state: True = світло є, False = світла немає, None = невідомо
-    is_up = power_state if power_state is not None else False
-    
     # Отримуємо інформацію про сенсори будинку
     sensors = await get_sensors_by_building(user_building_id) if user_building_id else []
     sensors_count = len(sensors)
     
-    # Рахуємо онлайн сенсори
+    # Рахуємо онлайн сенсори (= скільки сенсорів показують що світло є)
+    # Сенсор онлайн = heartbeat свіжий = плата працює = світло є
     sensors_online = 0
     now = datetime.now()
     timeout = timedelta(seconds=CFG.sensor_timeout)
     for s in sensors:
         if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
             sensors_online += 1
+    
+    # Світло є якщо хоча б один сенсор онлайн
+    is_up = sensors_online > 0
     
     # Отримуємо час останньої зміни
     last_event = await get_last_event()
@@ -75,15 +76,13 @@ async def format_light_status(user_id: int) -> str:
     
     # Показуємо шкалу для будинку користувача
     if sensors_count > 0:
-        # Є сенсори - показуємо реальний стан
-        if sensors_online == 0:
-            # Всі сенсори офлайн - світла немає
-            percent = 0
-            status_text = "❌ Світла немає"
+        # Є сенсори - світло є якщо хоча б один сенсор онлайн
+        percent = round(sensors_online / sensors_count * 100)
+        
+        if is_up:
+            status_text = "✅ Світло є"
         else:
-            # Є онлайн сенсори
-            percent = 100 if is_up else 0
-            status_text = "✅ Світло є" if is_up else "❌ Світла немає"
+            status_text = "❌ Світла немає"
         
         bar_length = 10
         filled = round(percent / 100 * bar_length)
@@ -91,7 +90,7 @@ async def format_light_status(user_id: int) -> str:
         
         lines.append(f"🏠 <b>{display_name}</b>")
         lines.append(f"{bar} <b>{percent}%</b>")
-        lines.append(f"{status_text} (сенсорів онлайн: {sensors_online}/{sensors_count})")
+        lines.append(f"{status_text} (сенсорів: {sensors_online}/{sensors_count})")
     else:
         # Немає сенсорів
         bar = "⬜" * 10
@@ -209,6 +208,38 @@ async def get_alert_status_text() -> str:
         return "✅ Без тривоги"
     else:
         return "❓ Статус невідомий"
+
+
+async def get_light_status_text(user_id: int) -> str:
+    """
+    Отримати короткий текст статусу світла для будинку користувача.
+    
+    Логіка: сенсор онлайн = світло є, сенсор офлайн = світла немає.
+    """
+    from database import get_subscriber_building, get_sensors_by_building
+    
+    user_building_id = await get_subscriber_building(user_id)
+    if not user_building_id:
+        return "💡 Світло: оберіть будинок"
+    
+    # Перевіряємо чи є сенсори
+    sensors = await get_sensors_by_building(user_building_id)
+    if not sensors:
+        return "💡 Світло: немає даних"
+    
+    # Рахуємо онлайн сенсори (онлайн = світло є)
+    sensors_online = 0
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    for s in sensors:
+        if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
+            sensors_online += 1
+    
+    # Світло є якщо хоча б один сенсор онлайн
+    if sensors_online > 0:
+        return "💡 Є світло"
+    else:
+        return "💡 Немає світла"
 
 
 def get_reply_keyboard() -> ReplyKeyboardMarkup:
@@ -508,8 +539,9 @@ async def cmd_start(message: Message):
     )
     # Також показуємо InlineKeyboard в чаті
     alert_status = await get_alert_status_text()
+    light_status = await get_light_status_text(message.chat.id)
     await message.answer(
-        f"🏠 <b>Головне меню</b>\n{alert_status}\n\nОберіть дію:",
+        f"🏠 <b>Головне меню</b>\n{alert_status}\n{light_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
 
@@ -524,8 +556,9 @@ async def cmd_menu(message: Message):
     )
     # Показуємо InlineKeyboard
     alert_status = await get_alert_status_text()
+    light_status = await get_light_status_text(message.chat.id)
     await message.answer(
-        f"{alert_status}\n\nОберіть дію:",
+        f"{alert_status}\n{light_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
 
@@ -670,7 +703,8 @@ async def cmd_stats(message: Message):
 async def cb_menu(callback: CallbackQuery):
     """Показати головне меню."""
     alert_status = await get_alert_status_text()
-    text = f"🏠 <b>Головне меню</b>\n{alert_status}\n\nОберіть дію:"
+    light_status = await get_light_status_text(callback.message.chat.id)
+    text = f"🏠 <b>Головне меню</b>\n{alert_status}\n{light_status}\n\nОберіть дію:"
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
     if callback.message.photo:

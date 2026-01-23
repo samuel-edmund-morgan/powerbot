@@ -29,7 +29,8 @@ class Config:
     electrician_phone: str
     elevator_phones: str
     # API тривог
-    alerts_api_key: str
+    alerts_api_key: str  # ukrainealarm.com
+    alerts_in_ua_api_key: str  # alerts.in.ua (друге джерело)
     # API сервер для ESP32 сенсорів
     api_port: int  # Порт для HTTP API сервера
     sensor_api_key: str  # API ключ для сенсорів
@@ -72,6 +73,7 @@ CFG = Config(
     electrician_phone=os.getenv("ELECTRICIAN_PHONE", "").strip().strip('"').strip("'"),
     elevator_phones=os.getenv("ELEVATOR_PHONES", "").strip().strip('"').strip("'"),
     alerts_api_key=os.getenv("ALERTS_API_KEY", "").strip().strip('"').strip("'"),
+    alerts_in_ua_api_key=os.getenv("ALERTS_IN_UA_API_KEY", "").strip().strip('"').strip("'"),
     # API сервер
     api_port=int(os.getenv("API_PORT", "8080")),
     sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),
