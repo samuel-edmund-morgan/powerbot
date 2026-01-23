@@ -360,8 +360,9 @@ async def alert_monitor_loop(bot: Bot):
     last_alert_state = None if last is None else (last == "active")
     
     # Інтервал перевірки тривог (секунди)
-    # Ukrainealarm API має rate limit, тому ставимо 60 секунд
-    ALERT_CHECK_INTERVAL = 60
+    # alerts.in.ua оновлюється кожні 15 сек, тому 30 сек оптимально
+    # ukrainealarm має rate limit, тому використовуємо його рідше (див. alerts.py)
+    ALERT_CHECK_INTERVAL = 30
     
     while True:
         try:

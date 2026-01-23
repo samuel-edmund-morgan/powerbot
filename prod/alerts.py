@@ -39,17 +39,25 @@ class AlertStatus:
     INACTIVE = "inactive"  # Відбій тривоги
 
 
-# Поточне джерело для чергування
-_current_source_index = 0
-_sources = [AlertSource.UKRAINEALARM, AlertSource.ALERTS_IN_UA]
+# Лічильник запитів для балансування джерел
+# alerts.in.ua оновлюється кожні 15 сек, ukrainealarm має суворіший rate limit
+_request_counter = 0
+# alerts.in.ua як основне джерело (3 з 4 запитів), ukrainealarm як резерв (1 з 4)
+ALERTS_IN_UA_RATIO = 3  # 75% запитів до alerts.in.ua
 
 
 def _get_next_source() -> AlertSource:
-    """Отримати наступне джерело для запиту (чергування)."""
-    global _current_source_index
-    source = _sources[_current_source_index]
-    _current_source_index = (_current_source_index + 1) % len(_sources)
-    return source
+    """
+    Отримати наступне джерело для запиту.
+    Пріоритет: alerts.in.ua (75%), ukrainealarm (25%).
+    """
+    global _request_counter
+    _request_counter += 1
+    
+    # Кожен 4-й запит до ukrainealarm, решта до alerts.in.ua
+    if _request_counter % (ALERTS_IN_UA_RATIO + 1) == 0:
+        return AlertSource.UKRAINEALARM
+    return AlertSource.ALERTS_IN_UA
 
 
 async def get_kyiv_alerts_ukrainealarm() -> Optional[bool]:
