@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
 import logging
+import asyncio
 from datetime import datetime, timedelta
 
 from config import CFG
@@ -515,7 +516,7 @@ async def cb_building_selected(callback: CallbackQuery):
             "Він дозволить точно визначати відключення електроенергії саме по вашому будинку, "
             "а не «в середньому по ЖК».\n\n"
             "У перспективі кожен будинок матиме 1–кілька таких пристроїв, що зробить систему максимально точною.\n"
-            "💰 Вартість одного комплекту — близько 20 $. Пристрої збираю поступово — за рахунок донатів на розвиток проєкту.\n\n"
+            "💰 Вартість одного комплекту — близько 30 $. Пристрої збираю поступово — за рахунок донатів на розвиток проєкту.\n\n"
             "🤝 Долучитись можуть мешканці або бізнес ЖК «Нова Англія»:\n"
             "👉 https://send.monobank.ua/jar/7d56pmvjEB\n\n"
             "📝 У коментарі до платежу вкажіть назву будинку.\n"
@@ -869,7 +870,7 @@ async def cb_status(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
     await callback.answer()
@@ -1656,10 +1657,14 @@ async def reply_light_old(message: Message):
     # Надсилаємо повідомлення з НОВОЮ reply keyboard
     await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
     # Викликаємо нову функціональність - показуємо статус світла
-    from database import get_user_vote
-    user_vote = await get_user_vote(message.chat.id, "light")
-    text = await format_power_status(message.chat.id)
-    await message.answer(text, reply_markup=get_vote_keyboard(user_vote))
+    text = await format_light_status(message.chat.id)
+    await message.answer(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
+        ]),
+    )
 
 
 @router.message(F.text == "♨️ Опалення")
@@ -2680,7 +2685,7 @@ def get_heating_vote_keyboard(user_vote: bool | None = None) -> InlineKeyboardMa
             InlineKeyboardButton(text=no_text, callback_data="menu_vote_heating_no"),
         ],
         [InlineKeyboardButton(text="🔄 Оновити", callback_data="heating_menu")],
-        [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
     ])
 
 
@@ -2694,7 +2699,7 @@ def get_water_vote_keyboard(user_vote: bool | None = None) -> InlineKeyboardMark
             InlineKeyboardButton(text=no_text, callback_data="menu_vote_water_no"),
         ],
         [InlineKeyboardButton(text="🔄 Оновити", callback_data="water_menu")],
-        [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
     ])
 
 
