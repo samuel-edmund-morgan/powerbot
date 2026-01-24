@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter
 
 from config import CFG
 from database import (
@@ -14,6 +16,97 @@ from database import (
     set_building_power_state, get_sensors_by_building, get_building_by_id,
     get_sensors_count_by_building,
 )
+
+# Налаштування масових розсилок (можна перевизначити через env)
+BROADCAST_RATE_PER_SEC = float(os.getenv("BROADCAST_RATE_PER_SEC", "20"))
+BROADCAST_CONCURRENCY = int(os.getenv("BROADCAST_CONCURRENCY", "8"))
+BROADCAST_MAX_RETRIES = int(os.getenv("BROADCAST_MAX_RETRIES", "1"))
+
+# Синхронізація записів у БД для уникнення SQLite lock при масовій розсилці
+_notification_save_lock = asyncio.Lock()
+
+
+class BroadcastRateLimiter:
+    """Глобальний rate limiter для масових розсилок (token-interval)."""
+
+    def __init__(self, rate_per_sec: float):
+        self._interval = 1.0 / rate_per_sec if rate_per_sec > 0 else 0.0
+        self._lock = asyncio.Lock()
+        self._next_time = 0.0
+
+    async def wait(self) -> None:
+        if self._interval <= 0:
+            return
+        loop = asyncio.get_running_loop()
+        async with self._lock:
+            now = loop.time()
+            if now < self._next_time:
+                await asyncio.sleep(self._next_time - now)
+                now = loop.time()
+            self._next_time = max(self._next_time, now) + self._interval
+
+
+async def _broadcast_worker(
+    queue: asyncio.Queue,
+    limiter: BroadcastRateLimiter,
+    send_fn,
+    *,
+    retries: int,
+) -> None:
+    while True:
+        chat_id = await queue.get()
+        if chat_id is None:
+            queue.task_done()
+            break
+        try:
+            attempt = 0
+            while True:
+                try:
+                    await limiter.wait()
+                    await send_fn(chat_id)
+                    break
+                except TelegramRetryAfter as exc:
+                    attempt += 1
+                    if attempt > retries:
+                        raise
+                    logging.warning(
+                        "Telegram rate limit: retry_after=%s chat_id=%s attempt=%s",
+                        exc.retry_after,
+                        chat_id,
+                        attempt,
+                    )
+                    await asyncio.sleep(exc.retry_after)
+        except Exception:
+            logging.exception("Failed to notify chat_id=%s", chat_id)
+        finally:
+            queue.task_done()
+
+
+async def broadcast_messages(
+    chat_ids: list[int],
+    send_fn,
+    *,
+    rate_per_sec: float = BROADCAST_RATE_PER_SEC,
+    concurrency: int = BROADCAST_CONCURRENCY,
+    retries: int = BROADCAST_MAX_RETRIES,
+) -> None:
+    """Надіслати повідомлення паралельно з глобальним rate limit."""
+    if not chat_ids:
+        return
+    limiter = BroadcastRateLimiter(rate_per_sec)
+    queue: asyncio.Queue = asyncio.Queue()
+    for chat_id in chat_ids:
+        queue.put_nowait(chat_id)
+    workers = [
+        asyncio.create_task(
+            _broadcast_worker(queue, limiter, send_fn, retries=retries)
+        )
+        for _ in range(max(1, concurrency))
+    ]
+    await queue.join()
+    for _ in workers:
+        queue.put_nowait(None)
+    await asyncio.gather(*workers, return_exceptions=True)
 
 
 # ============ Нова система моніторингу через ESP32 сенсори ============
@@ -396,12 +489,12 @@ async def alert_monitor_loop(bot: Bot):
                 
                 # Надсилаємо тільки тим, хто увімкнув сповіщення про тривоги
                 current_hour = datetime.now().hour
-                for chat_id in await get_subscribers_for_alert_notification(current_hour):
-                    try:
-                        await bot.send_message(chat_id, text, reply_markup=keyboard)
-                    except Exception:
-                        logging.exception("Failed to send alert to chat_id=%s", chat_id)
-                    await asyncio.sleep(0.04)  # 40ms затримка = 25 msg/sec (захист від rate limit)
+                subscribers = await get_subscribers_for_alert_notification(current_hour)
+
+                async def send_alert(chat_id: int):
+                    await bot.send_message(chat_id, text, reply_markup=keyboard)
+
+                await broadcast_messages(subscribers, send_alert)
         
         except Exception:
             logging.exception("alert_monitor_loop error")
@@ -551,14 +644,13 @@ async def sensors_monitor_loop(bot: Bot):
                 # Надсилаємо підписникам цього будинку
                 current_hour = datetime.now().hour
                 subscribers = await get_subscribers_for_light_notification(current_hour, building_id)
-                
-                for chat_id in subscribers:
-                    try:
-                        msg = await bot.send_message(chat_id, text, reply_markup=vote_keyboard)
+
+                async def send_light(chat_id: int):
+                    msg = await bot.send_message(chat_id, text, reply_markup=vote_keyboard)
+                    async with _notification_save_lock:
                         await save_notification(chat_id, msg.message_id)
-                    except Exception:
-                        logging.exception("Failed to notify chat_id=%s", chat_id)
-                    await asyncio.sleep(0.04)  # 40ms затримка
+
+                await broadcast_messages(subscribers, send_light)
         
         except Exception:
             logging.exception("sensors_monitor_loop error")
