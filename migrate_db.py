@@ -19,6 +19,8 @@ migrate_db.py - Скрипт міграції бази даних з test/ в pr
 3. Додає нові колонки до існуючих таблиць
 4. НЕ видаляє існуючі колонки/таблиці (безпечний режим)
 5. Заповнює нові колонки дефолтними значеннями
+6. Додає статичні дані без видалення існуючих записів (INSERT OR IGNORE)
+   Пропускає kv/sensors/building_power_state, щоб не затирати прод-дані
 
 ВАЖЛИВО:
 - Перед запуском зупиніть prod бота: sudo systemctl stop bot-prod.service
@@ -40,7 +42,7 @@ TEST_DB = BASE_DIR / "test" / "state.db"
 PROD_DB = BASE_DIR / "prod" / "state.db"
 BACKUP_DIR = BASE_DIR / "backups" / "db"
 
-# Таблиці з даними користувачів (треба обережно мігрувати)
+# Таблиці, які НЕ можна перезаписувати (користувацькі/динамічні дані)
 USER_DATA_TABLES = {
     "subscribers",
     "water_votes",
@@ -49,6 +51,9 @@ USER_DATA_TABLES = {
     "events",
     "active_notifications",
     "last_bot_message",
+    "kv",
+    "sensors",
+    "building_power_state",
 }
 
 # Дефолтні значення для нових колонок за типом
@@ -228,9 +233,9 @@ class DatabaseMigrator:
                 conn.close()
     
     def migrate_static_data(self, table_name: str):
-        """Мігрує статичні дані (не користувацькі) з test в prod."""
+        """Мігрує статичні дані з test в prod без видалення існуючих записів."""
         if table_name in USER_DATA_TABLES:
-            log_warning(f"Пропускаємо міграцію даних для {table_name} (користувацькі дані)")
+            log_warning(f"Пропускаємо міграцію даних для {table_name} (захищена таблиця)")
             return
         
         conn_test = sqlite3.connect(TEST_DB)
@@ -248,14 +253,11 @@ class DatabaseMigrator:
         columns = [col[1] for col in cursor_test.fetchall()]
         
         if test_data and not self.dry_run:
-            # Очищаємо prod таблицю (для статичних даних)
-            cursor_prod.execute(f"DELETE FROM {table_name}")
-            
-            # Вставляємо дані з test
+            # Додаємо нові записи з test, не перезаписуючи існуючі
             placeholders = ",".join(["?" for _ in columns])
             cols_str = ",".join(columns)
             cursor_prod.executemany(
-                f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})",
+                f"INSERT OR IGNORE INTO {table_name} ({cols_str}) VALUES ({placeholders})",
                 test_data
             )
             conn_prod.commit()
@@ -320,10 +322,10 @@ class DatabaseMigrator:
                     log_action(f"Додаю колонку: {table}.{col['name']}")
                     self.add_column(table, col)
         
-        # Міграція статичних даних (places, general_services, buildings, kv, sensors, building_power_state)
+        # Міграція статичних даних (places, general_services, buildings)
         print("")
         print(f"{Colors.BLUE}5. Міграція статичних даних{Colors.NC}")
-        static_tables = ["general_services", "places", "buildings", "kv", "sensors", "building_power_state"]
+        static_tables = ["general_services", "places", "buildings"]
         for table in static_tables:
             test_info = self.get_table_info(TEST_DB)
             if table in test_info:
