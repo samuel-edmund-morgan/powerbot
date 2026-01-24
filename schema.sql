@@ -34,10 +34,10 @@ CREATE TABLE IF NOT EXISTS kv (
     v TEXT
 );
 
--- Таблиця подій (світло вимкнено/увімкнено)
+-- Таблиця подій (up/down)
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,                -- 'power_off', 'power_on'
+    event_type TEXT NOT NULL,                -- 'up' або 'down'
     timestamp TEXT NOT NULL                  -- Час події (ISO 8601)
 );
 
@@ -121,10 +121,22 @@ CREATE TABLE IF NOT EXISTS building_power_state (
 -- Початкові дані (приклад - замініть на реальні)
 -- =============================================================================
 
--- Будинки
+-- Будинки (актуальний перелік ЖК "Нова Англія")
 INSERT OR IGNORE INTO buildings (id, name, address, has_sensor, sensor_count) VALUES
-    (1, 'Newcastle', 'вул. Прикладу 1', 1, 15),
-    (2, 'Brighton', 'вул. Прикладу 2', 0, 0);
+    (1, 'Ньюкасл', '24-в', 1, 1),
+    (2, 'Оксфорд', '28-б', 0, 0),
+    (3, 'Кембрідж', '26', 0, 0),
+    (4, 'Ліверпуль', '24-а', 0, 0),
+    (5, 'Брістоль', '24-б', 0, 0),
+    (6, 'Бермінгем', '26-б', 0, 0),
+    (7, 'Честер', '28-д', 0, 0),
+    (8, 'Манчестер', '26-г', 0, 0),
+    (9, 'Брайтон', '26-в', 0, 0),
+    (10, 'Лондон', '28-е', 0, 0),
+    (11, 'Лінкольн', '28-к', 0, 0),
+    (12, 'Віндзор', '26-д', 0, 0),
+    (13, 'Ноттінгем', '24-г', 0, 0),
+    (14, 'Престон', '-', 0, 0);
 
 -- Категорії сервісів
 INSERT OR IGNORE INTO general_services (name) VALUES

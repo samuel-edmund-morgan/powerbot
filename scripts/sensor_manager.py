@@ -39,7 +39,7 @@ BUILDINGS = {
     11: {"name": "Лондон", "name_lat": "london", "address": "28-е"},
     12: {"name": "Оксфорд", "name_lat": "oxford", "address": "28-б"},
     13: {"name": "Лінкольн", "name_lat": "lincoln", "address": "28-к"},
-    14: {"name": "Престон", "name_lat": "preston", "address": "Престон"},
+    14: {"name": "Престон", "name_lat": "preston", "address": "-"},
 }
 
 
@@ -146,6 +146,7 @@ def cmd_info(args):
     # API endpoint (через nginx на порт 80)
     api_host = "64.181.205.211"
     api_port = "80"
+    endpoint = "/api/v1/heartbeat-test" if args.env == "test" else "/api/v1/heartbeat"
     
     print(f"""
 🏠 Будинок: {building['name']} ({building['address']})
@@ -166,7 +167,7 @@ def cmd_info(args):
 
 📤 Тестовий curl запит:
 
-   curl -X POST http://{api_host}/api/v1/heartbeat \\
+   curl -X POST http://{api_host}{endpoint} \\
      -H "Content-Type: application/json" \\
      -d '{{"api_key": "{token}", "building_id": {building_id}, "sensor_uuid": "{sensor_uuid}"}}'
 
@@ -303,7 +304,8 @@ def cmd_test(args):
     sensor_uuid = generate_sensor_uuid(building_id, args.sensor_num)
     
     # Через nginx на порт 80 (локально для тестів)
-    url = "http://127.0.0.1:80/api/v1/heartbeat"
+    endpoint = "/api/v1/heartbeat-test" if args.env == "test" else "/api/v1/heartbeat"
+    url = f"http://127.0.0.1:80{endpoint}"
     
     data = {
         "api_key": token,

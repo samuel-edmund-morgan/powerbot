@@ -7,7 +7,7 @@ Telegram бот для моніторингу електропостачання
 - 📡 **Моніторинг електропостачання** — автоматичне визначення відключень через ESP32 сенсори
 - 🏠 **Підтримка кількох будинків** — кожен будинок може мати свої сенсори
 - 🔔 **Push-сповіщення** — миттєві повідомлення про відключення/відновлення світла
-- 🚨 **Повітряні тривоги** — сповіщення про тривоги через ukrainealarm.com API
+- 🚨 **Повітряні тривоги** — сповіщення про тривоги через ukrainealarm.com та alerts.in.ua
 - 🌡️ **Голосування** — опитування про воду/опалення серед мешканців
 - 🗺️ **Довідник** — корисні місця поблизу (кафе, магазини, аптеки)
 - 📊 **Статистика** — історія відключень та аналітика
@@ -19,26 +19,34 @@ Telegram бот для моніторингу електропостачання
 ```
 /home/powerbot/powerbot/
 ├── prod/                   # Production середовище
-│   ├── main.py            # Точка входу
-│   ├── config.py          # Конфігурація з .env
-│   ├── database.py        # Робота з SQLite
-│   ├── handlers.py        # Обробники Telegram команд
-│   ├── services.py        # Бізнес-логіка
-│   ├── api_server.py      # HTTP API для сенсорів
-│   ├── weather.py         # API погоди
-│   ├── alerts.py          # API тривог
-│   ├── maps/              # Зображення карт
+│   ├── main.py
+│   ├── config.py
+│   ├── database.py
+│   ├── handlers.py
+│   ├── services.py
+│   ├── api_server.py
+│   ├── weather.py
+│   ├── alerts.py
+│   ├── maps/
 │   ├── .env               # Конфігурація (не в Git!)
 │   └── state.db           # База даних (не в Git!)
 │
 ├── test/                   # Test середовище (аналогічна структура)
+│   └── .env.example        # Шаблон конфігурації
 │
-├── deploy_code.sh         # Деплой коду test → prod
-├── migrate_db.py          # Міграція БД test → prod
-├── schema.sql             # Схема бази даних
-├── .env.example           # Шаблон конфігурації
-├── .gitignore             # Ігноровані файли
-└── README.md              # Цей файл
+├── scripts/                # Адмінські скрипти
+│   ├── fix_keywords.py
+│   └── sensor_manager.py
+│
+├── sensors/                # ESP32 firmware/супутні матеріали
+├── nginx.default.conf      # Nginx конфіг для доступу по IP
+├── nginx.sensors.conf      # Nginx конфіг для домену sensors.*
+├── deploy_code.sh          # Деплой коду test → prod
+├── migrate_db.py           # Міграція БД test → prod (безпечне злиття)
+├── schema.sql              # Схема бази даних
+├── backup_db.sh            # Ручний бекап БД
+├── .gitignore
+└── README.md
 ```
 
 ## 🚀 Встановлення
@@ -49,6 +57,7 @@ Telegram бот для моніторингу електропостачання
 - Python 3.11+
 - SQLite 3
 - systemd
+- nginx
 
 ### Крок 1: Клонування репозиторію
 
@@ -76,8 +85,8 @@ pip install aiogram aiosqlite python-dotenv aiohttp
 
 ```bash
 # Копіюємо шаблон конфігурації
-cp .env.example prod/.env
-cp .env.example test/.env
+cp test/.env.example prod/.env
+cp test/.env.example test/.env
 
 # Редагуємо конфігурацію (замініть на реальні значення)
 nano prod/.env
@@ -103,41 +112,58 @@ sqlite3 state.db < ../schema.sql
 ```ini
 [Unit]
 Description=Telegram Power Bot - PRODUCTION
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=powerbot
-Group=powerbot
 WorkingDirectory=/home/powerbot/powerbot/prod
+EnvironmentFile=/home/powerbot/powerbot/prod/.env
 ExecStart=/home/powerbot/powerbot/.venv/bin/python /home/powerbot/powerbot/prod/main.py
 Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/home/powerbot/powerbot/prod
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Аналогічно для test (змініть `prod` на `test` та Description).
+Аналогічно для test (замініть `prod` на `test` та Description).
 
 ```bash
-# Активуємо та запускаємо
 sudo systemctl daemon-reload
 sudo systemctl enable bot-prod.service
 sudo systemctl start bot-prod.service
-
-# Перевіряємо статус
 sudo systemctl status bot-prod.service
+```
+
+### Крок 6: Налаштування nginx
+
+У репозиторії є готові конфіги:
+- `nginx.default.conf` — доступ по IP (наприклад `http://64.181.205.211/...`)
+- `nginx.sensors.conf` — домен `sensors.*`
+
+```bash
+sudo cp nginx.default.conf /etc/nginx/sites-available/default
+sudo cp nginx.sensors.conf /etc/nginx/sites-available/sensors
+sudo ln -sf /etc/nginx/sites-available/sensors /etc/nginx/sites-enabled/sensors
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ## ⚙️ Конфігурація (.env)
 
 ```bash
-# Режим роботи: "prod" або "test"
-BOT_MODE="prod"
-
 # Telegram Bot Token від @BotFather
 BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 
@@ -150,26 +176,69 @@ ADMIN_IDS="123456789,987654321"
 # Тег адміна для зворотного зв'язку
 ADMIN_TAG="@YourAdminUsername"
 
-# IP адреси датчиків для моніторингу (через кому)
-HOME_IP="192.168.1.1,192.168.1.2"
+# Координати для погоди (Open-Meteo)
+WEATHER_LAT="50.4501"
+WEATHER_LON="30.5234"
 
-# Налаштування моніторингу
-CHECK_INTERVAL_SEC="15"          # Інтервал перевірки (сек)
-FAILS_TO_DECLARE_DOWN="150"      # Кількість fail до оголошення DOWN
-SUCCESSES_TO_DECLARE_UP="1"      # Кількість success до оголошення UP
-TIMEOUT_SEC="1"                  # Таймаут пінгу (сек)
-DOWN_THRESHOLD="0.6"             # Поріг недоступності (0.0-1.0)
-MIN_FAIL_HOSTS="10"              # Мін. недоступних хостів
-
-# Телефони сервісних служб
+# Телефони сервісів
 SECURITY_PHONE="+380XXXXXXXXX"
 PLUMBER_PHONE="+380XXXXXXXXX"
 ELECTRICIAN_PHONE="+380XXXXXXXXX"
-ELEVATOR_PHONES="+380XXXXXXXXX"
+ELEVATOR_PHONES="+380XXXXXXXXX, +380XXXXXXXXX"
 
-# API ключ для тривог (https://api.ukrainealarm.com)
+# API ключі для тривог
 ALERTS_API_KEY="your_alerts_api_key_here"
+ALERTS_IN_UA_API_KEY="your_alerts_in_ua_api_key_here"
+
+# ESP32 сенсори
+# Для prod: API_PORT=8081, для test: API_PORT=8082
+API_PORT=8081
+SENSOR_API_KEY="your-64-char-hex-key"
+SENSOR_TIMEOUT_SEC=150
 ```
+
+## 🔌 Sensors API
+
+### Heartbeat Endpoint (prod)
+
+```bash
+POST /api/v1/heartbeat
+Content-Type: application/json
+
+{
+  "api_key": "your-secret-api-key",
+  "building_id": 1,
+  "sensor_uuid": "esp32-unique-id"
+}
+```
+
+### Heartbeat Endpoint (test)
+
+```bash
+POST /api/v1/heartbeat-test
+Content-Type: application/json
+
+{
+  "api_key": "your-secret-api-key",
+  "building_id": 1,
+  "sensor_uuid": "esp32-unique-id"
+}
+```
+
+**Відповідь:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-01-23T19:41:42.804846",
+  "building": "Ньюкасл",
+  "sensor_uuid": "esp32-unique-id"
+}
+```
+
+### Health endpoint
+
+- `/health` → prod (порт 8081)
+- `/health-test` → test (порт 8082)
 
 ## 📦 Деплой
 
@@ -190,6 +259,9 @@ sudo systemctl restart bot-prod.service
 
 ### Міграція БД (test → prod)
 
+`migrate_db.py` додає нові таблиці/колонки та зливає статичні дані **без видалення** існуючих.
+Таблиці `kv`, `sensors`, `building_power_state` не перезаписуються, щоб не затирати прод-стан.
+
 ```bash
 # Зупиняємо бота
 sudo systemctl stop bot-prod.service
@@ -202,6 +274,20 @@ python migrate_db.py
 
 # Запускаємо бота
 sudo systemctl start bot-prod.service
+```
+
+## 🔧 Скрипти
+
+```bash
+# Очистка дублікатів keywords
+python scripts/fix_keywords.py test --dry-run
+python scripts/fix_keywords.py prod
+
+# Менеджер сенсорів
+python scripts/sensor_manager.py buildings
+python scripts/sensor_manager.py list --env prod
+python scripts/sensor_manager.py info 1 --env prod
+python scripts/sensor_manager.py test 1 --env test
 ```
 
 ## 🔧 Корисні команди
@@ -231,10 +317,6 @@ sudo systemctl restart bot-prod.service
 | БД | `backups/db/` | Автоматично при `python migrate_db.py` |
 | БД | `backups/db/` | Вручну при `./backup_db.sh` |
 
-# Зупинка
-sudo systemctl stop bot-prod.service
-```
-
 ## 🗃️ База даних
 
 Основні таблиці:
@@ -243,64 +325,13 @@ sudo systemctl stop bot-prod.service
 |---------|-------------|
 | `subscribers` | Підписники бота |
 | `buildings` | Будинки комплексу |
-| `events` | Історія подій (світло on/off) |
+| `events` | Історія подій (up/down) |
 | `sensors` | ESP32 сенсори для моніторингу |
 | `building_power_state` | Стан електропостачання будинків |
 | `water_votes` | Голосування за воду |
 | `heating_votes` | Голосування за опалення |
 | `places` | Довідник корисних місць |
 | `place_likes` | Лайки місць |
-
-## 🔌 Sensors API
-
-Бот має HTTP API для ESP32 сенсорів на порту 8081 (через nginx):
-
-### Heartbeat Endpoint
-
-```bash
-POST /api/v1/heartbeat
-Content-Type: application/json
-
-{
-  "api_key": "your-secret-api-key",
-  "building_id": 1,
-  "sensor_uuid": "esp32-unique-id"
-}
-```
-
-**Відповідь:**
-```json
-{
-  "status": "ok",
-  "timestamp": "2026-01-23T19:41:42.804846",
-  "building": "Newcastle",
-  "sensor_uuid": "esp32-unique-id"
-}
-```
-
-### Конфігурація .env для API
-
-```bash
-# Порт API сервера
-API_PORT=8081
-
-# Секретний ключ для сенсорів
-SENSOR_API_KEY="your-64-char-hex-key"
-
-# Таймаут heartbeat (сек) - якщо сенсор не відповідає довше, будинок вважається без світла
-SENSOR_TIMEOUT_SEC=150
-```
-
-### nginx конфігурація
-
-```nginx
-location /api/v1/heartbeat {
-    proxy_pass http://127.0.0.1:8081/api/v1/heartbeat;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-}
-```
 
 ## 📝 Ліцензія
 

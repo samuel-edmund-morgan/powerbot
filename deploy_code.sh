@@ -54,8 +54,6 @@ CODE_FILES=(
     "weather.py"
     "alerts.py"
     "api_server.py"
-    "fix_places.py"
-    "populate_places.py"
 )
 
 # Директорії для копіювання
