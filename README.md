@@ -41,11 +41,12 @@ Telegram бот для моніторингу електропостачання
 ├── sensors/                # ESP32 firmware/супутні матеріали
 ├── docker/                 # Docker entrypoint
 │   ├── entrypoint.sh
-│   └── nginx.conf
-├── nginx.default.conf      # Nginx конфіг для доступу по IP
-├── nginx.sensors.conf      # Nginx конфіг для домену sensors.*
-├── Dockerfile              # Docker image
-├── docker-compose.yml      # Docker compose
+│   └── nginx.conf           # Опційно, якщо потрібен nginx у Docker
+├── nginx.default.conf      # Nginx конфіг для доступу по IP (опційно)
+├── nginx.sensors.conf      # Nginx конфіг для домену sensors.* (опційно)
+├── Dockerfile              # Docker image (бот)
+├── Dockerfile.migrate      # Docker image (міграції)
+├── docker-compose.yml      # Docker compose (prod без git)
 ├── .dockerignore           # Docker ignore
 ├── requirements.txt        # Python dependencies
 ├── deploy_code.sh          # Деплой коду test → prod
@@ -64,7 +65,7 @@ Telegram бот для моніторингу електропостачання
 - Python 3.11+
 - SQLite 3
 - systemd
-- nginx
+- nginx (опційно, якщо потрібен reverse proxy)
 
 ### Крок 1: Клонування репозиторію
 
@@ -155,11 +156,10 @@ sudo systemctl start bot-prod.service
 sudo systemctl status bot-prod.service
 ```
 
-### Крок 6: Налаштування nginx
+### Крок 6: Налаштування nginx (опційно)
 
-У репозиторії є готові конфіги:
-- `nginx.default.conf` — доступ по IP (наприклад `http://64.181.205.211/...`)
-- `nginx.sensors.conf` — домен `sensors.*`
+Якщо хочете використовувати порт 80/443, домен та HTTPS — встановіть nginx і
+використайте готові конфіги. Якщо працюєте напряму через порт 8081, цей крок не потрібен.
 
 ```bash
 sudo cp nginx.default.conf /etc/nginx/sites-available/default
@@ -168,46 +168,51 @@ sudo ln -sf /etc/nginx/sites-available/sensors /etc/nginx/sites-enabled/sensors
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 🐳 Docker деплой
+## 🐳 Docker деплой (без git на сервері)
 
-### 1) Підготовка .env
+### 1) Мінімальний runtime‑набір (3 файли)
 
-Заповніть `prod/.env` (або `test/.env`). Мінімально потрібні:
-- `BOT_TOKEN`
-- `BOT_USERNAME`
-- `ADMIN_IDS`
-- `ALERTS_API_KEY` / `ALERTS_IN_UA_API_KEY`
-- `SENSOR_API_KEY`
+На сервері мають бути тільки:
+- `docker-compose.yml`
+- `.env`
+- `state.db` (або `touch state.db`, якщо перший запуск)
 
-Для Docker DB зберігається у named volume, шлях задається через `DB_PATH`
-(у `docker-compose.yml` вже встановлено).
+### 2) Збірка і пуш образів (на dev машині)
 
-Згенерувати API ключ для сенсора можна так:
 ```bash
-python scripts/sensor_manager.py token --generate
+docker build -t yourname/powerbot:1.0.0 -f Dockerfile .
+docker build -t yourname/powerbot-migrate:1.0.0 -f Dockerfile.migrate .
+docker push yourname/powerbot:1.0.0
+docker push yourname/powerbot-migrate:1.0.0
 ```
 
-### 2) Запуск повного стеку (бот + nginx)
+### 3) Запуск на сервері
+
+У `docker-compose.yml` вкажіть свої image або передайте через змінні:
 
 ```bash
+POWERBOT_IMAGE=yourname/powerbot:1.0.0 \
+POWERBOT_MIGRATE_IMAGE=yourname/powerbot-migrate:1.0.0 \
+docker compose pull
+
 docker compose up -d
 ```
 
-Це запускає:
-- `powerbot-prod` (бот)
-- `powerbot-nginx` (reverse proxy на 80 порт)
-
-### 3) Запуск test контейнера (опційно)
-
-```bash
-docker compose --profile test up -d
+Публічний endpoint для сенсорів:
+```
+http://your-domain-or-ip:8081/api/v1/heartbeat
 ```
 
-Endpoint `/api/v1/heartbeat-test` працює тільки якщо `powerbot-test` запущено.
+### 4) Міграції БД (коли змінюється schema)
 
-### 4) Ініціалізація БД
+```bash
+POWERBOT_IMAGE=yourname/powerbot:1.0.0 \
+POWERBOT_MIGRATE_IMAGE=yourname/powerbot-migrate:1.0.0 \
+docker compose --profile migrate run --rm migrate
+```
 
-Контейнер сам створює `state.db`, якщо його немає, використовуючи `schema.sql`.
+Під час міграції створюється бекап у тій же директорії, де лежить `state.db`
+(наприклад `state_YYYYMMDD_HHMMSS.db`).
 
 ## ⚙️ Конфігурація (.env)
 
@@ -251,8 +256,8 @@ API_PORT=8081
 SENSOR_API_KEY="your-64-char-hex-key"
 SENSOR_TIMEOUT_SEC=150
 
-# Шлях до БД (опційно, потрібно для Docker named volumes)
-DB_PATH="/data/prod/state.db"
+# Шлях до БД (опційно, потрібно для Docker з bind-mount)
+DB_PATH="/data/state.db"
 
 # Параметри масових розсилок
 BROADCAST_RATE_PER_SEC=20
@@ -263,6 +268,11 @@ BROADCAST_MAX_RETRIES=1
 ## 🔌 Sensors API
 
 ### Heartbeat Endpoint (prod)
+
+При прямому доступі без nginx використовуйте домен + порт:
+```
+http://your-domain-or-ip:8081/api/v1/heartbeat
+```
 
 ```bash
 POST /api/v1/heartbeat
@@ -277,8 +287,13 @@ Content-Type: application/json
 
 ### Heartbeat Endpoint (test)
 
+Якщо запускаєте тестовий бот на тому ж хості — використовуйте інший порт:
+```
+http://your-domain-or-ip:8082/api/v1/heartbeat
+```
+
 ```bash
-POST /api/v1/heartbeat-test
+POST /api/v1/heartbeat
 Content-Type: application/json
 
 {
@@ -300,8 +315,8 @@ Content-Type: application/json
 
 ### Health endpoint
 
-- `/health` → prod (порт 8081)
-- `/health-test` → test (порт 8082)
+- `http://your-domain-or-ip:8081/health` → prod
+- `http://your-domain-or-ip:8082/health` → test
 
 ## 📦 Деплой
 

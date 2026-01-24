@@ -38,7 +38,7 @@ void setup() {
     Serial.println("  Плата: Waveshare ESP32-S3-POE-ETH-CAM-KIT");
     Serial.printf("  Building: %s (ID: %d)\n", BUILDING_NAME, BUILDING_ID);
     Serial.printf("  Sensor:   %s\n", SENSOR_UUID);
-    Serial.printf("  Server:   %s:%d\n", SERVER_IP, SERVER_PORT);
+    Serial.printf("  Server:   %s:%d\n", SERVER_HOST, SERVER_PORT);
     Serial.println("================================================");
     Serial.println();
     
@@ -182,7 +182,7 @@ void setupEthernet() {
 }
 
 bool sendHeartbeat() {
-    Serial.printf("🌐 Підключення до %s:%d...\n", SERVER_IP, SERVER_PORT);
+    Serial.printf("🌐 Підключення до %s:%d...\n", SERVER_HOST, SERVER_PORT);
     
     // Перевіряємо стан мережі
     Serial.printf("   Local IP: %s\n", Ethernet.localIP().toString().c_str());
@@ -190,18 +190,18 @@ bool sendHeartbeat() {
     Serial.printf("   Link:     %s\n", Ethernet.linkStatus() == LinkON ? "ON" : "OFF");
     
     // Перетворюємо IP рядок в IPAddress
-    IPAddress serverIP;
-    if (!serverIP.fromString(SERVER_IP)) {
-        Serial.println("❌ Невірний формат IP адреси сервера!");
-        return false;
-    }
-    Serial.printf("   Server IP parsed: %s\n", serverIP.toString().c_str());
-    
     // Таймаут підключення
     ethClient.setTimeout(10000);
     
     Serial.println("   Спроба connect()...");
-    int result = ethClient.connect(serverIP, SERVER_PORT);
+    IPAddress serverIP;
+    int result = 0;
+    if (serverIP.fromString(SERVER_HOST)) {
+        Serial.printf("   Parsed IP: %s\n", serverIP.toString().c_str());
+        result = ethClient.connect(serverIP, SERVER_PORT);
+    } else {
+        result = ethClient.connect(SERVER_HOST, SERVER_PORT);
+    }
     Serial.printf("   Connect result: %d\n", result);
     
     if (!result) {
@@ -227,7 +227,7 @@ bool sendHeartbeat() {
     // HTTP POST запит
     ethClient.println("POST /api/v1/heartbeat HTTP/1.1");
     ethClient.print("Host: ");
-    ethClient.println(SERVER_IP);
+    ethClient.println(SERVER_HOST);
     ethClient.println("Content-Type: application/json");
     ethClient.println("Connection: close");
     ethClient.print("Content-Length: ");

@@ -1,40 +1,26 @@
 services:
-  powerbot-prod:
-    build: .
-    container_name: powerbot-prod
+  powerbot:
+    image: ${POWERBOT_IMAGE:-yourname/powerbot:latest}
+    container_name: powerbot
     env_file:
-      - ./prod/.env
+      - ./.env
     environment:
       BOT_ENV: prod
-      DB_PATH: /data/prod/state.db
+      DB_PATH: /data/state.db
     volumes:
-      - prod_db:/data/prod
-    restart: unless-stopped
-
-  powerbot-test:
-    build: .
-    container_name: powerbot-test
-    env_file:
-      - ./test/.env
-    environment:
-      BOT_ENV: test
-      DB_PATH: /data/test/state.db
-    volumes:
-      - test_db:/data/test
-    restart: unless-stopped
-    profiles: ["test"]
-
-  nginx:
-    image: nginx:stable-alpine
-    container_name: powerbot-nginx
+      - ./state.db:/data/state.db
     ports:
-      - "80:80"
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - powerbot-prod
+      - "8081:8081"
     restart: unless-stopped
 
-volumes:
-  prod_db:
-  test_db:
+  migrate:
+    image: ${POWERBOT_MIGRATE_IMAGE:-yourname/powerbot-migrate:latest}
+    container_name: powerbot-migrate
+    env_file:
+      - ./.env
+    environment:
+      TARGET_DB: /data/state.db
+      SCHEMA_PATH: /app/schema.sql
+    volumes:
+      - ./state.db:/data/state.db
+    profiles: ["migrate"]

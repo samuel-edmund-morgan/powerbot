@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY migrate_db.py /app/migrate_db.py
+COPY schema.sql /app/schema.sql
+
+ENTRYPOINT ["python", "/app/migrate_db.py"]
