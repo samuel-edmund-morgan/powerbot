@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
 import logging
+import asyncio
 from datetime import datetime, timedelta
 
 from config import CFG
@@ -1656,10 +1657,14 @@ async def reply_light_old(message: Message):
     # Надсилаємо повідомлення з НОВОЮ reply keyboard
     await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
     # Викликаємо нову функціональність - показуємо статус світла
-    from database import get_user_vote
-    user_vote = await get_user_vote(message.chat.id, "light")
-    text = await format_power_status(message.chat.id)
-    await message.answer(text, reply_markup=get_vote_keyboard(user_vote))
+    text = await format_light_status(message.chat.id)
+    await message.answer(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
+        ]),
+    )
 
 
 @router.message(F.text == "♨️ Опалення")
