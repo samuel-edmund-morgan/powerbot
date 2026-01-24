@@ -1,16 +1,9 @@
 """Модуль для отримання погоди."""
 
-import os
 import aiohttp
 import logging
 
-# Координати за замовчуванням — центр Києва
-# Можна змінити через WEATHER_LAT і WEATHER_LON в .env
-WEATHER_LAT = float(os.getenv("WEATHER_LAT", "50.4501"))
-WEATHER_LON = float(os.getenv("WEATHER_LON", "30.5234"))
-
-# Open-Meteo API — безкоштовний, без ключа
-WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
+from config import CFG
 
 # Коди погоди WMO -> текст українською
 WMO_CODES = {
@@ -53,15 +46,15 @@ async def get_weather() -> str | None:
         Рядок з погодою або None при помилці
     """
     params = {
-        "latitude": WEATHER_LAT,
-        "longitude": WEATHER_LON,
+        "latitude": CFG.weather_lat,
+        "longitude": CFG.weather_lon,
         "current": "temperature_2m,weather_code",
-        "timezone": "Europe/Kyiv",
+        "timezone": CFG.weather_timezone,
     }
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(WEATHER_API_URL, params=params, timeout=10) as resp:
+            async with session.get(CFG.weather_api_url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     logging.warning("Weather API returned %s", resp.status)
                     return None

@@ -16,14 +16,6 @@ import aiohttp
 
 from config import CFG
 
-# ID міста Київ
-KYIV_CITY_ID_UKRAINEALARM = "31"  # для ukrainealarm.com
-KYIV_CITY_UID_ALERTS_IN_UA = "31"  # для alerts.in.ua (м. Київ)
-
-# URLs API
-UKRAINEALARM_API_URL = "https://api.ukrainealarm.com/api/v3"
-ALERTS_IN_UA_API_URL = "https://api.alerts.in.ua/v1"
-
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +35,7 @@ class AlertStatus:
 # alerts.in.ua оновлюється кожні 15 сек, ukrainealarm має суворіший rate limit
 _request_counter = 0
 # alerts.in.ua як основне джерело (3 з 4 запитів), ukrainealarm як резерв (1 з 4)
-ALERTS_IN_UA_RATIO = 3  # 75% запитів до alerts.in.ua
+ALERTS_IN_UA_RATIO = max(0, CFG.alerts_in_ua_ratio)  # 75% запитів до alerts.in.ua за замовчуванням
 
 
 def _get_next_source() -> AlertSource:
@@ -82,7 +74,7 @@ async def get_kyiv_alerts_ukrainealarm() -> Optional[bool]:
     try:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            url = f"{UKRAINEALARM_API_URL}/alerts/{KYIV_CITY_ID_UKRAINEALARM}"
+            url = f"{CFG.alerts_api_url}/alerts/{CFG.alerts_city_id_ukrainealarm}"
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -137,7 +129,7 @@ async def get_kyiv_alerts_in_ua() -> Optional[bool]:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             # IoT endpoint для конкретного регіону
-            url = f"{ALERTS_IN_UA_API_URL}/iot/active_air_raid_alerts/{KYIV_CITY_UID_ALERTS_IN_UA}.json"
+            url = f"{CFG.alerts_in_ua_api_url}/iot/active_air_raid_alerts/{CFG.alerts_city_uid_alerts_in_ua}.json"
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     # Відповідь - просто рядок "A", "P" або "N"
