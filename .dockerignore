@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+*.sqlite3
+backups/
+logs/
+.env
+*.env
+.env.*
+!.env.example
+prod/state.db
+test/state.db
