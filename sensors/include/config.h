@@ -12,11 +12,11 @@
 // НАЛАШТУВАННЯ СЕРВЕРА
 // ═══════════════════════════════════════════════════════════════
 
-// IP адреса сервера
-#define SERVER_IP       "64.181.205.211"
+// Домен або IP сервера (HTTP)
+#define SERVER_HOST     "new-england.morgan-dev.com"
 
-// Порт (80 через nginx)
-#define SERVER_PORT     80
+// Порт HTTP API (prod = 8081, test = 8082)
+#define SERVER_PORT     8081
 
 // API ключ (однаковий для всіх сенсорів)
 #define API_KEY         "e083c38d50d164ea1f9d4491147b73df1b42741675daa8e3f520800eccebd08c"

@@ -3,7 +3,7 @@ set -e
 
 BOT_ENV_NAME="${BOT_ENV:-prod}"
 WORKDIR="/app/${BOT_ENV_NAME}"
-DB_PATH="${DB_PATH:-${WORKDIR}/state.db}"
+DB_PATH="${DB_PATH:-/data/state.db}"
 SCHEMA_PATH="/app/schema.sql"
 
 if [ ! -d "$WORKDIR" ]; then

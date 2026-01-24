@@ -32,15 +32,21 @@ import sqlite3
 import sys
 import os
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 
-# Шляхи
-BASE_DIR = Path("/home/powerbot/powerbot")
-TEST_DB = BASE_DIR / "test" / "state.db"
-PROD_DB = BASE_DIR / "prod" / "state.db"
-BACKUP_DIR = BASE_DIR / "backups" / "db"
+# Шляхи (можна перевизначити через env)
+BASE_DIR = Path(os.getenv("POWERBOT_BASE_DIR", "/home/powerbot/powerbot"))
+TEST_DB = Path(os.getenv("TEST_DB", str(BASE_DIR / "test" / "state.db")))
+PROD_DB = Path(
+    os.getenv("PROD_DB")
+    or os.getenv("TARGET_DB")
+    or os.getenv("DB_PATH", str(BASE_DIR / "prod" / "state.db"))
+)
+BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(PROD_DB.parent)))
+SCHEMA_PATH = os.getenv("SCHEMA_PATH")
 
 # Таблиці, які НЕ можна перезаписувати (користувацькі/динамічні дані)
 USER_DATA_TABLES = {
@@ -90,10 +96,18 @@ def log_action(msg: str):
 
 
 class DatabaseMigrator:
-    def __init__(self, dry_run: bool = False, verbose: bool = False):
+    def __init__(
+        self,
+        dry_run: bool = False,
+        verbose: bool = False,
+        test_db: Path | None = None,
+        prod_db: Path | None = None,
+    ):
         self.dry_run = dry_run
         self.verbose = verbose
         self.changes: List[str] = []
+        self.test_db = test_db or TEST_DB
+        self.prod_db = prod_db or PROD_DB
     
     def get_table_info(self, db_path: Path) -> Dict[str, List[Dict]]:
         """Отримує інформацію про всі таблиці в БД."""
@@ -137,8 +151,8 @@ class DatabaseMigrator:
     
     def compare_schemas(self) -> Dict[str, Any]:
         """Порівнює схеми test і prod баз даних."""
-        test_info = self.get_table_info(TEST_DB)
-        prod_info = self.get_table_info(PROD_DB)
+        test_info = self.get_table_info(self.test_db)
+        prod_info = self.get_table_info(self.prod_db)
         
         comparison = {
             "new_tables": [],
@@ -174,13 +188,13 @@ class DatabaseMigrator:
         backup_path = BACKUP_DIR / f"state_{timestamp}.db"
         
         if not self.dry_run:
-            shutil.copy2(PROD_DB, backup_path)
+            shutil.copy2(self.prod_db, backup_path)
         
         return backup_path
     
     def add_table(self, table_name: str):
         """Додає нову таблицю з test в prod."""
-        create_sql = self.get_create_statement(TEST_DB, table_name)
+        create_sql = self.get_create_statement(self.test_db, table_name)
         
         if self.verbose:
             print(f"    SQL: {create_sql[:100]}...")
@@ -188,7 +202,7 @@ class DatabaseMigrator:
         self.changes.append(f"Додано таблицю: {table_name}")
         
         if not self.dry_run:
-            conn = sqlite3.connect(PROD_DB)
+            conn = sqlite3.connect(self.prod_db)
             cursor = conn.cursor()
             cursor.execute(create_sql)
             conn.commit()
@@ -219,7 +233,7 @@ class DatabaseMigrator:
         self.changes.append(f"Додано колонку {table_name}.{col_name} ({col_type})")
         
         if not self.dry_run:
-            conn = sqlite3.connect(PROD_DB)
+            conn = sqlite3.connect(self.prod_db)
             cursor = conn.cursor()
             try:
                 cursor.execute(alter_sql)
@@ -238,8 +252,8 @@ class DatabaseMigrator:
             log_warning(f"Пропускаємо міграцію даних для {table_name} (захищена таблиця)")
             return
         
-        conn_test = sqlite3.connect(TEST_DB)
-        conn_prod = sqlite3.connect(PROD_DB)
+        conn_test = sqlite3.connect(self.test_db)
+        conn_prod = sqlite3.connect(self.prod_db)
         
         cursor_test = conn_test.cursor()
         cursor_prod = conn_prod.cursor()
@@ -280,12 +294,12 @@ class DatabaseMigrator:
             print("")
         
         # Перевірка файлів
-        if not TEST_DB.exists():
-            log_error(f"Файл {TEST_DB} не знайдено")
+        if not self.test_db.exists():
+            log_error(f"Файл {self.test_db} не знайдено")
             return False
         
-        if not PROD_DB.exists():
-            log_error(f"Файл {PROD_DB} не знайдено")
+        if not self.prod_db.exists():
+            log_error(f"Файл {self.prod_db} не знайдено")
             return False
         
         # Бекап
@@ -327,7 +341,7 @@ class DatabaseMigrator:
         print(f"{Colors.BLUE}5. Міграція статичних даних{Colors.NC}")
         static_tables = ["general_services", "places", "buildings"]
         for table in static_tables:
-            test_info = self.get_table_info(TEST_DB)
+            test_info = self.get_table_info(self.test_db)
             if table in test_info:
                 log_action(f"Мігрую дані: {table}")
                 self.migrate_static_data(table)
@@ -353,16 +367,33 @@ class DatabaseMigrator:
         print("     sudo systemctl start bot-prod.service")
         print("")
         print("  2. При проблемах відкатіть з бекапу:")
-        print(f"     cp {backup_path} {PROD_DB}")
+        print(f"     cp {backup_path} {self.prod_db}")
         
         return True
+
+
+def prepare_schema_db(schema_path: str) -> Path:
+    """Створює тимчасову БД з schema.sql для порівняння."""
+    tmp_dir = Path(tempfile.gettempdir())
+    tmp_db = tmp_dir / "powerbot_schema.db"
+    if tmp_db.exists():
+        tmp_db.unlink()
+    conn = sqlite3.connect(tmp_db)
+    with open(schema_path, "r", encoding="utf-8") as f:
+        conn.executescript(f.read())
+    conn.close()
+    return tmp_db
 
 
 def main():
     dry_run = "--dry-run" in sys.argv
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     
-    migrator = DatabaseMigrator(dry_run=dry_run, verbose=verbose)
+    test_db = TEST_DB
+    prod_db = PROD_DB
+    if SCHEMA_PATH:
+        test_db = prepare_schema_db(SCHEMA_PATH)
+    migrator = DatabaseMigrator(dry_run=dry_run, verbose=verbose, test_db=test_db, prod_db=prod_db)
     success = migrator.run()
     
     sys.exit(0 if success else 1)
