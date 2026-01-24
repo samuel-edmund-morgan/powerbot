@@ -1,0 +1,27 @@
+services:
+  powerbot-prod:
+    build: .
+    container_name: powerbot-prod
+    environment:
+      BOT_ENV: prod
+    env_file:
+      - ./prod/.env
+    volumes:
+      - ./prod:/app/prod
+      - ./test:/app/test:ro
+    network_mode: host
+    restart: unless-stopped
+
+  powerbot-test:
+    build: .
+    container_name: powerbot-test
+    environment:
+      BOT_ENV: test
+    env_file:
+      - ./test/.env
+    volumes:
+      - ./test:/app/test
+      - ./prod:/app/prod:ro
+    network_mode: host
+    restart: unless-stopped
+    profiles: ["test"]

@@ -39,8 +39,14 @@ Telegram бот для моніторингу електропостачання
 │   └── sensor_manager.py
 │
 ├── sensors/                # ESP32 firmware/супутні матеріали
+├── docker/                 # Docker entrypoint
+│   └── entrypoint.sh
 ├── nginx.default.conf      # Nginx конфіг для доступу по IP
 ├── nginx.sensors.conf      # Nginx конфіг для домену sensors.*
+├── Dockerfile              # Docker image
+├── docker-compose.yml      # Docker compose
+├── .dockerignore           # Docker ignore
+├── requirements.txt        # Python dependencies
 ├── deploy_code.sh          # Деплой коду test → prod
 ├── migrate_db.py           # Міграція БД test → prod (безпечне злиття)
 ├── schema.sql              # Схема бази даних
@@ -161,6 +167,41 @@ sudo ln -sf /etc/nginx/sites-available/sensors /etc/nginx/sites-enabled/sensors
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+## 🐳 Docker деплой
+
+### 1) Підготовка .env
+
+Заповніть `prod/.env` (або `test/.env`). Мінімально потрібні:
+- `BOT_TOKEN`
+- `BOT_USERNAME`
+- `ADMIN_IDS`
+- `ALERTS_API_KEY` / `ALERTS_IN_UA_API_KEY`
+- `SENSOR_API_KEY`
+
+Згенерувати API ключ для сенсора можна так:
+```bash
+python scripts/sensor_manager.py token --generate
+```
+
+### 2) Запуск production контейнера (1 команда)
+
+```bash
+docker compose up -d powerbot-prod
+```
+
+Контейнер читає `prod/.env` і запускає `/app/prod/main.py`.
+
+### 3) Запуск test контейнера (опційно)
+
+```bash
+docker compose --profile test up -d powerbot-test
+```
+
+### 4) Nginx (опційно)
+
+Якщо потрібен reverse proxy — використайте готові `nginx.default.conf` та `nginx.sensors.conf`
+з цього репозиторію (див. розділ “Налаштування nginx”).
+
 ## ⚙️ Конфігурація (.env)
 
 ```bash
@@ -179,6 +220,8 @@ ADMIN_TAG="@YourAdminUsername"
 # Координати для погоди (Open-Meteo)
 WEATHER_LAT="50.4501"
 WEATHER_LON="30.5234"
+WEATHER_API_URL="https://api.open-meteo.com/v1/forecast"
+WEATHER_TIMEZONE="Europe/Kyiv"
 
 # Телефони сервісів
 SECURITY_PHONE="+380XXXXXXXXX"
@@ -189,12 +232,22 @@ ELEVATOR_PHONES="+380XXXXXXXXX, +380XXXXXXXXX"
 # API ключі для тривог
 ALERTS_API_KEY="your_alerts_api_key_here"
 ALERTS_IN_UA_API_KEY="your_alerts_in_ua_api_key_here"
+ALERTS_CITY_ID_UKRAINEALARM="31"
+ALERTS_CITY_UID_ALERTS_IN_UA="31"
+ALERTS_API_URL="https://api.ukrainealarm.com/api/v3"
+ALERTS_IN_UA_API_URL="https://api.alerts.in.ua/v1"
+ALERTS_IN_UA_RATIO=3
 
 # ESP32 сенсори
 # Для prod: API_PORT=8081, для test: API_PORT=8082
 API_PORT=8081
 SENSOR_API_KEY="your-64-char-hex-key"
 SENSOR_TIMEOUT_SEC=150
+
+# Параметри масових розсилок
+BROADCAST_RATE_PER_SEC=20
+BROADCAST_CONCURRENCY=8
+BROADCAST_MAX_RETRIES=1
 ```
 
 ## 🔌 Sensors API
