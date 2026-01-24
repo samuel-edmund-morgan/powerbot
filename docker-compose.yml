@@ -2,26 +2,39 @@ services:
   powerbot-prod:
     build: .
     container_name: powerbot-prod
-    environment:
-      BOT_ENV: prod
     env_file:
       - ./prod/.env
+    environment:
+      BOT_ENV: prod
+      DB_PATH: /data/prod/state.db
     volumes:
-      - ./prod:/app/prod
-      - ./test:/app/test:ro
-    network_mode: host
+      - prod_db:/data/prod
     restart: unless-stopped
 
   powerbot-test:
     build: .
     container_name: powerbot-test
-    environment:
-      BOT_ENV: test
     env_file:
       - ./test/.env
+    environment:
+      BOT_ENV: test
+      DB_PATH: /data/test/state.db
     volumes:
-      - ./test:/app/test
-      - ./prod:/app/prod:ro
-    network_mode: host
+      - test_db:/data/test
     restart: unless-stopped
     profiles: ["test"]
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: powerbot-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - powerbot-prod
+    restart: unless-stopped
+
+volumes:
+  prod_db:
+  test_db:

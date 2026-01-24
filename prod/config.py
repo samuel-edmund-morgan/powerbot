@@ -75,5 +75,5 @@ CFG = Config(
     sensor_timeout=int(os.getenv("SENSOR_TIMEOUT_SEC", "150")),
 )
 
-# Шлях до БД відносно робочого каталогу
-DB_PATH = str(Path.cwd() / "state.db")
+# Шлях до БД: з env або відносно робочого каталогу
+DB_PATH = os.getenv("DB_PATH", str(Path.cwd() / "state.db"))

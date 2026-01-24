@@ -40,7 +40,8 @@ Telegram бот для моніторингу електропостачання
 │
 ├── sensors/                # ESP32 firmware/супутні матеріали
 ├── docker/                 # Docker entrypoint
-│   └── entrypoint.sh
+│   ├── entrypoint.sh
+│   └── nginx.conf
 ├── nginx.default.conf      # Nginx конфіг для доступу по IP
 ├── nginx.sensors.conf      # Nginx конфіг для домену sensors.*
 ├── Dockerfile              # Docker image
@@ -178,29 +179,35 @@ sudo nginx -t && sudo systemctl reload nginx
 - `ALERTS_API_KEY` / `ALERTS_IN_UA_API_KEY`
 - `SENSOR_API_KEY`
 
+Для Docker DB зберігається у named volume, шлях задається через `DB_PATH`
+(у `docker-compose.yml` вже встановлено).
+
 Згенерувати API ключ для сенсора можна так:
 ```bash
 python scripts/sensor_manager.py token --generate
 ```
 
-### 2) Запуск production контейнера (1 команда)
+### 2) Запуск повного стеку (бот + nginx)
 
 ```bash
-docker compose up -d powerbot-prod
+docker compose up -d
 ```
 
-Контейнер читає `prod/.env` і запускає `/app/prod/main.py`.
+Це запускає:
+- `powerbot-prod` (бот)
+- `powerbot-nginx` (reverse proxy на 80 порт)
 
 ### 3) Запуск test контейнера (опційно)
 
 ```bash
-docker compose --profile test up -d powerbot-test
+docker compose --profile test up -d
 ```
 
-### 4) Nginx (опційно)
+Endpoint `/api/v1/heartbeat-test` працює тільки якщо `powerbot-test` запущено.
 
-Якщо потрібен reverse proxy — використайте готові `nginx.default.conf` та `nginx.sensors.conf`
-з цього репозиторію (див. розділ “Налаштування nginx”).
+### 4) Ініціалізація БД
+
+Контейнер сам створює `state.db`, якщо його немає, використовуючи `schema.sql`.
 
 ## ⚙️ Конфігурація (.env)
 
@@ -243,6 +250,9 @@ ALERTS_IN_UA_RATIO=3
 API_PORT=8081
 SENSOR_API_KEY="your-64-char-hex-key"
 SENSOR_TIMEOUT_SEC=150
+
+# Шлях до БД (опційно, потрібно для Docker named volumes)
+DB_PATH="/data/prod/state.db"
 
 # Параметри масових розсилок
 BROADCAST_RATE_PER_SEC=20
