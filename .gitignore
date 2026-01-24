@@ -71,3 +71,4 @@ htmlcov/
 coverage.xml
 *.cover
 .github/
+AGENTS.md
