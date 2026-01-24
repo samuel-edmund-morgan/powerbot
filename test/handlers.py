@@ -9,17 +9,19 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
+import logging
 from datetime import datetime, timedelta
 
 from config import CFG
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
-    get_last_event
+    get_last_event, get_subscriber_building, get_building_by_id
 )
 from services import state_text, calculate_stats, format_duration
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 # ============ FSM States для інтерактивного додавання закладу ============
@@ -211,6 +213,16 @@ async def show_place_with_map(message: Message, place_id: int):
         await message.answer(text, reply_markup=keyboard)
 
 
+async def get_user_building_text(user_id: int) -> str:
+    """Отримати текст з назвою будинку користувача."""
+    building_id = await get_subscriber_building(user_id)
+    if building_id:
+        building = get_building_by_id(building_id)
+        if building:
+            return f"🏢 Ваш будинок: {building['name']}"
+    return "🏢 Будинок не обрано"
+
+
 async def get_alert_status_text() -> str:
     """Отримати текст статусу тривоги з кешу (без запиту до API)."""
     alert_state = await db_get("last_alert_state")
@@ -262,20 +274,18 @@ def get_reply_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="🏠 Обрати будинок"),
             ],
             [
-                KeyboardButton(text="☀️ Світло"),
-                KeyboardButton(text="♨️ Опалення"),
+                KeyboardButton(text="💡 Світло/опалення/вода"),
             ],
             [
-                KeyboardButton(text="💧 Вода"),
                 KeyboardButton(text="🏢 Заклади в ЖК"),
+                KeyboardButton(text="🔍 Пошук закладу"),
             ],
             [
-                KeyboardButton(text="🔍 Пошук"),
+                KeyboardButton(text="🚨 Тривоги та укриття"),
                 KeyboardButton(text="📞 Сервісна служба"),
             ],
             [
-                KeyboardButton(text="📈 Статистика"),
-                KeyboardButton(text="🔔 Сповіщення"),
+                KeyboardButton(text="🔔 Сповіщення та тихі години"),
             ],
             [
                 KeyboardButton(text="☕ Подякувати розробнику"),
@@ -293,20 +303,18 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏠 Обрати будинок", callback_data="select_building"),
         ],
         [
-            InlineKeyboardButton(text="☀️ Світло", callback_data="status"),
-            InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu"),
+            InlineKeyboardButton(text="💡 Світло/опалення/вода", callback_data="utilities_menu"),
         ],
         [
-            InlineKeyboardButton(text="💧 Вода", callback_data="water_menu"),
             InlineKeyboardButton(text="🏢 Заклади в ЖК", callback_data="places_menu"),
+            InlineKeyboardButton(text="🔍 Пошук закладу", callback_data="search_menu"),
         ],
         [
-            InlineKeyboardButton(text="🔍 Пошук", callback_data="search_menu"),
+            InlineKeyboardButton(text="🚨 Тривоги та укриття", callback_data="alerts_menu"),
             InlineKeyboardButton(text="📞 Сервісна служба", callback_data="service_menu"),
         ],
         [
-            InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
-            InlineKeyboardButton(text="🔔 Сповіщення", callback_data="notifications_menu"),
+            InlineKeyboardButton(text="🔔 Сповіщення та тихі години", callback_data="notifications_menu"),
         ],
         [
             InlineKeyboardButton(text="☕ Подякувати розробнику", callback_data="donate"),
@@ -417,6 +425,7 @@ def get_buildings_keyboard() -> InlineKeyboardMarkup:
 @router.message(F.text == "🏠 Обрати будинок")
 async def reply_select_building(message: Message):
     """Обробник кнопки 'Обрати будинок' з ReplyKeyboard."""
+    logger.info(f"User {message.chat.id} clicked reply: Обрати будинок")
     try:
         await message.delete()
     except Exception:
@@ -441,6 +450,7 @@ async def reply_select_building(message: Message):
 @router.callback_query(F.data == "select_building")
 async def cb_select_building(callback: CallbackQuery):
     """Показати меню вибору будинку."""
+    logger.info(f"User {callback.from_user.id} clicked: Обрати будинок")
     from database import get_subscriber_building, get_building_by_id
     
     building_id = await get_subscriber_building(callback.message.chat.id)
@@ -531,6 +541,7 @@ async def cmd_start(message: Message):
         username=user.username if user else None,
         first_name=user.first_name if user else None,
     )
+    logger.info(f"User {message.chat.id} ({user.username or user.first_name}) started bot")
     
     # Перевіряємо чи є deep link параметр (place_123)
     args = message.text.split()[1] if len(message.text.split()) > 1 else None
@@ -550,10 +561,11 @@ async def cmd_start(message: Message):
         reply_markup=get_reply_keyboard()
     )
     # Також показуємо InlineKeyboard в чаті
-    alert_status = await get_alert_status_text()
+    building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
+    alert_status = await get_alert_status_text()
     await message.answer(
-        f"🏠 <b>Головне меню</b>\n{alert_status}\n{light_status}\n\nОберіть дію:",
+        f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
 
@@ -561,16 +573,18 @@ async def cmd_start(message: Message):
 @router.message(Command("menu"))
 async def cmd_menu(message: Message):
     """Показати головне меню з кнопками."""
+    logger.info(f"User {message.chat.id} opened menu")
     # Оновлюємо ReplyKeyboard
     await message.answer(
         "🏠 <b>Головне меню</b>",
         reply_markup=get_reply_keyboard()
     )
     # Показуємо InlineKeyboard
-    alert_status = await get_alert_status_text()
+    building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
+    alert_status = await get_alert_status_text()
     await message.answer(
-        f"{alert_status}\n{light_status}\n\nОберіть дію:",
+        f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
 
@@ -714,9 +728,11 @@ async def cmd_stats(message: Message):
 @router.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery):
     """Показати головне меню."""
-    alert_status = await get_alert_status_text()
+    logger.info(f"User {callback.from_user.id} clicked: Головне меню")
+    building_text = await get_user_building_text(callback.from_user.id)
     light_status = await get_light_status_text(callback.message.chat.id)
-    text = f"🏠 <b>Головне меню</b>\n{alert_status}\n{light_status}\n\nОберіть дію:"
+    alert_status = await get_alert_status_text()
+    text = f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:"
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
     if callback.message.photo:
@@ -734,9 +750,111 @@ async def cb_menu(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "utilities_menu")
+async def cb_utilities_menu(callback: CallbackQuery):
+    """Показати меню Світло/Опалення/Вода."""
+    logger.info(f"User {callback.from_user.id} clicked: Світло/опалення/вода")
+    text = "💡 <b>Світло / Опалення / Вода</b>\n\nОберіть розділ:"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="☀️ Світло", callback_data="status"),
+        ],
+        [
+            InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu"),
+        ],
+        [
+            InlineKeyboardButton(text="💧 Вода", callback_data="water_menu"),
+        ],
+        [
+            InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
+        ],
+        [
+            InlineKeyboardButton(text="« Меню", callback_data="menu"),
+        ],
+    ])
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "alerts_menu")
+async def cb_alerts_menu(callback: CallbackQuery):
+    """Показати меню Тривоги та укриття."""
+    logger.info(f"User {callback.from_user.id} clicked: Тривоги та укриття")
+    alert_status = await get_alert_status_text()
+    text = f"🚨 <b>Тривоги та укриття</b>\n\nПоточний стан: {alert_status}\n\nОберіть дію:"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📡 Стан тривоги", callback_data="alert_status"),
+        ],
+        [
+            InlineKeyboardButton(text="🏛 Укриття", callback_data="shelters"),
+        ],
+        [
+            InlineKeyboardButton(text="« Меню", callback_data="menu"),
+        ],
+    ])
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "alert_status")
+async def cb_alert_status(callback: CallbackQuery):
+    """Показати поточний стан тривоги (з кешу БД)."""
+    logger.info(f"User {callback.from_user.id} clicked: Стан тривоги")
+    alert_state = await db_get("last_alert_state")
+    
+    if alert_state == "active":
+        text = (
+            "🚨 <b>ПОВІТРЯНА ТРИВОГА!</b>\n\n"
+            "⚠️ Оголошено повітряну тривогу в місті Київ.\n"
+            "🏃 Прямуйте до найближчого укриття!"
+        )
+    elif alert_state == "inactive":
+        text = (
+            "✅ <b>Відбій тривоги</b>\n\n"
+            "Наразі повітряної тривоги в Києві немає.\n"
+            "🏠 Можна залишатись вдома."
+        )
+    else:
+        text = "❓ <b>Статус невідомий</b>\n\nДані про тривогу ще не отримано."
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Оновити", callback_data="alert_status"),
+        ],
+        [
+            InlineKeyboardButton(text="« Назад", callback_data="alerts_menu"),
+        ],
+    ])
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        pass  # Якщо повідомлення не змінилось - ігноруємо
+    await callback.answer()
+
+
+@router.callback_query(F.data == "shelters")
+async def cb_shelters(callback: CallbackQuery):
+    """Показати інформацію про укриття (заглушка)."""
+    logger.info(f"User {callback.from_user.id} clicked: Укриття")
+    text = (
+        "🏛 <b>Укриття</b>\n\n"
+        "🚧 Цей розділ у розробці.\n\n"
+        "Незабаром тут з'явиться інформація про найближчі укриття."
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="« Назад", callback_data="alerts_menu"),
+        ],
+    ])
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "status")
 async def cb_status(callback: CallbackQuery):
     """Показати поточний статус світла."""
+    logger.info(f"User {callback.from_user.id} clicked: Світло")
     now = datetime.now().strftime("%H:%M:%S")
     
     # Додаємо погоду
@@ -787,6 +905,7 @@ async def format_stats_message(days: int | None, period_text: str) -> str:
 @router.callback_query(F.data == "stats")
 async def cb_stats(callback: CallbackQuery):
     """Показати статистику за весь час."""
+    logger.info(f"User {callback.from_user.id} clicked: Статистика (весь час)")
     text = await format_stats_message(None, "за весь час")
     await callback.message.edit_text(
         text,
@@ -794,9 +913,9 @@ async def cb_stats(callback: CallbackQuery):
             [
                 InlineKeyboardButton(text="📅 День", callback_data="stats_day"),
                 InlineKeyboardButton(text="📆 Тиждень", callback_data="stats_week"),
-                InlineKeyboardButton(text="📆 Місяць", callback_data="stats_month"),
+                InlineKeyboardButton(text="🗓 Місяць", callback_data="stats_month"),
             ],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
     await callback.answer()
@@ -805,15 +924,17 @@ async def cb_stats(callback: CallbackQuery):
 @router.callback_query(F.data == "stats_day")
 async def cb_stats_day(callback: CallbackQuery):
     """Показати статистику за день."""
+    logger.info(f"User {callback.from_user.id} clicked: Статистика (день)")
     text = await format_stats_message(1, "за останню добу")
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📆 Тиждень", callback_data="stats_week"),
+                InlineKeyboardButton(text="🗓 Місяць", callback_data="stats_month"),
                 InlineKeyboardButton(text="🗓 Весь час", callback_data="stats"),
             ],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
     await callback.answer()
@@ -822,15 +943,17 @@ async def cb_stats_day(callback: CallbackQuery):
 @router.callback_query(F.data == "stats_week")
 async def cb_stats_week(callback: CallbackQuery):
     """Показати статистику за тиждень."""
+    logger.info(f"User {callback.from_user.id} clicked: Статистика (тиждень)")
     text = await format_stats_message(7, "за останній тиждень")
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📅 День", callback_data="stats_day"),
+                InlineKeyboardButton(text="🗓 Місяць", callback_data="stats_month"),
                 InlineKeyboardButton(text="🗓 Весь час", callback_data="stats"),
             ],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
     await callback.answer()
@@ -839,6 +962,7 @@ async def cb_stats_week(callback: CallbackQuery):
 @router.callback_query(F.data == "stats_month")
 async def cb_stats_month(callback: CallbackQuery):
     """Показати статистику за місяць."""
+    logger.info(f"User {callback.from_user.id} clicked: Статистика (місяць)")
     text = await format_stats_message(30, "за останній місяць")
     await callback.message.edit_text(
         text,
@@ -846,8 +970,9 @@ async def cb_stats_month(callback: CallbackQuery):
             [
                 InlineKeyboardButton(text="📅 День", callback_data="stats_day"),
                 InlineKeyboardButton(text="📆 Тиждень", callback_data="stats_week"),
+                InlineKeyboardButton(text="🗓 Весь час", callback_data="stats"),
             ],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
     await callback.answer()
@@ -948,6 +1073,7 @@ async def cb_quiet_info(callback: CallbackQuery):
 @router.callback_query(F.data == "donate")
 async def cb_donate(callback: CallbackQuery):
     """Показати інформацію про підтримку розробника."""
+    logger.info(f"User {callback.from_user.id} clicked: Подякувати розробнику")
     text = (
         "☕ <b>Подякувати розробнику</b>\n\n"
         "Цей бот — некомерційний проєкт, створений для зручності мешканців ЖК.\n\n"
@@ -1428,61 +1554,65 @@ async def cmd_myid(message: Message):
 
 # ============ Обробники текстових повідомлень від ReplyKeyboard ============
 
-@router.message(F.text == "☀️ Світло")
-async def reply_status(message: Message):
-    """Обробник кнопки 'Світло' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
+@router.message(F.text == "💡 Світло/опалення/вода")
+async def reply_utilities(message: Message):
+    """Обробник кнопки 'Світло/опалення/вода' з ReplyKeyboard."""
+    logger.info(f"User {message.chat.id} clicked reply: Світло/опалення/вода")
     try:
         await message.delete()
     except Exception:
         pass
     
-    from weather import get_weather_line
-    weather_text = await get_weather_line()
-    now = datetime.now().strftime("%H:%M:%S")
-    
-    text = await format_light_status(message.chat.id)
-    text += weather_text
-    text += f"\n\n<i>Оновлено: {now}</i>"
-    
-    await message.answer(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
-        ])
-    )
+    text = "💡 <b>Світло / Опалення / Вода</b>\n\nОберіть розділ:"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="☀️ Світло", callback_data="status"),
+        ],
+        [
+            InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu"),
+        ],
+        [
+            InlineKeyboardButton(text="💧 Вода", callback_data="water_menu"),
+        ],
+        [
+            InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
+        ],
+        [
+            InlineKeyboardButton(text="« Меню", callback_data="menu"),
+        ],
+    ])
+    await message.answer(text, reply_markup=keyboard)
 
 
-@router.message(F.text == "📈 Статистика")
-async def reply_stats(message: Message):
-    """Обробник кнопки 'Статистика' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
+@router.message(F.text == "🚨 Тривоги та укриття")
+async def reply_alerts(message: Message):
+    """Обробник кнопки 'Тривоги та укриття' з ReplyKeyboard."""
+    logger.info(f"User {message.chat.id} clicked reply: Тривоги та укриття")
     try:
         await message.delete()
     except Exception:
         pass
     
-    await message.answer(
-        "📊 <b>Статистика відключень</b>\n\nОберіть період:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📅 День", callback_data="stats_day"),
-                InlineKeyboardButton(text="📅 Тиждень", callback_data="stats_week"),
-            ],
-            [
-                InlineKeyboardButton(text="📅 Місяць", callback_data="stats_month"),
-                InlineKeyboardButton(text="📅 Весь час", callback_data="stats_all"),
-            ],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
-        ])
-    )
+    alert_status = await get_alert_status_text()
+    text = f"🚨 <b>Тривоги та укриття</b>\n\nПоточний стан: {alert_status}\n\nОберіть дію:"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📡 Стан тривоги", callback_data="alert_status"),
+        ],
+        [
+            InlineKeyboardButton(text="🏛 Укриття", callback_data="shelters"),
+        ],
+        [
+            InlineKeyboardButton(text="« Меню", callback_data="menu"),
+        ],
+    ])
+    await message.answer(text, reply_markup=keyboard)
 
 
-@router.message(F.text == "🔔 Сповіщення")
+@router.message(F.text == "🔔 Сповіщення та тихі години")
 async def reply_notifications(message: Message):
-    """Обробник кнопки 'Сповіщення' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
+    """Обробник кнопки 'Сповіщення та тихі години' з ReplyKeyboard."""
+    logger.info(f"User {message.chat.id} clicked reply: Сповіщення та тихі години")
     try:
         await message.delete()
     except Exception:
@@ -1492,7 +1622,7 @@ async def reply_notifications(message: Message):
     settings = await get_notification_settings(chat_id)
     
     text = (
-        "🔔 <b>Сповіщення</b>\n\n"
+        "🔔 <b>Сповіщення та тихі години</b>\n\n"
         "Тут ви можете налаштувати які сповіщення отримувати:\n\n"
         f"☀️ <b>Світло:</b> {'увімкнено ✅' if settings['light_notifications'] else 'вимкнено ❌'}\n"
         f"🚨 <b>Тривоги:</b> {'увімкнено ✅' if settings['alert_notifications'] else 'вимкнено ❌'}\n"
@@ -1512,10 +1642,93 @@ async def reply_quiet(message: Message):
     await reply_notifications(message)
 
 
+# ============ Обробники для СТАРИХ кнопок (сумісність з попередньою версією) ============
+# Ці обробники оновлюють reply keyboard до нової версії
+
+@router.message(F.text == "💡 Світло")
+async def reply_light_old(message: Message):
+    """Обробник СТАРОЇ кнопки 'Світло' - оновлюємо клавіатуру і показуємо статус."""
+    logger.info(f"User {message.chat.id} uses old button: Світло - updating keyboard")
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    # Надсилаємо повідомлення з НОВОЮ reply keyboard
+    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    # Викликаємо нову функціональність - показуємо статус світла
+    from database import get_user_vote
+    user_vote = await get_user_vote(message.chat.id, "light")
+    text = await format_power_status(message.chat.id)
+    await message.answer(text, reply_markup=get_vote_keyboard(user_vote))
+
+
+@router.message(F.text == "♨️ Опалення")
+async def reply_heating_old(message: Message):
+    """Обробник СТАРОЇ кнопки 'Опалення' - оновлюємо клавіатуру і показуємо статус."""
+    logger.info(f"User {message.chat.id} uses old button: Опалення - updating keyboard")
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    # Надсилаємо повідомлення з НОВОЮ reply keyboard
+    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    # Викликаємо нову функціональність
+    from database import get_user_vote
+    user_vote = await get_user_vote(message.chat.id, "heating")
+    text = await format_heating_status(message.chat.id)
+    await message.answer(text, reply_markup=get_heating_vote_keyboard(user_vote))
+
+
+@router.message(F.text == "💧 Вода")
+async def reply_water_old(message: Message):
+    """Обробник СТАРОЇ кнопки 'Вода' - оновлюємо клавіатуру і показуємо статус."""
+    logger.info(f"User {message.chat.id} uses old button: Вода - updating keyboard")
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    # Надсилаємо повідомлення з НОВОЮ reply keyboard
+    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    # Викликаємо нову функціональність
+    from database import get_user_vote
+    user_vote = await get_user_vote(message.chat.id, "water")
+    text = await format_water_status(message.chat.id)
+    await message.answer(text, reply_markup=get_water_vote_keyboard(user_vote))
+
+
+@router.message(F.text == "🔔 Сповіщення")
+async def reply_notifications_old(message: Message):
+    """Обробник СТАРОЇ кнопки 'Сповіщення' - оновлюємо клавіатуру."""
+    logger.info(f"User {message.chat.id} uses old button: Сповіщення - updating keyboard")
+    # Надсилаємо повідомлення з НОВОЮ reply keyboard (тихо оновлюємо)
+    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    # Перенаправляємо на нову функцію
+    await reply_notifications(message)
+
+
+@router.message(F.text == "🔍 Пошук")
+async def reply_search_old(message: Message):
+    """Обробник СТАРОЇ кнопки 'Пошук' - оновлюємо клавіатуру."""
+    logger.info(f"User {message.chat.id} uses old button: Пошук - updating keyboard")
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    # Надсилаємо повідомлення з НОВОЮ reply keyboard
+    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    # Показуємо пошук
+    await message.answer(
+        "🔍 <b>Пошук закладу</b>\n\nВведіть назву або ключове слово для пошуку:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« Меню", callback_data="menu")]
+        ])
+    )
+
+
 @router.message(F.text == "📞 Сервісна служба")
 async def reply_service(message: Message):
     """Обробник кнопки 'Сервісна служба' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
+    logger.info(f"User {message.chat.id} clicked reply: Сервісна служба")
     try:
         await message.delete()
     except Exception:
@@ -1533,6 +1746,7 @@ async def reply_service(message: Message):
 @router.callback_query(F.data == "service_menu")
 async def cb_service_menu(callback: CallbackQuery):
     """Показати меню сервісної служби."""
+    logger.info(f"User {callback.from_user.id} clicked: Сервісна служба")
     await callback.message.edit_text(
         "📞 <b>Цілодобова сервісна служба</b>\n\n"
         "Оберіть службу для отримання контактного телефону:",
@@ -1665,7 +1879,7 @@ async def get_places_keyboard() -> InlineKeyboardMarkup:
 @router.message(F.text == "🏢 Заклади в ЖК")
 async def reply_places(message: Message):
     """Обробник кнопки 'Заклади в ЖК' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
+    logger.info(f"User {message.chat.id} clicked reply: Заклади в ЖК")
     try:
         await message.delete()
     except Exception:
@@ -1696,6 +1910,7 @@ async def reply_places(message: Message):
 @router.callback_query(F.data == "places_menu")
 async def cb_places_menu(callback: CallbackQuery):
     """Показати меню закладів."""
+    logger.info(f"User {callback.from_user.id} clicked: Заклади в ЖК")
     from database import get_all_general_services
     
     services = await get_all_general_services()
@@ -2567,34 +2782,8 @@ async def format_water_status(user_id: int) -> str:
     )
 
 
-@router.message(F.text == "♨️ Опалення")
-async def reply_heating(message: Message):
-    """Обробник кнопки 'Опалення' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
-    try:
-        await message.delete()
-    except Exception:
-        pass
-    
-    from database import get_user_vote
-    user_vote = await get_user_vote(message.chat.id, "heating")
-    text = await format_heating_status(message.chat.id)
-    await message.answer(text, reply_markup=get_heating_vote_keyboard(user_vote))
-
-
-@router.message(F.text == "💧 Вода")
-async def reply_water(message: Message):
-    """Обробник кнопки 'Вода' з ReplyKeyboard."""
-    # Видаляємо повідомлення користувача
-    try:
-        await message.delete()
-    except Exception:
-        pass
-    
-    from database import get_user_vote
-    user_vote = await get_user_vote(message.chat.id, "water")
-    text = await format_water_status(message.chat.id)
-    await message.answer(text, reply_markup=get_water_vote_keyboard(user_vote))
+### Обробники reply_heating та reply_water видалено - тепер ці функції доступні через
+### підменю "💡 Світло/опалення/вода" (callback cb_utilities_menu) ###
 
 
 @router.callback_query(F.data == "heating_menu")
@@ -2745,9 +2934,10 @@ def is_light_query(text: str) -> bool:
     return any(LIGHT_KEYWORD in token for token in tokens)
 
 
-@router.message(F.text == "🔍 Пошук")
+@router.message(F.text == "🔍 Пошук закладу")
 async def reply_search(message: Message):
-    """Обробник кнопки 'Пошук' з ReplyKeyboard."""
+    """Обробник кнопки 'Пошук закладу' з ReplyKeyboard."""
+    logger.info(f"User {message.chat.id} clicked reply: Пошук закладу")
     try:
         await message.delete()
     except Exception:
@@ -2770,6 +2960,7 @@ async def reply_search(message: Message):
 @router.callback_query(F.data == "search_menu")
 async def cb_search_menu(callback: CallbackQuery):
     """Показати меню пошуку."""
+    logger.info(f"User {callback.from_user.id} clicked: Пошук закладу")
     search_waiting_users.add(callback.message.chat.id)
     await callback.message.edit_text(
         "🔍 <b>Пошук закладів</b>\n\n"
