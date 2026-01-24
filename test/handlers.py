@@ -869,7 +869,7 @@ async def cb_status(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
-            [InlineKeyboardButton(text="« Меню", callback_data="utilities_menu")],
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
     await callback.answer()
@@ -2680,7 +2680,7 @@ def get_heating_vote_keyboard(user_vote: bool | None = None) -> InlineKeyboardMa
             InlineKeyboardButton(text=no_text, callback_data="menu_vote_heating_no"),
         ],
         [InlineKeyboardButton(text="🔄 Оновити", callback_data="heating_menu")],
-        [InlineKeyboardButton(text="« Меню", callback_data="utilities_menu")],
+        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
     ])
 
 
@@ -2694,7 +2694,7 @@ def get_water_vote_keyboard(user_vote: bool | None = None) -> InlineKeyboardMark
             InlineKeyboardButton(text=no_text, callback_data="menu_vote_water_no"),
         ],
         [InlineKeyboardButton(text="🔄 Оновити", callback_data="water_menu")],
-        [InlineKeyboardButton(text="« Меню", callback_data="utilities_menu")],
+        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
     ])
 
 
