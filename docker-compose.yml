@@ -1,6 +1,6 @@
 services:
   powerbot:
-    image: ${POWERBOT_IMAGE:-yourname/powerbot:latest}
+    image: semorgana/powerbot:latest
     container_name: powerbot
     env_file:
       - ./.env
@@ -10,11 +10,11 @@ services:
     volumes:
       - ./state.db:/data/state.db
     ports:
-      - "8081:8081"
+      - "18081:8081"
     restart: unless-stopped
 
   migrate:
-    image: ${POWERBOT_MIGRATE_IMAGE:-yourname/powerbot-migrate:latest}
+    image: semorgana/powerbot-migrate:latest
     container_name: powerbot-migrate
     env_file:
       - ./.env
