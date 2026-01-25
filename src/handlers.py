@@ -2,9 +2,9 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    BufferedInputFile, ReplyKeyboardMarkup, KeyboardButton,
+    BufferedInputFile, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
-    FSInputFile, WebAppInfo
+    FSInputFile
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -269,24 +269,10 @@ async def get_light_status_text(user_id: int) -> str:
         return "💡 Немає світла"
 
 
-def get_reply_keyboard() -> ReplyKeyboardMarkup:
+def get_reply_keyboard() -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
     """ReplyKeyboard — великі кнопки внизу екрану замість клавіатури."""
     if CFG.web_app_enabled:
-        web_app_url = CFG.web_app_url
-        if web_app_url:
-            return ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(text="Відкрити додаток", web_app=WebAppInfo(url=web_app_url))]
-                ],
-                resize_keyboard=True,
-                is_persistent=True,
-            )
-        # Якщо URL не заданий, показуємо кнопку без web_app (щоб не ламати UX)
-        return ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="Відкрити додаток")]],
-            resize_keyboard=True,
-            is_persistent=True,
-        )
+        return ReplyKeyboardRemove()
     return ReplyKeyboardMarkup(
         keyboard=[
             [
