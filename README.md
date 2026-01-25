@@ -1,37 +1,10 @@
 # PowerBot
 
-Telegram-бот для ЖК "Нова Англія" з підтримкою ESP32 сенсорів та HTTP API.
+Це особиста документація для відновлення та керування ботом. Проєкт працює **тільки через Docker**.
 
-Проєкт підтримує **тільки Docker-деплой**. Ручна інсталяція без контейнера більше не підтримується.
+## 1) Початкова інсталяція (з нуля)
 
-## Швидкий старт (Docker)
-
-1) Підготуйте робочу директорію (наприклад `/opt/powerbot`):
-```bash
-mkdir -p /opt/powerbot
-cd /opt/powerbot
-```
-
-2) Скопіюйте файли з репозиторію:
-- `docker-compose.yml`
-- `.env.example` → `.env`
-
-3) Створіть порожню базу:
-```bash
-touch state.db
-```
-
-4) Заповніть `.env` (мінімум: `BOT_TOKEN`, `SENSOR_API_KEY`).
-
-5) Запустіть контейнер:
-```bash
-docker compose up -d
-```
-
-Після першого запуску контейнер сам ініціалізує `state.db` зі схеми, що вшита в образ.
-
-## Встановлення Docker (Ubuntu)
-
+### 1.1 Встановити Docker (Ubuntu)
 ```bash
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl gnupg
@@ -48,24 +21,34 @@ sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo usermod -aG docker $USER
 ```
-Після додавання в групу `docker` перезайдіть у сесію.
+Після додавання в групу `docker` — перелогінься.
 
-## Структура проєкту
-
+### 1.2 Підготувати директорію та файли
+```bash
+mkdir -p /opt/powerbot
+cd /opt/powerbot
 ```
-.
-├── src/                  # Код бота
-├── docker/               # entrypoint та інше для контейнера
-├── sensors/              # Прошивка ESP32
-├── scripts/              # Допоміжні утиліти
-├── schema.sql            # Схема БД + початкові дані
-├── Dockerfile            # Образ бота
-├── Dockerfile.migrate    # Образ для міграцій БД
-├── docker-compose.yml    # Docker Compose
-└── .env.example          # Шаблон змінних середовища
+Поклади сюди 3 файли:
+- `docker-compose.yml`
+- `.env`
+- `state.db`
+
+Важливо:
+- у `.env` має бути `DB_PATH="/data/state.db"`
+- `API_PORT=8081`
+
+### 1.3 Запуск
+```bash
+docker compose pull
+docker compose up -d
+```
+Перевірити:
+```bash
+docker compose ps
+curl -v http://127.0.0.1:18081/api/v1/health
 ```
 
-## Команди керування
+## 2) Команди для керування контейнерами
 
 ```bash
 # старт / оновлення
@@ -77,82 +60,55 @@ docker compose down
 # перезапуск
 docker compose restart
 
-# логи
-docker compose logs -f powerbot
+# оновити image
+docker compose pull
+docker compose up -d
+
+# логи (з фільтром)
+docker compose logs -f powerbot | rg "INFO:handlers:User"
 
 # статус
 docker compose ps
-```
 
-## Оновлення образу
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-## Міграції БД
-
-Міграції додають **нові таблиці/колонки** і не видаляють дані.
-
-1) Зупиніть бот:
-```bash
-docker compose down
-```
-
-2) Запустіть міграцію:
-```bash
+# разова міграція (якщо є зміни схеми)
 docker compose --profile migrate run --rm migrate
 ```
 
-3) Запустіть бот знову:
-```bash
-docker compose up -d
-```
-
-## Бекап / відновлення
-
-Найнадійніше — зробити гарячий бекап через sqlite3:
+Бекап (краще гарячий):
 ```bash
 sqlite3 state.db ".backup 'state.db.$(date +%F_%H-%M-%S).bak'"
 ```
 
-Або зупинити контейнер і просто скопіювати файл:
+## 3) Відновлення з критичних ситуацій
+
+Якщо сервер видалили/впав:
+1) Створи або орендуй новий сервер, дізнайся його зовнішній IP.
+2) У Cloudflare зміни DNS A запис `sensors.morgan-dev.com` на нову IP адресу.
+3) Якщо на хостингу є фаєрвол — відкрий порт **18081**.
+4) Залогінься на сервер і відкрий порт у `ufw`:
 ```bash
-docker compose down
-cp state.db state.db.bak
+sudo ufw allow 18081/tcp
+```
+5) Встанови Docker (див. команди з розділу 1.1).
+6) Перекинь у `/opt/powerbot` останні бекапи файлів:
+- `.env`
+- `state.db`
+- `docker-compose.yml`
+
+7) Запусти контейнер:
+```bash
+cd /opt/powerbot
+docker compose pull
 docker compose up -d
 ```
-
-## Два боти на одному хості
-
-Рекомендований підхід — **дві окремі директорії** з власними `.env` і `state.db`:
-
+8) Перевір:
+```bash
+docker compose ps
+curl -v http://127.0.0.1:18081/api/v1/health
 ```
-/opt/powerbot
-/opt/powerbot-test
+9) Для “пробудження” стану сенсора зроби перший heartbeat:
+```bash
+curl -X POST http://new-england.morgan-dev.com:18081/api/v1/heartbeat \
+  -H "Content-Type: application/json" \
+  -d '{"api_key":"<SENSOR_API_KEY>","building_id":1,"sensor_uuid":"esp32-newcastle-001"}'
 ```
-
-У кожній папці свій `docker-compose.yml` з різним портом:
-- prod: `"18081:8081"`
-- test: `"18082:8081"`
-
-## API для сенсорів
-
-Endpoint:
-```
-POST http://<host>:18081/api/v1/heartbeat
-```
-
-Payload:
-```json
-{
-  "api_key": "<SENSOR_API_KEY>",
-  "building_id": 1,
-  "sensor_uuid": "esp32-newcastle-001"
-}
-```
-
-## Розробка
-
-Розробка ведеться в `src/`. Для локальних змін достатньо оновити код і зібрати Docker-образ.
