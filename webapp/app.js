@@ -66,6 +66,8 @@
     powerMeter: document.getElementById("powerMeter"),
     alertPill: document.getElementById("alertPill"),
     alertMeta: document.getElementById("alertMeta"),
+    alertPillLarge: document.getElementById("alertPillLarge"),
+    alertMetaLarge: document.getElementById("alertMetaLarge"),
     refreshStatus: document.getElementById("refreshStatus"),
     heatingPill: document.getElementById("heatingPill"),
     heatingStats: document.getElementById("heatingStats"),
@@ -236,14 +238,36 @@
       elements.alertPill.style.background = "rgba(200, 136, 116, 0.25)";
       elements.alertPill.style.color = "#8b3e2f";
       elements.alertMeta.textContent = "Оголошено тривогу. Бережіть себе.";
+      if (elements.alertPillLarge) {
+        elements.alertPillLarge.textContent = "Тривога";
+        elements.alertPillLarge.style.background = "rgba(200, 136, 116, 0.25)";
+        elements.alertPillLarge.style.color = "#8b3e2f";
+      }
+      if (elements.alertMetaLarge) {
+        elements.alertMetaLarge.textContent = "Оголошено тривогу. Бережіть себе.";
+      }
     } else if (alerts.status === "inactive") {
       elements.alertPill.textContent = "Відбій";
       elements.alertPill.style.background = "rgba(135, 155, 145, 0.2)";
       elements.alertPill.style.color = "#4d6a5f";
       elements.alertMeta.textContent = "Зараз все спокійно.";
+      if (elements.alertPillLarge) {
+        elements.alertPillLarge.textContent = "Відбій";
+        elements.alertPillLarge.style.background = "rgba(135, 155, 145, 0.2)";
+        elements.alertPillLarge.style.color = "#4d6a5f";
+      }
+      if (elements.alertMetaLarge) {
+        elements.alertMetaLarge.textContent = "Зараз все спокійно.";
+      }
     } else {
       elements.alertPill.textContent = "Невідомо";
-      elements.alertMeta.textContent = "Не вдалося отримати статус."
+      elements.alertMeta.textContent = "Не вдалося отримати статус.";
+      if (elements.alertPillLarge) {
+        elements.alertPillLarge.textContent = "Невідомо";
+      }
+      if (elements.alertMetaLarge) {
+        elements.alertMetaLarge.textContent = "Не вдалося отримати статус.";
+      }
     }
   };
 
@@ -334,12 +358,28 @@
       card.innerHTML = `
         <strong>${item.label}</strong>
         <p class="muted">${item.value}</p>
-        <a class="button small outline" href="tel:${item.value.replace(/\s|,/g, "")}">Зателефонувати</a>
+        <button class="button small outline" data-action="call" data-phone="${item.value}">Зателефонувати</button>
       `;
       cards.push(card);
     });
     elements.serviceCards.innerHTML = "";
     cards.forEach((card) => elements.serviceCards.appendChild(card));
+  };
+
+  const openPhoneDialer = (raw) => {
+    if (!raw) return;
+    const phone = raw.replace(/[^\d+]/g, "");
+    if (!phone) return;
+    const tel = `tel:${phone}`;
+    try {
+      if (tg && typeof tg.openLink === "function") {
+        tg.openLink(tel);
+        return;
+      }
+    } catch (err) {
+      // fallback below
+    }
+    window.location.href = tel;
   };
 
   const renderSettings = (settings) => {
@@ -524,6 +564,9 @@
     if (action === "shelter-unlike" && id) {
       toggleShelterLike(Number(id), false).catch((err) => showToast(err.message));
     }
+    if (action === "call") {
+      openPhoneDialer(target.dataset.phone || "");
+    }
     if (target.dataset.vote) {
       const type = target.dataset.vote;
       const value = target.dataset.value === "true";
@@ -542,9 +585,6 @@
         const target = button.dataset.target || button.dataset.nav || "utilities";
         setActiveNav(button);
         setActiveView(target);
-        if (button.dataset.focus === "search" && elements.placeSearch) {
-          elements.placeSearch.focus({ preventScroll: true });
-        }
       });
     });
 
