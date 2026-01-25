@@ -651,6 +651,12 @@ body::after {
   transition: width 0.35s ease;
 }
 
+.poll-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b6f77;
+}
+
 .cards {
   margin-top: 16px;
   display: grid;
