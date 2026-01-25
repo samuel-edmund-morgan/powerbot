@@ -71,10 +71,22 @@
     refreshStatus: document.getElementById("refreshStatus"),
     heatingPill: document.getElementById("heatingPill"),
     heatingStats: document.getElementById("heatingStats"),
+    heatingYesOption: document.getElementById("heatingYesOption"),
+    heatingNoOption: document.getElementById("heatingNoOption"),
+    heatingYesBar: document.getElementById("heatingYesBar"),
+    heatingNoBar: document.getElementById("heatingNoBar"),
+    heatingYesPct: document.getElementById("heatingYesPct"),
+    heatingNoPct: document.getElementById("heatingNoPct"),
     waterPill: document.getElementById("waterPill"),
     waterStats: document.getElementById("waterStats"),
+    waterYesOption: document.getElementById("waterYesOption"),
+    waterNoOption: document.getElementById("waterNoOption"),
+    waterYesBar: document.getElementById("waterYesBar"),
+    waterNoBar: document.getElementById("waterNoBar"),
+    waterYesPct: document.getElementById("waterYesPct"),
+    waterNoPct: document.getElementById("waterNoPct"),
     sheltersList: document.getElementById("sheltersList"),
-    placesCategories: document.getElementById("placesCategories"),
+    placesCategorySelect: document.getElementById("placesCategorySelect"),
     placesList: document.getElementById("placesList"),
     placeSearch: document.getElementById("placeSearch"),
     searchPlaces: document.getElementById("searchPlaces"),
@@ -278,9 +290,28 @@
     section.textContent = `${text} (${percent}%)`;
   };
 
+  const renderVoteBars = (stats, yesBar, noBar, yesPct, noPct) => {
+    if (!stats) return;
+    const yesPercent = stats.total ? Math.round(stats.has_percent) : 0;
+    const noPercent = stats.total ? Math.round(100 - stats.has_percent) : 0;
+    if (yesBar) yesBar.style.width = `${yesPercent}%`;
+    if (noBar) noBar.style.width = `${noPercent}%`;
+    if (yesPct) yesPct.textContent = `${yesPercent}%`;
+    if (noPct) noPct.textContent = `${noPercent}%`;
+  };
+
   const renderUserVotes = (heating, water) => {
     elements.heatingPill.textContent = heating?.user_vote === true ? "Ви: Є" : heating?.user_vote === false ? "Ви: Немає" : "Не голосували";
     elements.waterPill.textContent = water?.user_vote === true ? "Ви: Є" : water?.user_vote === false ? "Ви: Немає" : "Не голосували";
+
+    if (elements.heatingYesOption && elements.heatingNoOption) {
+      elements.heatingYesOption.classList.toggle("selected", heating?.user_vote === true);
+      elements.heatingNoOption.classList.toggle("selected", heating?.user_vote === false);
+    }
+    if (elements.waterYesOption && elements.waterNoOption) {
+      elements.waterYesOption.classList.toggle("selected", water?.user_vote === true);
+      elements.waterNoOption.classList.toggle("selected", water?.user_vote === false);
+    }
   };
 
   const renderShelters = (shelters) => {
@@ -289,12 +320,21 @@
       elements.sheltersList.innerHTML = "<p class='muted'>Список порожній.</p>";
       return;
     }
-    shelters.forEach((shelter) => {
+    const list = [...shelters];
+    const parkingIndex = list.findIndex((shelter) => shelter.name?.toLowerCase().includes("паркінг"));
+    const pantryIndex = list.findIndex((shelter) => shelter.name?.toLowerCase().includes("комора"));
+    if (parkingIndex !== -1 && pantryIndex !== -1 && parkingIndex < pantryIndex) {
+      const temp = list[parkingIndex];
+      list[parkingIndex] = list[pantryIndex];
+      list[pantryIndex] = temp;
+    }
+    list.forEach((shelter) => {
       const card = document.createElement("div");
       card.className = "shelter-card";
       card.innerHTML = `
         <strong>${shelter.name}</strong>
         <p class="muted">${shelter.description || ""}</p>
+        ${shelter.address ? `<p class="muted">📍 ${shelter.address}</p>` : ""}
         ${shelter.map_image ? `<img src="${shelter.map_image}" alt="${shelter.name}" class="map" />` : ""}
         <div class="card-actions">
           <button class="button small ${shelter.liked ? "outline" : ""}" data-action="${shelter.liked ? "shelter-unlike" : "shelter-like"}" data-id="${shelter.id}">
@@ -308,14 +348,21 @@
   };
 
   const renderCategories = (categories) => {
-    elements.placesCategories.innerHTML = "";
+    if (!elements.placesCategorySelect) return;
+    elements.placesCategorySelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Оберіть категорію";
+    elements.placesCategorySelect.appendChild(placeholder);
+
     categories.forEach((cat) => {
-      const chip = document.createElement("button");
-      chip.className = `chip${state.placesCategoryId === cat.id ? " active" : ""}`;
-      chip.textContent = cat.name;
-      chip.dataset.action = "category";
-      chip.dataset.id = cat.id;
-      elements.placesCategories.appendChild(chip);
+      const option = document.createElement("option");
+      option.value = String(cat.id);
+      option.textContent = cat.name;
+      if (state.placesCategoryId && state.placesCategoryId === cat.id) {
+        option.selected = true;
+      }
+      elements.placesCategorySelect.appendChild(option);
     });
   };
 
@@ -353,12 +400,13 @@
     ];
     items.forEach((item) => {
       if (!item.value) return;
+      const phone = item.value.replace(/[^\d+]/g, "");
       const card = document.createElement("div");
       card.className = "service-card";
       card.innerHTML = `
         <strong>${item.label}</strong>
         <p class="muted">${item.value}</p>
-        <button class="button small outline" data-action="call" data-phone="${item.value}">Зателефонувати</button>
+        <a class="button small outline" href="tel:${phone}" data-action="call" data-phone="${item.value}">Зателефонувати</a>
       `;
       cards.push(card);
     });
@@ -428,6 +476,8 @@
     renderAlerts(payload.alerts);
     renderStats(elements.heatingStats, payload.heating);
     renderStats(elements.waterStats, payload.water);
+    renderVoteBars(payload.heating, elements.heatingYesBar, elements.heatingNoBar, elements.heatingYesPct, elements.heatingNoPct);
+    renderVoteBars(payload.water, elements.waterYesBar, elements.waterNoBar, elements.waterYesPct, elements.waterNoPct);
     renderUserVotes(payload.heating, payload.water);
     renderShelters(payload.shelters);
     renderCategories(payload.categories);
@@ -443,6 +493,8 @@
     renderAlerts(payload.alerts);
     renderStats(elements.heatingStats, payload.heating);
     renderStats(elements.waterStats, payload.water);
+    renderVoteBars(payload.heating, elements.heatingYesBar, elements.heatingNoBar, elements.heatingYesPct, elements.heatingNoPct);
+    renderVoteBars(payload.water, elements.waterYesBar, elements.waterNoBar, elements.waterYesPct, elements.waterNoPct);
     renderUserVotes(payload.heating, payload.water);
   };
 
@@ -484,16 +536,26 @@
     const payload = await api("/vote", { method: "POST", body: JSON.stringify({ type, value }) });
     renderStats(elements.heatingStats, payload.heating);
     renderStats(elements.waterStats, payload.water);
+    renderVoteBars(payload.heating, elements.heatingYesBar, elements.heatingNoBar, elements.heatingYesPct, elements.heatingNoPct);
+    renderVoteBars(payload.water, elements.waterYesBar, elements.waterNoBar, elements.waterYesPct, elements.waterNoPct);
     renderUserVotes(payload.heating, payload.water);
     showToast("Дякуємо за голос");
   };
 
   const searchPlaces = async () => {
     const query = elements.placeSearch.value.trim();
-    if (!query) {
-      showToast("Введіть запит");
+    const selectedCategoryId = elements.placesCategorySelect?.value
+      ? Number(elements.placesCategorySelect.value)
+      : null;
+    if (!query && !selectedCategoryId) {
+      showToast("Введіть запит або оберіть категорію");
       return;
     }
+    if (!query && selectedCategoryId) {
+      await loadPlacesByCategory(selectedCategoryId);
+      return;
+    }
+    state.placesCategoryId = null;
     const payload = await api(`/places?q=${encodeURIComponent(query)}`);
     renderPlaces(payload.places);
   };
@@ -549,9 +611,6 @@
     const action = target.dataset.action;
     const id = target.dataset.id;
 
-    if (action === "category" && id) {
-      loadPlacesByCategory(Number(id)).catch((err) => showToast(err.message));
-    }
     if (action === "place-like" && id) {
       togglePlaceLike(Number(id), true).catch((err) => showToast(err.message));
     }
@@ -565,6 +624,7 @@
       toggleShelterLike(Number(id), false).catch((err) => showToast(err.message));
     }
     if (action === "call") {
+      event.preventDefault();
       openPhoneDialer(target.dataset.phone || "");
     }
     if (target.dataset.vote) {
