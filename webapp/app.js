@@ -106,6 +106,8 @@
     const btnRect = button.getBoundingClientRect();
     nav.style.setProperty("--indicator-left", `${btnRect.left - navRect.left}px`);
     nav.style.setProperty("--indicator-width", `${btnRect.width}px`);
+    nav.style.setProperty("--indicator-top", `${btnRect.top - navRect.top}px`);
+    nav.style.setProperty("--indicator-height", `${btnRect.height}px`);
   };
 
   const syncNavIndicator = () => {
