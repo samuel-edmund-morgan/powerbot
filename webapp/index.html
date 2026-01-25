@@ -13,7 +13,7 @@
 </head>
 <body>
   <div class="page">
-    <header class="hero">
+    <header class="hero hero-compact">
       <div class="hero-ornament hero-ornament-top" aria-hidden="true">
         <svg viewBox="0 0 520 140" role="presentation">
           <path d="M20 100 C90 30, 150 30, 220 100" />
@@ -30,127 +30,158 @@
         <div class="crest">PowerBot</div>
         <div class="hero-text">
           <p class="eyebrow">Нова Англія • особистий помічник будинку</p>
-          <h1>Витончена панель станів та сервісів</h1>
-          <p class="subtitle">Тут зібрано все, що важливо: світло, тривоги, укриття та контакти сервісів.</p>
+          <h1>Англійська тиха панель дому</h1>
+          <p class="subtitle">Обирайте розділ нижче — статуси, укриття, сервіс чи налаштування.</p>
         </div>
         <div class="hero-status" id="heroStatus">Завантаження...</div>
       </div>
     </header>
 
-    <section class="panel notice" id="authNotice" hidden>
-      <h2>Потрібен Telegram</h2>
-      <p>Цей додаток відкривається лише з бота. Натисніть кнопку «Відкрити додаток» у Telegram.</p>
-      <pre class="debug" id="authDebug" hidden></pre>
-    </section>
+    <nav class="nav" role="tablist" aria-label="Меню">
+      <button class="nav-item active" type="button" data-view="status" role="tab" aria-controls="view-status" aria-selected="true">
+        <span class="nav-title">Стани</span>
+        <span class="nav-sub">Будинок</span>
+      </button>
+      <button class="nav-item" type="button" data-view="safety" role="tab" aria-controls="view-safety" aria-selected="false">
+        <span class="nav-title">Безпека</span>
+        <span class="nav-sub">Укриття</span>
+      </button>
+      <button class="nav-item" type="button" data-view="services" role="tab" aria-controls="view-services" aria-selected="false">
+        <span class="nav-title">Сервіси</span>
+        <span class="nav-sub">ЖК</span>
+      </button>
+      <button class="nav-item" type="button" data-view="settings" role="tab" aria-controls="view-settings" aria-selected="false">
+        <span class="nav-title">Налашт.</span>
+        <span class="nav-sub">Профіль</span>
+      </button>
+    </nav>
 
-    <section class="panel" id="buildingSection">
-      <h2>Ваш будинок</h2>
-      <div class="row">
-        <select id="buildingSelect" class="select"></select>
-        <button class="button" id="saveBuilding">Зберегти</button>
+    <main class="view-frame">
+      <section class="panel notice auth-notice" id="authNotice" hidden>
+        <h2>Потрібен Telegram</h2>
+        <p>Цей додаток відкривається лише з бота. Натисніть кнопку «Відкрити додаток» у Telegram.</p>
+        <pre class="debug" id="authDebug" hidden></pre>
+      </section>
+
+      <div class="views">
+        <section class="view active" id="view-status" role="tabpanel">
+          <section class="panel" id="buildingSection">
+            <h2>Ваш будинок</h2>
+            <div class="row">
+              <select id="buildingSelect" class="select"></select>
+              <button class="button" id="saveBuilding">Зберегти</button>
+            </div>
+            <p class="muted" id="buildingMeta">Оберіть будинок, щоб отримувати точну інформацію.</p>
+          </section>
+
+          <section class="grid">
+            <article class="card" id="powerCard">
+              <div class="card-header">
+                <h3>Світло</h3>
+                <button class="ghost" id="refreshStatus">Оновити</button>
+              </div>
+              <p class="card-value" id="powerStatus">—</p>
+              <p class="muted" id="powerMeta">—</p>
+              <div class="meter">
+                <div class="meter-bar" id="powerMeter"></div>
+              </div>
+            </article>
+
+            <article class="card" id="alertCard">
+              <div class="card-header">
+                <h3>Тривога</h3>
+                <span class="pill" id="alertPill">—</span>
+              </div>
+              <p class="muted" id="alertMeta">Перевіряємо стан...</p>
+            </article>
+
+            <article class="card" id="heatingCard">
+              <div class="card-header">
+                <h3>Опалення</h3>
+                <span class="pill" id="heatingPill">—</span>
+              </div>
+              <div class="vote-row">
+                <button class="button small" data-vote="heating" data-value="true">Є</button>
+                <button class="button small outline" data-vote="heating" data-value="false">Немає</button>
+              </div>
+              <p class="muted" id="heatingStats">—</p>
+            </article>
+
+            <article class="card" id="waterCard">
+              <div class="card-header">
+                <h3>Вода</h3>
+                <span class="pill" id="waterPill">—</span>
+              </div>
+              <div class="vote-row">
+                <button class="button small" data-vote="water" data-value="true">Є</button>
+                <button class="button small outline" data-vote="water" data-value="false">Немає</button>
+              </div>
+              <p class="muted" id="waterStats">—</p>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" id="view-safety" role="tabpanel">
+          <section class="panel" id="shelterSection">
+            <h2>Укриття поблизу</h2>
+            <div class="cards" id="sheltersList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-services" role="tabpanel">
+          <section class="panel" id="placesSection">
+            <div class="card-header">
+              <h2>Заклади в ЖК</h2>
+            </div>
+            <div class="row">
+              <input class="input" id="placeSearch" type="search" placeholder="Пошук закладу" />
+              <button class="button outline" id="searchPlaces">Шукати</button>
+            </div>
+            <div class="chips" id="placesCategories"></div>
+            <div class="cards" id="placesList"></div>
+          </section>
+
+          <section class="panel" id="serviceSection">
+            <h2>Сервісна служба</h2>
+            <div class="cards" id="serviceCards"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-settings" role="tabpanel">
+          <section class="panel" id="settingsSection">
+            <h2>Сповіщення та тихі години</h2>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="lightToggle" />
+                <span>Сповіщення про світло</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="alertToggle" />
+                <span>Сповіщення про тривоги</span>
+              </label>
+            </div>
+            <div class="row">
+              <select id="quietSelect" class="select">
+                <option value="off">Тихі години вимкнено</option>
+                <option value="23-7">23:00 – 07:00</option>
+                <option value="22-8">22:00 – 08:00</option>
+                <option value="0-6">00:00 – 06:00</option>
+              </select>
+              <button class="button" id="saveSettings">Зберегти</button>
+            </div>
+            <p class="muted" id="settingsHint">Зміни зберігаються для цього Telegram акаунту.</p>
+          </section>
+
+          <section class="panel donate">
+            <div>
+              <h2>Підтримати проєкт</h2>
+              <p class="muted">Якщо бот допомагає — можна залишити подяку.</p>
+            </div>
+            <a class="button" id="donateLink" href="#" target="_blank" rel="noopener">Підтримати</a>
+          </section>
+        </section>
       </div>
-      <p class="muted" id="buildingMeta">Оберіть будинок, щоб отримувати точну інформацію.</p>
-    </section>
-
-    <section class="grid">
-      <article class="card" id="powerCard">
-        <div class="card-header">
-          <h3>Світло</h3>
-          <button class="ghost" id="refreshStatus">Оновити</button>
-        </div>
-        <p class="card-value" id="powerStatus">—</p>
-        <p class="muted" id="powerMeta">—</p>
-        <div class="meter">
-          <div class="meter-bar" id="powerMeter"></div>
-        </div>
-      </article>
-
-      <article class="card" id="alertCard">
-        <div class="card-header">
-          <h3>Тривога</h3>
-          <span class="pill" id="alertPill">—</span>
-        </div>
-        <p class="muted" id="alertMeta">Перевіряємо стан...</p>
-      </article>
-
-      <article class="card" id="heatingCard">
-        <div class="card-header">
-          <h3>Опалення</h3>
-          <span class="pill" id="heatingPill">—</span>
-        </div>
-        <div class="vote-row">
-          <button class="button small" data-vote="heating" data-value="true">Є</button>
-          <button class="button small outline" data-vote="heating" data-value="false">Немає</button>
-        </div>
-        <p class="muted" id="heatingStats">—</p>
-      </article>
-
-      <article class="card" id="waterCard">
-        <div class="card-header">
-          <h3>Вода</h3>
-          <span class="pill" id="waterPill">—</span>
-        </div>
-        <div class="vote-row">
-          <button class="button small" data-vote="water" data-value="true">Є</button>
-          <button class="button small outline" data-vote="water" data-value="false">Немає</button>
-        </div>
-        <p class="muted" id="waterStats">—</p>
-      </article>
-    </section>
-
-    <section class="panel" id="shelterSection">
-      <h2>Укриття поблизу</h2>
-      <div class="cards" id="sheltersList"></div>
-    </section>
-
-    <section class="panel" id="placesSection">
-      <div class="card-header">
-        <h2>Заклади в ЖК</h2>
-      </div>
-      <div class="row">
-        <input class="input" id="placeSearch" type="search" placeholder="Пошук закладу" />
-        <button class="button outline" id="searchPlaces">Шукати</button>
-      </div>
-      <div class="chips" id="placesCategories"></div>
-      <div class="cards" id="placesList"></div>
-    </section>
-
-    <section class="panel" id="serviceSection">
-      <h2>Сервісна служба</h2>
-      <div class="cards" id="serviceCards"></div>
-    </section>
-
-    <section class="panel" id="settingsSection">
-      <h2>Сповіщення та тихі години</h2>
-      <div class="toggle-row">
-        <label class="toggle">
-          <input type="checkbox" id="lightToggle" />
-          <span>Сповіщення про світло</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="alertToggle" />
-          <span>Сповіщення про тривоги</span>
-        </label>
-      </div>
-      <div class="row">
-        <select id="quietSelect" class="select">
-          <option value="off">Тихі години вимкнено</option>
-          <option value="23-7">23:00 – 07:00</option>
-          <option value="22-8">22:00 – 08:00</option>
-          <option value="0-6">00:00 – 06:00</option>
-        </select>
-        <button class="button" id="saveSettings">Зберегти</button>
-      </div>
-      <p class="muted" id="settingsHint">Зміни зберігаються для цього Telegram акаунту.</p>
-    </section>
-
-    <section class="panel donate">
-      <div>
-        <h2>Підтримати проєкт</h2>
-        <p class="muted">Якщо бот допомагає — можна залишити подяку.</p>
-      </div>
-      <a class="button" id="donateLink" href="#" target="_blank" rel="noopener">Підтримати</a>
-    </section>
+    </main>
   </div>
 
   <div class="toast" id="toast" hidden></div>
