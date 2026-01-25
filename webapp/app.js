@@ -89,10 +89,53 @@
   };
 
   const applyRevealAnimations = () => {
-    const items = document.querySelectorAll(".hero, .panel, .card");
+    const items = document.querySelectorAll(".hero, .nav, .view-frame");
     items.forEach((el, index) => {
       el.classList.add("reveal");
       el.style.animationDelay = `${index * 70}ms`;
+    });
+  };
+
+  const nav = document.querySelector(".nav");
+  const navItems = nav ? Array.from(nav.querySelectorAll(".nav-item")) : [];
+  const views = Array.from(document.querySelectorAll(".view"));
+
+  const updateNavIndicator = (button) => {
+    if (!nav || !button) return;
+    const navRect = nav.getBoundingClientRect();
+    const btnRect = button.getBoundingClientRect();
+    nav.style.setProperty("--indicator-left", `${btnRect.left - navRect.left}px`);
+    nav.style.setProperty("--indicator-width", `${btnRect.width}px`);
+  };
+
+  const animateView = (viewEl) => {
+    const items = viewEl.querySelectorAll(".panel, .card");
+    items.forEach((el, index) => {
+      el.classList.remove("reveal");
+      // force reflow for restarting animation
+      void el.offsetWidth;
+      el.classList.add("reveal");
+      el.style.animationDelay = `${index * 55}ms`;
+    });
+  };
+
+  const setActiveView = (viewId) => {
+    views.forEach((view) => {
+      const isActive = view.id === `view-${viewId}`;
+      view.classList.toggle("active", isActive);
+      view.setAttribute("aria-hidden", isActive ? "false" : "true");
+      if (isActive) {
+        animateView(view);
+      }
+    });
+
+    navItems.forEach((button) => {
+      const isActive = button.dataset.view === viewId;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", isActive ? "true" : "false");
+      if (isActive) {
+        updateNavIndicator(button);
+      }
     });
   };
 
@@ -478,4 +521,33 @@
     elements.authNotice.hidden = false;
     showToast(err.message);
   });
+
+  if (navItems.length > 0) {
+    navItems.forEach((button) => {
+      button.addEventListener("click", () => {
+        const viewId = button.dataset.view || "status";
+        setActiveView(viewId);
+      });
+    });
+
+    const initial = navItems.find((item) => item.classList.contains("active")) || navItems[0];
+    if (initial) {
+      requestAnimationFrame(() => {
+        const viewId = initial.dataset.view || "status";
+        setActiveView(viewId);
+      });
+    }
+
+    window.addEventListener("resize", () => {
+      const active = navItems.find((item) => item.classList.contains("active"));
+      if (active) updateNavIndicator(active);
+    });
+
+    if (tg && typeof tg.onEvent === "function") {
+      tg.onEvent("viewportChanged", () => {
+        const active = navItems.find((item) => item.classList.contains("active"));
+        if (active) updateNavIndicator(active);
+      });
+    }
+  }
 })();
