@@ -92,7 +92,7 @@
     const items = document.querySelectorAll(".hero, .nav, .view-frame");
     items.forEach((el, index) => {
       el.classList.add("reveal");
-      el.style.animationDelay = `${index * 70}ms`;
+      el.style.animationDelay = `${index * 80}ms`;
     });
   };
 
@@ -108,6 +108,13 @@
     nav.style.setProperty("--indicator-width", `${btnRect.width}px`);
   };
 
+  const syncNavIndicator = () => {
+    if (!nav) return;
+    const active = nav.querySelector(".nav-item.active");
+    if (!active) return;
+    requestAnimationFrame(() => updateNavIndicator(active));
+  };
+
   const animateView = (viewEl) => {
     const items = viewEl.querySelectorAll(".panel, .card");
     items.forEach((el, index) => {
@@ -115,7 +122,7 @@
       // force reflow for restarting animation
       void el.offsetWidth;
       el.classList.add("reveal");
-      el.style.animationDelay = `${index * 55}ms`;
+      el.style.animationDelay = `${index * 45}ms`;
     });
   };
 
@@ -130,13 +137,17 @@
     });
 
     navItems.forEach((button) => {
-      const isActive = button.dataset.view === viewId;
-      button.classList.toggle("active", isActive);
-      button.setAttribute("aria-selected", isActive ? "true" : "false");
-      if (isActive) {
-        updateNavIndicator(button);
-      }
+      button.classList.remove("active");
+      button.setAttribute("aria-selected", "false");
     });
+
+    navItems.forEach((button) => {
+      if (button.dataset.view !== viewId) return;
+      button.classList.add("active");
+      button.setAttribute("aria-selected", "true");
+    });
+
+    syncNavIndicator();
   };
 
   const api = async (path, options = {}) => {
@@ -532,21 +543,17 @@
 
     const initial = navItems.find((item) => item.classList.contains("active")) || navItems[0];
     if (initial) {
-      requestAnimationFrame(() => {
-        const viewId = initial.dataset.view || "status";
-        setActiveView(viewId);
-      });
+      const viewId = initial.dataset.view || "status";
+      setActiveView(viewId);
     }
 
     window.addEventListener("resize", () => {
-      const active = navItems.find((item) => item.classList.contains("active"));
-      if (active) updateNavIndicator(active);
+      syncNavIndicator();
     });
 
     if (tg && typeof tg.onEvent === "function") {
       tg.onEvent("viewportChanged", () => {
-        const active = navItems.find((item) => item.classList.contains("active"));
-        if (active) updateNavIndicator(active);
+        syncNavIndicator();
       });
     }
   }
