@@ -725,6 +725,17 @@ body::after {
   background: linear-gradient(135deg, #742f2a, #b14b3f);
 }
 
+.support-list {
+  margin: 8px 0 10px;
+  padding-left: 18px;
+  color: #4a5059;
+  font-size: 14px;
+}
+
+.support-list li {
+  margin: 4px 0;
+}
+
 @keyframes rise {
   from {
     opacity: 0;
