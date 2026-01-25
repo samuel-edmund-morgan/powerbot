@@ -5,7 +5,6 @@ services:
     env_file:
       - ./.env
     environment:
-      BOT_ENV: prod
       DB_PATH: /data/state.db
     volumes:
       - ./state.db:/data/state.db

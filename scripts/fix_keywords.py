@@ -3,10 +3,12 @@
 Скрипт для очистки дублікатів в колонці keywords таблиці places.
 
 Використання:
-    python fix_keywords.py test    # Виправити в test БД
-    python fix_keywords.py prod    # Виправити в prod БД
-    python fix_keywords.py test --dry-run  # Показати зміни без запису
+    python fix_keywords.py --db-path /path/to/state.db
+    python fix_keywords.py --env-file /path/to/.env
+    python fix_keywords.py --dry-run
 """
+import argparse
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -15,9 +17,29 @@ SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
 
-def get_db_path(env: str) -> Path:
-    """Повертає шлях до бази даних."""
-    return PROJECT_ROOT / env / "state.db"
+def read_env_db_path(env_file: Path) -> str | None:
+    """Читає DB_PATH з .env файлу."""
+    if not env_file.exists():
+        return None
+    with env_file.open("r") as f:
+        for line in f:
+            if line.startswith("DB_PATH="):
+                return line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+def resolve_db_path(db_path: str | None, env_file: Path | None) -> Path:
+    """Визначає шлях до БД з параметра, .env або env-змінних."""
+    if db_path:
+        return Path(db_path)
+    if env_file:
+        env_db = read_env_db_path(env_file)
+        if env_db:
+            return Path(env_db)
+    env_db = os.getenv("DB_PATH")
+    if env_db:
+        return Path(env_db)
+    return Path.cwd() / "state.db"
 
 
 def clean_keywords(keywords: str) -> str:
@@ -53,10 +75,8 @@ def clean_keywords(keywords: str) -> str:
     return ",".join(unique_words)
 
 
-def fix_keywords(env: str, dry_run: bool = False):
+def fix_keywords(db_path: Path, dry_run: bool = False):
     """Виправляє дублікати keywords в базі даних."""
-    db_path = get_db_path(env)
-    
     if not db_path.exists():
         print(f"❌ База даних не знайдена: {db_path}")
         sys.exit(1)
@@ -132,19 +152,15 @@ def fix_keywords(env: str, dry_run: bool = False):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-    
-    env = sys.argv[1]
-    if env not in ('test', 'prod'):
-        print(f"❌ Невідоме середовище: {env}")
-        print("   Використовуйте: test або prod")
-        sys.exit(1)
-    
-    dry_run = '--dry-run' in sys.argv
-    
-    fix_keywords(env, dry_run)
+    parser = argparse.ArgumentParser(description="Очистка дублікатів keywords у таблиці places")
+    parser.add_argument("--db-path", help="Шлях до state.db (має пріоритет над .env)")
+    parser.add_argument("--env-file", default=".env", help="Шлях до .env для читання DB_PATH")
+    parser.add_argument("--dry-run", action="store_true", help="Показати зміни без запису")
+    args = parser.parse_args()
+
+    env_file = Path(args.env_file) if args.env_file else None
+    db_path = resolve_db_path(args.db_path, env_file)
+    fix_keywords(db_path, args.dry_run)
 
 
 if __name__ == "__main__":

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-migrate_db.py - Скрипт міграції бази даних з test/ в prod/
+migrate_db.py - Безпечна міграція схеми SQLite для PowerBot
 =============================================================================
 
-Цей скрипт виконує ОБЕРЕЖНУ міграцію змін схеми бази даних з test в prod,
-зберігаючи всі дані користувачів у production базі.
+Скрипт порівнює цільову БД із еталонною схемою (schema.sql або SOURCE_DB)
+та додає НОВІ таблиці/колонки, не видаляючи дані користувачів.
 
 Використання:
     python migrate_db.py [--dry-run] [--verbose]
-    
+
 Параметри:
     --dry-run   - показує що буде змінено, без реального виконання
     --verbose   - детальний вивід
 
 Що робить скрипт:
-1. Порівнює схеми таблиць test і prod
-2. Додає нові таблиці якщо вони є в test
+1. Порівнює схеми еталонної та цільової БД
+2. Додає нові таблиці
 3. Додає нові колонки до існуючих таблиць
 4. НЕ видаляє існуючі колонки/таблиці (безпечний режим)
 5. Заповнює нові колонки дефолтними значеннями
@@ -23,7 +23,7 @@ migrate_db.py - Скрипт міграції бази даних з test/ в pr
    Пропускає kv/sensors/building_power_state, щоб не затирати прод-дані
 
 ВАЖЛИВО:
-- Перед запуском зупиніть prod бота: sudo systemctl stop bot-prod.service
+- Перед запуском зупиніть контейнер бота
 - Створюється автоматичний бекап перед міграцією
 =============================================================================
 """
@@ -39,14 +39,10 @@ from typing import Dict, List, Tuple, Optional, Any
 
 # Шляхи (можна перевизначити через env)
 BASE_DIR = Path(os.getenv("POWERBOT_BASE_DIR", "/home/powerbot/powerbot"))
-TEST_DB = Path(os.getenv("TEST_DB", str(BASE_DIR / "test" / "state.db")))
-PROD_DB = Path(
-    os.getenv("PROD_DB")
-    or os.getenv("TARGET_DB")
-    or os.getenv("DB_PATH", str(BASE_DIR / "prod" / "state.db"))
-)
-BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(PROD_DB.parent)))
-SCHEMA_PATH = os.getenv("SCHEMA_PATH")
+TARGET_DB = Path(os.getenv("TARGET_DB") or os.getenv("DB_PATH", str(BASE_DIR / "state.db")))
+BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(TARGET_DB.parent)))
+SCHEMA_PATH = Path(os.getenv("SCHEMA_PATH", str(Path(__file__).with_name("schema.sql"))))
+SOURCE_DB = Path(os.getenv("SOURCE_DB")) if os.getenv("SOURCE_DB") else None
 
 # Таблиці, які НЕ можна перезаписувати (користувацькі/динамічні дані)
 USER_DATA_TABLES = {
@@ -100,14 +96,14 @@ class DatabaseMigrator:
         self,
         dry_run: bool = False,
         verbose: bool = False,
-        test_db: Path | None = None,
-        prod_db: Path | None = None,
+        source_db: Path | None = None,
+        target_db: Path | None = None,
     ):
         self.dry_run = dry_run
         self.verbose = verbose
         self.changes: List[str] = []
-        self.test_db = test_db or TEST_DB
-        self.prod_db = prod_db or PROD_DB
+        self.source_db = source_db
+        self.target_db = target_db or TARGET_DB
     
     def get_table_info(self, db_path: Path) -> Dict[str, List[Dict]]:
         """Отримує інформацію про всі таблиці в БД."""
@@ -150,9 +146,9 @@ class DatabaseMigrator:
         return result[0] if result else ""
     
     def compare_schemas(self) -> Dict[str, Any]:
-        """Порівнює схеми test і prod баз даних."""
-        test_info = self.get_table_info(self.test_db)
-        prod_info = self.get_table_info(self.prod_db)
+        """Порівнює схеми еталонної та цільової баз даних."""
+        source_info = self.get_table_info(self.source_db)
+        target_info = self.get_table_info(self.target_db)
         
         comparison = {
             "new_tables": [],
@@ -161,19 +157,19 @@ class DatabaseMigrator:
         }
         
         # Знаходимо нові таблиці
-        for table in test_info:
-            if table not in prod_info:
+        for table in source_info:
+            if table not in target_info:
                 comparison["new_tables"].append(table)
         
         # Знаходимо нові/змінені колонки
-        for table in test_info:
-            if table in prod_info:
-                test_columns = {col["name"]: col for col in test_info[table]}
-                prod_columns = {col["name"]: col for col in prod_info[table]}
+        for table in source_info:
+            if table in target_info:
+                source_columns = {col["name"]: col for col in source_info[table]}
+                target_columns = {col["name"]: col for col in target_info[table]}
                 
                 new_cols = []
-                for col_name, col_info in test_columns.items():
-                    if col_name not in prod_columns:
+                for col_name, col_info in source_columns.items():
+                    if col_name not in target_columns:
                         new_cols.append(col_info)
                 
                 if new_cols:
@@ -182,19 +178,19 @@ class DatabaseMigrator:
         return comparison
     
     def create_backup(self) -> Path:
-        """Створює бекап prod бази даних."""
+        """Створює бекап цільової бази даних."""
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = BACKUP_DIR / f"state_{timestamp}.db"
         
         if not self.dry_run:
-            shutil.copy2(self.prod_db, backup_path)
+            shutil.copy2(self.target_db, backup_path)
         
         return backup_path
     
     def add_table(self, table_name: str):
-        """Додає нову таблицю з test в prod."""
-        create_sql = self.get_create_statement(self.test_db, table_name)
+        """Додає нову таблицю з еталонної БД у цільову."""
+        create_sql = self.get_create_statement(self.source_db, table_name)
         
         if self.verbose:
             print(f"    SQL: {create_sql[:100]}...")
@@ -202,7 +198,7 @@ class DatabaseMigrator:
         self.changes.append(f"Додано таблицю: {table_name}")
         
         if not self.dry_run:
-            conn = sqlite3.connect(self.prod_db)
+            conn = sqlite3.connect(self.target_db)
             cursor = conn.cursor()
             cursor.execute(create_sql)
             conn.commit()
@@ -233,7 +229,7 @@ class DatabaseMigrator:
         self.changes.append(f"Додано колонку {table_name}.{col_name} ({col_type})")
         
         if not self.dry_run:
-            conn = sqlite3.connect(self.prod_db)
+            conn = sqlite3.connect(self.target_db)
             cursor = conn.cursor()
             try:
                 cursor.execute(alter_sql)
@@ -247,45 +243,45 @@ class DatabaseMigrator:
                 conn.close()
     
     def migrate_static_data(self, table_name: str):
-        """Мігрує статичні дані з test в prod без видалення існуючих записів."""
+        """Мігрує статичні дані з еталонної БД у цільову без видалення існуючих записів."""
         if table_name in USER_DATA_TABLES:
             log_warning(f"Пропускаємо міграцію даних для {table_name} (захищена таблиця)")
             return
         
-        conn_test = sqlite3.connect(self.test_db)
-        conn_prod = sqlite3.connect(self.prod_db)
+        conn_source = sqlite3.connect(self.source_db)
+        conn_target = sqlite3.connect(self.target_db)
         
-        cursor_test = conn_test.cursor()
-        cursor_prod = conn_prod.cursor()
+        cursor_source = conn_source.cursor()
+        cursor_target = conn_target.cursor()
         
-        # Отримуємо дані з test
-        cursor_test.execute(f"SELECT * FROM {table_name}")
-        test_data = cursor_test.fetchall()
+        # Отримуємо дані з еталонної БД
+        cursor_source.execute(f"SELECT * FROM {table_name}")
+        source_data = cursor_source.fetchall()
         
         # Отримуємо назви колонок
-        cursor_test.execute(f"PRAGMA table_info({table_name})")
-        columns = [col[1] for col in cursor_test.fetchall()]
+        cursor_source.execute(f"PRAGMA table_info({table_name})")
+        columns = [col[1] for col in cursor_source.fetchall()]
         
-        if test_data and not self.dry_run:
-            # Додаємо нові записи з test, не перезаписуючи існуючі
+        if source_data and not self.dry_run:
+            # Додаємо нові записи, не перезаписуючи існуючі
             placeholders = ",".join(["?" for _ in columns])
             cols_str = ",".join(columns)
-            cursor_prod.executemany(
+            cursor_target.executemany(
                 f"INSERT OR IGNORE INTO {table_name} ({cols_str}) VALUES ({placeholders})",
-                test_data
+                source_data
             )
-            conn_prod.commit()
+            conn_target.commit()
         
-        self.changes.append(f"Мігровано {len(test_data)} записів в {table_name}")
+        self.changes.append(f"Мігровано {len(source_data)} записів в {table_name}")
         
-        conn_test.close()
-        conn_prod.close()
+        conn_source.close()
+        conn_target.close()
     
     def run(self):
         """Виконує міграцію."""
         print("")
         print("=" * 60)
-        print("  МІГРАЦІЯ БАЗИ ДАНИХ test/ → prod/")
+        print("  МІГРАЦІЯ БАЗИ ДАНИХ (schema → target)")
         print("=" * 60)
         print("")
         
@@ -294,12 +290,12 @@ class DatabaseMigrator:
             print("")
         
         # Перевірка файлів
-        if not self.test_db.exists():
-            log_error(f"Файл {self.test_db} не знайдено")
+        if not self.source_db.exists():
+            log_error(f"Файл {self.source_db} не знайдено")
             return False
         
-        if not self.prod_db.exists():
-            log_error(f"Файл {self.prod_db} не знайдено")
+        if not self.target_db.exists():
+            log_error(f"Файл {self.target_db} не знайдено")
             return False
         
         # Бекап
@@ -340,9 +336,9 @@ class DatabaseMigrator:
         print("")
         print(f"{Colors.BLUE}5. Міграція статичних даних{Colors.NC}")
         static_tables = ["general_services", "places", "buildings"]
+        source_info = self.get_table_info(self.source_db)
         for table in static_tables:
-            test_info = self.get_table_info(self.test_db)
-            if table in test_info:
+            if table in source_info:
                 log_action(f"Мігрую дані: {table}")
                 self.migrate_static_data(table)
         
@@ -363,11 +359,11 @@ class DatabaseMigrator:
         
         print("")
         print("Наступні кроки:")
-        print("  1. Запустіть prod бота:")
-        print("     sudo systemctl start bot-prod.service")
+        print("  1. Запустіть контейнер бота:")
+        print("     docker compose up -d")
         print("")
         print("  2. При проблемах відкатіть з бекапу:")
-        print(f"     cp {backup_path} {self.prod_db}")
+        print(f"     cp {backup_path} {self.target_db}")
         
         return True
 
@@ -389,11 +385,22 @@ def main():
     dry_run = "--dry-run" in sys.argv
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     
-    test_db = TEST_DB
-    prod_db = PROD_DB
-    if SCHEMA_PATH:
-        test_db = prepare_schema_db(SCHEMA_PATH)
-    migrator = DatabaseMigrator(dry_run=dry_run, verbose=verbose, test_db=test_db, prod_db=prod_db)
+    source_db = SOURCE_DB
+    if source_db is None:
+        if not SCHEMA_PATH.exists():
+            log_error(f"schema.sql не знайдено: {SCHEMA_PATH}")
+            sys.exit(1)
+        source_db = prepare_schema_db(str(SCHEMA_PATH))
+    elif not source_db.exists():
+        log_error(f"Файл {source_db} не знайдено")
+        sys.exit(1)
+
+    migrator = DatabaseMigrator(
+        dry_run=dry_run,
+        verbose=verbose,
+        source_db=source_db,
+        target_db=TARGET_DB,
+    )
     success = migrator.run()
     
     sys.exit(0 if success else 1)
