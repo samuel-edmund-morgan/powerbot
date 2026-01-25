@@ -349,16 +349,16 @@
       return;
     }
     const list = [...shelters];
-    const priority = (name = "") => {
-      const lower = name.toLowerCase();
-      if (lower.includes("укриття")) return 0;
-      if (lower.includes("комора")) return 1;
-      if (lower.includes("паркінг")) return 2;
-      return 3;
+    const priority = (shelter) => {
+      const text = `${shelter.name || ""} ${shelter.description || ""} ${shelter.address || ""}`.toLowerCase();
+      if (text.includes("комора")) return 2;
+      if (text.includes("паркінг")) return 3;
+      if (text.includes("укрит")) return 1;
+      return 0;
     };
     list.sort((a, b) => {
-      const pa = priority(a.name);
-      const pb = priority(b.name);
+      const pa = priority(a);
+      const pb = priority(b);
       if (pa !== pb) return pa - pb;
       return (a.name || "").localeCompare(b.name || "", "uk");
     });
@@ -434,13 +434,11 @@
     ];
     items.forEach((item) => {
       if (!item.value) return;
-      const phone = item.value.replace(/[^\d+]/g, "");
       const card = document.createElement("div");
       card.className = "service-card";
       card.innerHTML = `
         <strong>${item.label}</strong>
         <p class="muted">${item.value}</p>
-        <a class="button small outline" href="tel:${phone}" data-action="call" data-phone="${item.value}">Зателефонувати</a>
       `;
       cards.push(card);
     });
