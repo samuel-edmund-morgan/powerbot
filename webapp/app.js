@@ -6,13 +6,30 @@
   }
 
   let initData = "";
+  const extractInitDataFromUrl = () => {
+    const hash = window.location.hash ? window.location.hash.substring(1) : "";
+    const search = window.location.search ? window.location.search.substring(1) : "";
+    const hashParams = new URLSearchParams(hash);
+    const searchParams = new URLSearchParams(search);
+
+    return (
+      hashParams.get("tgWebAppData") ||
+      hashParams.get("initData") ||
+      searchParams.get("tgWebAppData") ||
+      searchParams.get("initData") ||
+      ""
+    );
+  };
+
   const resolveInitData = async () => {
     if (!tg) return "";
     for (let i = 0; i < 12; i += 1) {
       if (tg.initData) return tg.initData;
+      const urlInit = extractInitDataFromUrl();
+      if (urlInit) return urlInit;
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
-    return "";
+    return extractInitDataFromUrl();
   };
 
   const buildHeaders = () => (initData ? { "X-Telegram-Init-Data": initData } : {});
