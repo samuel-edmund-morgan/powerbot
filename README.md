@@ -28,10 +28,14 @@ sudo usermod -aG docker $USER
 mkdir -p /opt/powerbot
 cd /opt/powerbot
 ```
-Поклади сюди 3 файли:
-- `docker-compose.yml`
-- `.env`
-- `state.db`
+Для першої інсталяції ці файли беруться так:
+- `docker-compose.yml` — з репозиторію (GitHub) або з локальної копії проєкту.
+- `.env` — створити з `.env.example` (з репозиторію) і заповнити свої значення.
+- `state.db` — створити порожній файл (бот ініціалізує структуру сам).
+
+```bash
+touch state.db
+```
 
 Важливо:
 - у `.env` має бути `DB_PATH="/data/state.db"`
@@ -94,6 +98,9 @@ sudo ufw allow 18081/tcp
 - `.env`
 - `state.db`
 - `docker-compose.yml`
+
+Примітка: якщо в тебе увімкнений rclone‑бекап, щоденні архіви лежать у Google Drive
+в папці `powerbot/` (файли виду `powerbot-backup-YYYY-MM-DD_HH-MM-SS.tar.gz`).
 
 7) Запусти контейнер:
 ```bash
