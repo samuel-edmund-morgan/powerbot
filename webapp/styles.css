@@ -17,7 +17,7 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
   --tg-safe-top: 0px;
-  --tg-top-extra: 32px;
+  --tg-top-extra: 64px;
 }
 
 * {
@@ -68,7 +68,7 @@ body::after {
 .page {
   max-width: 980px;
   margin: 0 auto;
-  padding: calc(max(env(safe-area-inset-top), var(--tg-safe-top, 0px)) + var(--tg-top-extra, 32px)) 18px 36px;
+  padding: calc(max(env(safe-area-inset-top), var(--tg-safe-top, 0px)) + var(--tg-top-extra, 64px)) 18px 36px;
   position: relative;
   z-index: 0;
 }
@@ -78,7 +78,7 @@ body::after {
   top: 0;
   left: 0;
   right: 0;
-  height: calc(max(env(safe-area-inset-top), var(--tg-safe-top, 0px)) + 28px);
+  height: calc(max(env(safe-area-inset-top), var(--tg-safe-top, 0px)) + 52px);
   background: linear-gradient(180deg, rgba(251, 248, 241, 0.92), rgba(251, 248, 241, 0));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -358,8 +358,8 @@ body::after {
   border: 1px solid rgba(201, 168, 106, 0.25);
   box-shadow: var(--shadow);
   position: relative;
-  height: clamp(360px, 62vh, 680px);
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
 }
 
 .view-frame::before {
@@ -385,28 +385,23 @@ body::after {
 
 .views {
   position: relative;
-  height: 100%;
+  height: auto;
   z-index: 1;
 }
 
 .view {
-  position: absolute;
-  inset: 0;
+  position: relative;
   padding: 4px 6px 18px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  opacity: 0;
-  transform: translateY(14px) scale(0.98);
-  filter: blur(6px);
-  transition: opacity 0.45s var(--ease-out), transform 0.45s var(--ease-out), filter 0.45s var(--ease-out);
-  pointer-events: none;
+  display: none;
+  opacity: 1;
+  transform: none;
+  filter: none;
+  transition: opacity 0.45s var(--ease-out);
+  pointer-events: auto;
 }
 
 .view.active {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-  filter: blur(0);
-  pointer-events: auto;
+  display: block;
 }
 
 .auth-notice {
@@ -773,10 +768,6 @@ body::after {
   .nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
-  }
-
-  .view-frame {
-    height: clamp(360px, 68vh, 620px);
   }
 
   .donate {
