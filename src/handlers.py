@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    BufferedInputFile, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
+    BufferedInputFile, ReplyKeyboardMarkup, KeyboardButton,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     FSInputFile
 )
@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_webapp_reply_keyboard(message: Message) -> bool:
-    """Якщо WebApp увімкнено — прибрати ReplyKeyboard та підказати Menu Button."""
+    """Якщо WebApp увімкнено — оновити ReplyKeyboard і підказати Menu Button."""
     if not CFG.web_app_enabled:
+        return False
+    if message.text in {"Подякувати розробнику", "☕ Подякувати розробнику"}:
         return False
     try:
         await message.delete()
@@ -35,7 +37,7 @@ async def handle_webapp_reply_keyboard(message: Message) -> bool:
         pass
     await message.answer(
         "📱 Меню тепер у Mini App. Відкрийте його через кнопку Menu у профілі бота.",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=get_reply_keyboard()
     )
     return True
 
@@ -284,10 +286,14 @@ async def get_light_status_text(user_id: int) -> str:
         return "💡 Немає світла"
 
 
-def get_reply_keyboard() -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+def get_reply_keyboard() -> ReplyKeyboardMarkup:
     """ReplyKeyboard — великі кнопки внизу екрану замість клавіатури."""
     if CFG.web_app_enabled:
-        return ReplyKeyboardRemove()
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Подякувати розробнику")]],
+            resize_keyboard=True,
+            is_persistent=True,
+        )
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -318,7 +324,7 @@ def get_reply_keyboard() -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
 
 def get_main_keyboard() -> InlineKeyboardMarkup:
     """Головна клавіатура з основними діями."""
-    return InlineKeyboardMarkup(inline_keyboard=[
+    buttons = [
         [
             InlineKeyboardButton(text="🏠 Обрати будинок", callback_data="select_building"),
         ],
@@ -336,10 +342,10 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="🔔 Сповіщення та тихі години", callback_data="notifications_menu"),
         ],
-        [
-            InlineKeyboardButton(text="☕ Подякувати розробнику", callback_data="donate"),
-        ],
-    ])
+    ]
+    if not CFG.web_app_enabled:
+        buttons.append([InlineKeyboardButton(text="☕ Подякувати розробнику", callback_data="donate")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_service_keyboard() -> InlineKeyboardMarkup:
@@ -1267,7 +1273,7 @@ async def cb_donate(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.text == "☕ Подякувати розробнику")
+@router.message(F.text.in_({"Подякувати розробнику", "☕ Подякувати розробнику"}))
 async def reply_donate(message: Message):
     """Обробник кнопки подяки на ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
