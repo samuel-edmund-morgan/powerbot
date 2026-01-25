@@ -13,7 +13,7 @@
       tg.setBackgroundColor("#f6f1e8");
     }
     const safeTop = tg.contentSafeAreaInset?.top ?? tg.safeAreaInset?.top ?? 0;
-    const extraTop = tg.platform === "ios" ? 48 : 32;
+    const extraTop = tg.platform === "ios" ? 72 : 48;
     document.documentElement.style.setProperty("--tg-safe-top", `${safeTop}px`);
     document.documentElement.style.setProperty("--tg-top-extra", `${extraTop}px`);
   }
@@ -138,7 +138,7 @@
       view.setAttribute("aria-hidden", isActive ? "false" : "true");
       if (isActive) {
         animateView(view);
-        view.scrollTo({ top: 0, behavior: "smooth" });
+        view.scrollIntoView({ block: "start", behavior: "smooth" });
       }
     });
   };
