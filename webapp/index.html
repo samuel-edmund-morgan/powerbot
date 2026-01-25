@@ -7,20 +7,34 @@
   <title>PowerBot • Нова Англія</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Cormorant+Garamond:wght@500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/app/styles.css" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <div class="page">
     <header class="hero">
-      <div class="crest">PowerBot</div>
-      <div class="hero-text">
-        <p class="eyebrow">Нова Англія • особистий помічник будинку</p>
-        <h1>Ніжна панель станів та сервісів</h1>
-        <p class="subtitle">Тут зібрано все, що важливо: світло, тривоги, укриття та контакти сервісів.</p>
+      <div class="hero-ornament hero-ornament-top" aria-hidden="true">
+        <svg viewBox="0 0 520 140" role="presentation">
+          <path d="M20 100 C90 30, 150 30, 220 100" />
+          <path d="M300 100 C370 30, 430 30, 500 100" />
+          <path d="M140 110 C200 65, 240 65, 260 88 C280 65, 320 65, 380 110" />
+          <line x1="260" y1="22" x2="260" y2="88" />
+          <circle cx="260" cy="20" r="7" />
+        </svg>
       </div>
-      <div class="hero-status" id="heroStatus">Завантаження...</div>
+      <div class="hero-ornament hero-ornament-left" aria-hidden="true"></div>
+      <div class="hero-ornament hero-ornament-right" aria-hidden="true"></div>
+      <div class="hero-gate" aria-hidden="true"></div>
+      <div class="hero-content">
+        <div class="crest">PowerBot</div>
+        <div class="hero-text">
+          <p class="eyebrow">Нова Англія • особистий помічник будинку</p>
+          <h1>Витончена панель станів та сервісів</h1>
+          <p class="subtitle">Тут зібрано все, що важливо: світло, тривоги, укриття та контакти сервісів.</p>
+        </div>
+        <div class="hero-status" id="heroStatus">Завантаження...</div>
+      </div>
     </header>
 
     <section class="panel notice" id="authNotice" hidden>

@@ -3,6 +3,15 @@
   if (tg) {
     tg.ready();
     tg.expand();
+    if (typeof tg.requestFullscreen === "function") {
+      tg.requestFullscreen();
+    }
+    if (typeof tg.setHeaderColor === "function") {
+      tg.setHeaderColor("#f6f1e8");
+    }
+    if (typeof tg.setBackgroundColor === "function") {
+      tg.setBackgroundColor("#f6f1e8");
+    }
   }
 
   let initData = "";
@@ -77,6 +86,14 @@
     buildings: [],
     categories: [],
     placesCategoryId: null,
+  };
+
+  const applyRevealAnimations = () => {
+    const items = document.querySelectorAll(".hero, .panel, .card");
+    items.forEach((el, index) => {
+      el.classList.add("reveal");
+      el.style.animationDelay = `${index * 70}ms`;
+    });
   };
 
   const api = async (path, options = {}) => {
@@ -320,6 +337,7 @@
     renderServices(payload.services);
     renderSettings(payload.settings);
     elements.donateLink.href = payload.donate_url;
+    applyRevealAnimations();
   };
 
   const refreshStatus = async () => {
