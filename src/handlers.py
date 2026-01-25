@@ -865,7 +865,14 @@ async def cb_shelters(callback: CallbackQuery):
     
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data="alerts_menu")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    if callback.message.photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(text, reply_markup=keyboard)
+    else:
+        await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
 
