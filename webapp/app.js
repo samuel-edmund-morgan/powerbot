@@ -5,8 +5,17 @@
     tg.expand();
   }
 
-  const initData = tg?.initData || "";
-  const headers = initData ? { "X-Telegram-Init-Data": initData } : {};
+  let initData = "";
+  const resolveInitData = async () => {
+    if (!tg) return "";
+    for (let i = 0; i < 12; i += 1) {
+      if (tg.initData) return tg.initData;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    return "";
+  };
+
+  const buildHeaders = () => (initData ? { "X-Telegram-Init-Data": initData } : {});
 
   const elements = {
     authNotice: document.getElementById("authNotice"),
@@ -50,7 +59,7 @@
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...headers,
+        ...buildHeaders(),
         ...(options.headers || {}),
       },
     };
@@ -247,11 +256,11 @@
   };
 
   const loadBootstrap = async () => {
+    initData = await resolveInitData();
     if (!initData) {
       elements.authNotice.hidden = false;
       return;
     }
-
     const payload = await api("/bootstrap");
     state.settings = payload.settings;
     state.buildings = payload.buildings;
