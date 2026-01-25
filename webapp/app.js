@@ -12,13 +12,20 @@
     const hashParams = new URLSearchParams(hash);
     const searchParams = new URLSearchParams(search);
 
-    return (
+    const direct =
       hashParams.get("tgWebAppData") ||
       hashParams.get("initData") ||
       searchParams.get("tgWebAppData") ||
-      searchParams.get("initData") ||
-      ""
-    );
+      searchParams.get("initData");
+
+    if (direct) return direct;
+
+    // Деякі клієнти можуть передавати initData прямо в hash як query string
+    if (hashParams.get("hash") && hashParams.get("user")) {
+      return hash;
+    }
+
+    return "";
   };
 
   const resolveInitData = async () => {
@@ -285,6 +292,9 @@
           initDataLength: tg?.initData ? tg.initData.length : 0,
           initDataUnsafeUser: tg?.initDataUnsafe?.user?.id || null,
           urlHasTgWebAppData: Boolean(extractInitDataFromUrl()),
+          hashHasTgWebAppData: window.location.hash.includes("tgWebAppData"),
+          hashHasUser: window.location.hash.includes("user="),
+          hashHasHash: window.location.hash.includes("hash="),
           hashLength: window.location.hash ? window.location.hash.length : 0,
           searchLength: window.location.search ? window.location.search.length : 0,
           userAgent: navigator.userAgent,
