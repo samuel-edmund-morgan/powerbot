@@ -663,6 +663,25 @@ body::after {
   gap: 14px;
 }
 
+.field {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--sage-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.places-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b6f77;
+}
+
 .shelter-card,
 .place-card,
 .service-card {
