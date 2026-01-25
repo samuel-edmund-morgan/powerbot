@@ -68,6 +68,7 @@
     alertMeta: document.getElementById("alertMeta"),
     alertPillLarge: document.getElementById("alertPillLarge"),
     alertMetaLarge: document.getElementById("alertMetaLarge"),
+    heroAlertBadge: document.getElementById("heroAlertBadge"),
     refreshStatus: document.getElementById("refreshStatus"),
     heatingPill: document.getElementById("heatingPill"),
     heatingStats: document.getElementById("heatingStats"),
@@ -246,10 +247,14 @@
   const renderAlerts = (alerts) => {
     if (!alerts) return;
     if (alerts.status === "active") {
-      elements.alertPill.textContent = "Тривога";
-      elements.alertPill.style.background = "rgba(200, 136, 116, 0.25)";
-      elements.alertPill.style.color = "#8b3e2f";
-      elements.alertMeta.textContent = "Оголошено тривогу. Бережіть себе.";
+      if (elements.alertPill) {
+        elements.alertPill.textContent = "Тривога";
+        elements.alertPill.style.background = "rgba(200, 136, 116, 0.25)";
+        elements.alertPill.style.color = "#8b3e2f";
+      }
+      if (elements.alertMeta) {
+        elements.alertMeta.textContent = "Оголошено тривогу. Бережіть себе.";
+      }
       if (elements.alertPillLarge) {
         elements.alertPillLarge.textContent = "Тривога";
         elements.alertPillLarge.style.background = "rgba(200, 136, 116, 0.25)";
@@ -258,11 +263,20 @@
       if (elements.alertMetaLarge) {
         elements.alertMetaLarge.textContent = "Оголошено тривогу. Бережіть себе.";
       }
+      if (elements.heroAlertBadge) {
+        elements.heroAlertBadge.textContent = "Тривога!";
+        elements.heroAlertBadge.style.background = "rgba(200, 136, 116, 0.25)";
+        elements.heroAlertBadge.style.color = "#8b3e2f";
+      }
     } else if (alerts.status === "inactive") {
-      elements.alertPill.textContent = "Відбій";
-      elements.alertPill.style.background = "rgba(135, 155, 145, 0.2)";
-      elements.alertPill.style.color = "#4d6a5f";
-      elements.alertMeta.textContent = "Зараз все спокійно.";
+      if (elements.alertPill) {
+        elements.alertPill.textContent = "Відбій";
+        elements.alertPill.style.background = "rgba(135, 155, 145, 0.2)";
+        elements.alertPill.style.color = "#4d6a5f";
+      }
+      if (elements.alertMeta) {
+        elements.alertMeta.textContent = "Зараз все спокійно.";
+      }
       if (elements.alertPillLarge) {
         elements.alertPillLarge.textContent = "Відбій";
         elements.alertPillLarge.style.background = "rgba(135, 155, 145, 0.2)";
@@ -271,14 +285,28 @@
       if (elements.alertMetaLarge) {
         elements.alertMetaLarge.textContent = "Зараз все спокійно.";
       }
+      if (elements.heroAlertBadge) {
+        elements.heroAlertBadge.textContent = "Немає тривоги";
+        elements.heroAlertBadge.style.background = "rgba(135, 155, 145, 0.2)";
+        elements.heroAlertBadge.style.color = "#4d6a5f";
+      }
     } else {
-      elements.alertPill.textContent = "Невідомо";
-      elements.alertMeta.textContent = "Не вдалося отримати статус.";
+      if (elements.alertPill) {
+        elements.alertPill.textContent = "Невідомо";
+      }
+      if (elements.alertMeta) {
+        elements.alertMeta.textContent = "Не вдалося отримати статус.";
+      }
       if (elements.alertPillLarge) {
         elements.alertPillLarge.textContent = "Невідомо";
       }
       if (elements.alertMetaLarge) {
         elements.alertMetaLarge.textContent = "Не вдалося отримати статус.";
+      }
+      if (elements.heroAlertBadge) {
+        elements.heroAlertBadge.textContent = "Статус тривоги?";
+        elements.heroAlertBadge.style.background = "rgba(31, 44, 63, 0.08)";
+        elements.heroAlertBadge.style.color = "#4a5059";
       }
     }
   };

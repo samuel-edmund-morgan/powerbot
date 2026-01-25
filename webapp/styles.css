@@ -262,6 +262,25 @@ body::after {
   overflow: hidden;
 }
 
+.hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.hero-alert {
+  background: rgba(135, 155, 145, 0.2);
+  color: #4d6a5f;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .hero-status::after {
   content: "";
   position: absolute;
