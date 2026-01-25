@@ -15,8 +15,8 @@
 // Домен або IP сервера (HTTP)
 #define SERVER_HOST     "new-england.morgan-dev.com"
 
-// Порт HTTP API (prod = 8081, test = 8082)
-#define SERVER_PORT     8081
+// Порт HTTP API (prod = 18081, test = 18082)
+#define SERVER_PORT     18081
 
 // API ключ (однаковий для всіх сенсорів)
 #define API_KEY         "e083c38d50d164ea1f9d4491147b73df1b42741675daa8e3f520800eccebd08c"
@@ -29,7 +29,7 @@
 #define BUILDING_ID     1
 
 // Унікальний ідентифікатор сенсора
-#define SENSOR_UUID     "esp32-newcastle-002"
+#define SENSOR_UUID     "esp32-newcastle-001"
 
 // Назва будинку (для логів)
 #define BUILDING_NAME   "Newcastle"
@@ -38,7 +38,7 @@
 // ТАЙМІНГИ
 // ═══════════════════════════════════════════════════════════════
 
-// Інтервал відправки heartbeat (60 секунд)
+// Інтервал відправки heartbeat (10 секунд)
 #define HEARTBEAT_INTERVAL_MS   10000
 
 // Таймаут HTTP запиту (10 секунд)
