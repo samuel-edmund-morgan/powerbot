@@ -24,6 +24,22 @@ BUILDINGS = [
     {"id": 14, "name": "Престон", "address": "-", "has_sensor": False},
 ]
 
+# Початкові дані для укриттів
+SHELTER_PLACES = [
+    {
+        "id": 1,
+        "name": "🚗 Паркінг",
+        "description": "Підземний паркінг ЖК. Відносно безпечне місце під час тривоги.",
+        "address": "Паркінг",
+    },
+    {
+        "id": 2,
+        "name": "📦 Комора",
+        "description": "Комора для мешканців Кембріджа. Відносно безпечне місце під час тривоги.",
+        "address": "Комора",
+    },
+]
+
 # ID будинку Ньюкасл - для існуючих користувачів
 NEWCASTLE_BUILDING_ID = 1
 
@@ -60,7 +76,7 @@ def tokenize_query(query: str) -> list[str]:
     stopwords = {"де", "в", "на", "і", "та", "a", "the", "is", "світло"}
     for token in tokens:
         t = token.strip("-'’")
-        if not t or len(t) <= 4:
+        if not t or len(t) <= 3:
             continue
         if t in stopwords:
             continue
@@ -129,6 +145,16 @@ async def init_db():
                 FOREIGN KEY (service_id) REFERENCES general_services(id) ON DELETE CASCADE
             )"""
         )
+        # Таблиця укриттів (спрощений список місць)
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS shelter_places (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                address TEXT,
+                keywords TEXT DEFAULT NULL
+            )"""
+        )
         # Таблиця голосування за стан опалення
         await db.execute(
             """CREATE TABLE IF NOT EXISTS heating_votes (
@@ -177,6 +203,16 @@ async def init_db():
                 FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
             )"""
         )
+        # Таблиця лайків укриттів
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS shelter_likes (
+                place_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                liked_at TEXT NOT NULL,
+                PRIMARY KEY (place_id, chat_id),
+                FOREIGN KEY (place_id) REFERENCES shelter_places(id) ON DELETE CASCADE
+            )"""
+        )
         # Міграція: додати колонки для налаштувань сповіщень
         try:
             await db.execute("ALTER TABLE subscribers ADD COLUMN light_notifications INTEGER DEFAULT 1")
@@ -207,6 +243,16 @@ async def init_db():
                     await db.execute(
                         "INSERT INTO buildings(id, name, address, has_sensor, sensor_count) VALUES(?, ?, ?, ?, ?)",
                         (b["id"], b["name"], b["address"], 1 if b["has_sensor"] else 0, 1 if b["has_sensor"] else 0)
+                    )
+
+        # Заповнюємо таблицю укриттів якщо вона порожня
+        async with db.execute("SELECT COUNT(*) FROM shelter_places") as cur:
+            row = await cur.fetchone()
+            if row[0] == 0:
+                for s in SHELTER_PLACES:
+                    await db.execute(
+                        "INSERT INTO shelter_places(id, name, description, address) VALUES(?, ?, ?, ?)",
+                        (s["id"], s["name"], s["description"], s["address"])
                     )
         
         # Міграція: додати колонку building_id до subscribers
@@ -961,6 +1007,102 @@ async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
                  "address": r[4], "keywords": r[5], "likes_count": r[6]}
                 for r in rows
             ]
+
+
+# ============ Функції для укриттів ============
+
+async def get_all_shelter_places() -> list[dict]:
+    """Отримати всі укриття."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, name, description, address, keywords FROM shelter_places ORDER BY name"
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {"id": r[0], "name": r[1], "description": r[2], "address": r[3], "keywords": r[4]}
+                for r in rows
+            ]
+
+
+async def get_shelter_place(place_id: int) -> dict | None:
+    """Отримати укриття за ID."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, name, description, address, keywords FROM shelter_places WHERE id=?",
+            (place_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return {"id": row[0], "name": row[1], "description": row[2], "address": row[3], "keywords": row[4]}
+            return None
+
+
+async def get_shelter_places_with_likes() -> list[dict]:
+    """Отримати укриття з кількістю лайків."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT sp.id, sp.name, sp.description, sp.address, sp.keywords,
+                      COALESCE(l.likes_count, 0) as likes_count
+               FROM shelter_places sp
+               LEFT JOIN (
+                   SELECT place_id, COUNT(*) as likes_count
+                   FROM shelter_likes
+                   GROUP BY place_id
+               ) l ON sp.id = l.place_id
+               ORDER BY sp.name""",
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {"id": r[0], "name": r[1], "description": r[2], "address": r[3], "keywords": r[4], "likes_count": r[5]}
+                for r in rows
+            ]
+
+
+async def like_shelter(place_id: int, chat_id: int) -> bool:
+    """Поставити лайк укриттю. Повертає True якщо лайк додано, False якщо вже був."""
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute(
+                "INSERT INTO shelter_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
+                (place_id, chat_id, now)
+            )
+            await db.commit()
+            return True
+        except Exception:
+            return False
+
+
+async def unlike_shelter(place_id: int, chat_id: int) -> bool:
+    """Забрати лайк із укриття. Повертає True якщо лайк видалено."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM shelter_likes WHERE place_id=? AND chat_id=?",
+            (place_id, chat_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def has_liked_shelter(place_id: int, chat_id: int) -> bool:
+    """Перевірити чи користувач вже лайкнув укриття."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM shelter_likes WHERE place_id=? AND chat_id=?",
+            (place_id, chat_id)
+        ) as cur:
+            return await cur.fetchone() is not None
+
+
+async def get_shelter_likes_count(place_id: int) -> int:
+    """Отримати кількість лайків укриття."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM shelter_likes WHERE place_id=?",
+            (place_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
 
 
 # ============ Функції для голосування за опалення/воду ============

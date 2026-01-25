@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS places (
     FOREIGN KEY (service_id) REFERENCES general_services(id) ON DELETE CASCADE
 );
 
+-- Укриття (спрощений список місць)
+CREATE TABLE IF NOT EXISTS shelter_places (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                      -- Назва укриття
+    description TEXT,                        -- Опис
+    address TEXT,                            -- Маппінг на файл карти
+    keywords TEXT DEFAULT NULL               -- Ключові слова (опційно)
+);
+
 -- Голосування за опалення
 CREATE TABLE IF NOT EXISTS heating_votes (
     chat_id INTEGER PRIMARY KEY,
@@ -96,6 +105,15 @@ CREATE TABLE IF NOT EXISTS place_likes (
     liked_at TEXT NOT NULL,                  -- Час лайку (ISO 8601)
     PRIMARY KEY (place_id, chat_id),
     FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+
+-- Лайки укриттів
+CREATE TABLE IF NOT EXISTS shelter_likes (
+    place_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    liked_at TEXT NOT NULL,                  -- Час лайку (ISO 8601)
+    PRIMARY KEY (place_id, chat_id),
+    FOREIGN KEY (place_id) REFERENCES shelter_places(id) ON DELETE CASCADE
 );
 
 -- Сенсори (ESP32 heartbeat датчики)
@@ -150,3 +168,8 @@ INSERT OR IGNORE INTO general_services (name) VALUES
     ('Розваги'),
     ('Освіта'),
     ('Послуги');
+
+-- Укриття (приклади)
+INSERT OR IGNORE INTO shelter_places (id, name, description, address) VALUES
+    (1, '🚗 Паркінг', 'Підземний паркінг ЖК. Відносно безпечне місце під час тривоги.', 'Паркінг'),
+    (2, '📦 Комора', 'Комора для мешканців Кембріджа. Відносно безпечне місце під час тривоги.', 'Комора');

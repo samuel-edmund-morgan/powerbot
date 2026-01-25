@@ -153,6 +153,8 @@ BUILDING_MAPS = {
     "Віндзор (26-д)": "Віндзор 26-д.png",
     "Ноттінгем (24-г)": "Ноттінгем 24-г.png",
     "Престон": "Престон.png",
+    "Паркінг": "parking.png",
+    "Комора": "komora.png",
 }
 
 
@@ -836,20 +838,162 @@ async def cb_alert_status(callback: CallbackQuery):
 
 @router.callback_query(F.data == "shelters")
 async def cb_shelters(callback: CallbackQuery):
-    """Показати інформацію про укриття (заглушка)."""
+    """Показати інформацію про укриття."""
     logger.info(f"User {callback.from_user.id} clicked: Укриття")
+    from database import get_shelter_places_with_likes
+    
     text = (
         "🏛 <b>Укриття</b>\n\n"
-        "🚧 Цей розділ у розробці.\n\n"
-        "Незабаром тут з'явиться інформація про найближчі укриття."
+        "В ЖК «Нова Англія» наразі відсутні офіційні укриття.\n"
+        "Втім, є відносно безпечні місця на випадок тривоги:\n"
+        "підземний паркінг та комора для мешканців Кембріджа.\n\n"
+        "Оберіть місце, щоб переглянути деталі:"
     )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="« Назад", callback_data="alerts_menu"),
-        ],
-    ])
+    shelters = await get_shelter_places_with_likes()
+    buttons = []
+    if shelters:
+        for shelter in shelters:
+            likes_text = f" ❤️{shelter['likes_count']}" if shelter["likes_count"] > 0 else ""
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{shelter['name']}{likes_text}",
+                    callback_data=f"shelter_{shelter['id']}"
+                )
+            ])
+    else:
+        text += "\n\n❗️ Дані про укриття ще не заповнені."
+    
+    buttons.append([InlineKeyboardButton(text="« Назад", callback_data="alerts_menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("shelter_")
+    & ~F.data.startswith("shelter_like_")
+    & ~F.data.startswith("shelter_unlike_")
+)
+async def cb_shelter_detail(callback: CallbackQuery):
+    """Показати деталі укриття."""
+    from database import get_shelter_place, has_liked_shelter, get_shelter_likes_count
+    
+    shelter_id = int(callback.data.split("_")[1])
+    shelter = await get_shelter_place(shelter_id)
+    
+    if not shelter:
+        await callback.answer("Укриття не знайдено", show_alert=True)
+        return
+    
+    user_liked = await has_liked_shelter(shelter_id, callback.from_user.id)
+    likes_count = await get_shelter_likes_count(shelter_id)
+    admin_tag = CFG.admin_tag or "адміністратору"
+    
+    text = f"🏛 <b>{shelter['name']}</b>\n\n"
+    if shelter["description"]:
+        text += f"📝 {shelter['description']}\n\n"
+    if shelter["address"]:
+        text += f"📍 <b>Локація:</b> {shelter['address']}\n\n"
+    text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
+    text += f"💬 Побачили помилку? Пишіть {admin_tag}"
+    
+    map_file = get_map_file_for_address(shelter["address"])
+    
+    if user_liked:
+        like_btn = InlineKeyboardButton(
+            text=f"💔 Забрати лайк ({likes_count})",
+            callback_data=f"shelter_unlike_{shelter_id}"
+        )
+    else:
+        like_btn = InlineKeyboardButton(
+            text=f"❤️ Подобається ({likes_count})",
+            callback_data=f"shelter_like_{shelter_id}"
+        )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [like_btn],
+        [InlineKeyboardButton(text="« Назад", callback_data="shelters")],
+    ])
+    
+    if map_file:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        photo = FSInputFile(map_file)
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=keyboard
+        )
+    else:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("shelter_like_"))
+async def cb_like_shelter(callback: CallbackQuery):
+    """Поставити лайк укриттю."""
+    from database import like_shelter, get_shelter_likes_count
+    
+    shelter_id = int(callback.data.split("_")[2])
+    added = await like_shelter(shelter_id, callback.from_user.id)
+    
+    if added:
+        likes_count = await get_shelter_likes_count(shelter_id)
+        await callback.answer(f"❤️ Дякуємо за лайк! Усього: {likes_count}")
+    else:
+        await callback.answer("Ви вже лайкнули це укриття")
+    
+    likes_count = await get_shelter_likes_count(shelter_id)
+    new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💔 Забрати лайк ({likes_count})", callback_data=f"shelter_unlike_{shelter_id}")],
+        [InlineKeyboardButton(text="« Назад", callback_data="shelters")],
+    ])
+    
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=callback.message.caption,
+                reply_markup=new_keyboard
+            )
+        else:
+            await callback.message.edit_reply_markup(reply_markup=new_keyboard)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("shelter_unlike_"))
+async def cb_unlike_shelter(callback: CallbackQuery):
+    """Забрати лайк із укриття."""
+    from database import unlike_shelter, get_shelter_likes_count
+    
+    shelter_id = int(callback.data.split("_")[2])
+    removed = await unlike_shelter(shelter_id, callback.from_user.id)
+    
+    if removed:
+        likes_count = await get_shelter_likes_count(shelter_id)
+        await callback.answer(f"💔 Лайк забрано. Усього: {likes_count}")
+    else:
+        await callback.answer("Ви не лайкали це укриття")
+    
+    likes_count = await get_shelter_likes_count(shelter_id)
+    new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"❤️ Подобається ({likes_count})", callback_data=f"shelter_like_{shelter_id}")],
+        [InlineKeyboardButton(text="« Назад", callback_data="shelters")],
+    ])
+    
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=callback.message.caption,
+                reply_markup=new_keyboard
+            )
+        else:
+            await callback.message.edit_reply_markup(reply_markup=new_keyboard)
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "status")

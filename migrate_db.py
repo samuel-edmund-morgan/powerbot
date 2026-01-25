@@ -335,7 +335,7 @@ class DatabaseMigrator:
         # Міграція статичних даних (places, general_services, buildings)
         print("")
         print(f"{Colors.BLUE}5. Міграція статичних даних{Colors.NC}")
-        static_tables = ["general_services", "places", "buildings"]
+        static_tables = ["general_services", "places", "buildings", "shelter_places"]
         source_info = self.get_table_info(self.source_db)
         for table in static_tables:
             if table in source_info:
