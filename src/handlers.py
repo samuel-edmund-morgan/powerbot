@@ -25,21 +25,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-async def handle_webapp_reply_keyboard(message: Message) -> bool:
-    """Якщо WebApp увімкнено — прибрати ReplyKeyboard та підказати Menu Button."""
-    if not CFG.web_app_enabled:
-        return False
-    try:
-        await message.delete()
-    except Exception:
-        pass
-    await message.answer(
-        "📱 Меню тепер у Mini App. Відкрийте його через кнопку Menu у профілі бота.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return True
-
-
 # ============ FSM States для інтерактивного додавання закладу ============
 
 class AddPlaceStates(StatesGroup):
@@ -445,8 +430,6 @@ def get_buildings_keyboard() -> InlineKeyboardMarkup:
 @router.message(F.text == "🏠 Обрати будинок")
 async def reply_select_building(message: Message):
     """Обробник кнопки 'Обрати будинок' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Обрати будинок")
     try:
         await message.delete()
@@ -1270,8 +1253,6 @@ async def cb_donate(callback: CallbackQuery):
 @router.message(F.text == "☕ Подякувати розробнику")
 async def reply_donate(message: Message):
     """Обробник кнопки подяки на ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     text = (
         "☕ <b>Подякувати розробнику</b>\n\n"
         "Цей бот — некомерційний проєкт, створений для зручності мешканців ЖК.\n\n"
@@ -1730,8 +1711,6 @@ async def cmd_myid(message: Message):
 @router.message(F.text == "💡 Світло/опалення/вода")
 async def reply_utilities(message: Message):
     """Обробник кнопки 'Світло/опалення/вода' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Світло/опалення/вода")
     try:
         await message.delete()
@@ -1762,8 +1741,6 @@ async def reply_utilities(message: Message):
 @router.message(F.text == "🚨 Тривоги та укриття")
 async def reply_alerts(message: Message):
     """Обробник кнопки 'Тривоги та укриття' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Тривоги та укриття")
     try:
         await message.delete()
@@ -1789,8 +1766,6 @@ async def reply_alerts(message: Message):
 @router.message(F.text == "🔔 Сповіщення та тихі години")
 async def reply_notifications(message: Message):
     """Обробник кнопки 'Сповіщення та тихі години' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Сповіщення та тихі години")
     try:
         await message.delete()
@@ -1818,8 +1793,6 @@ async def reply_notifications(message: Message):
 @router.message(F.text == "🌙 Тихі години")
 async def reply_quiet(message: Message):
     """Обробник кнопки 'Тихі години' з ReplyKeyboard (для сумісності)."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     await reply_notifications(message)
 
 
@@ -1829,8 +1802,6 @@ async def reply_quiet(message: Message):
 @router.message(F.text == "💡 Світло")
 async def reply_light_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Світло' - оновлюємо клавіатуру і показуємо статус."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} uses old button: Світло - updating keyboard")
     try:
         await message.delete()
@@ -1852,8 +1823,6 @@ async def reply_light_old(message: Message):
 @router.message(F.text == "♨️ Опалення")
 async def reply_heating_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Опалення' - оновлюємо клавіатуру і показуємо статус."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} uses old button: Опалення - updating keyboard")
     try:
         await message.delete()
@@ -1871,8 +1840,6 @@ async def reply_heating_old(message: Message):
 @router.message(F.text == "💧 Вода")
 async def reply_water_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Вода' - оновлюємо клавіатуру і показуємо статус."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} uses old button: Вода - updating keyboard")
     try:
         await message.delete()
@@ -1890,8 +1857,6 @@ async def reply_water_old(message: Message):
 @router.message(F.text == "🔔 Сповіщення")
 async def reply_notifications_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Сповіщення' - оновлюємо клавіатуру."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} uses old button: Сповіщення - updating keyboard")
     # Надсилаємо повідомлення з НОВОЮ reply keyboard (тихо оновлюємо)
     await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
@@ -1902,8 +1867,6 @@ async def reply_notifications_old(message: Message):
 @router.message(F.text == "🔍 Пошук")
 async def reply_search_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Пошук' - оновлюємо клавіатуру."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} uses old button: Пошук - updating keyboard")
     try:
         await message.delete()
@@ -1923,8 +1886,6 @@ async def reply_search_old(message: Message):
 @router.message(F.text == "📞 Сервісна служба")
 async def reply_service(message: Message):
     """Обробник кнопки 'Сервісна служба' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Сервісна служба")
     try:
         await message.delete()
@@ -2076,8 +2037,6 @@ async def get_places_keyboard() -> InlineKeyboardMarkup:
 @router.message(F.text == "🏢 Заклади в ЖК")
 async def reply_places(message: Message):
     """Обробник кнопки 'Заклади в ЖК' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Заклади в ЖК")
     try:
         await message.delete()
@@ -3136,8 +3095,6 @@ def is_light_query(text: str) -> bool:
 @router.message(F.text == "🔍 Пошук закладу")
 async def reply_search(message: Message):
     """Обробник кнопки 'Пошук закладу' з ReplyKeyboard."""
-    if await handle_webapp_reply_keyboard(message):
-        return
     logger.info(f"User {message.chat.id} clicked reply: Пошук закладу")
     try:
         await message.delete()
