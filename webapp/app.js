@@ -12,6 +12,10 @@
     if (typeof tg.setBackgroundColor === "function") {
       tg.setBackgroundColor("#f6f1e8");
     }
+    const safeTop = tg.contentSafeAreaInset?.top ?? tg.safeAreaInset?.top ?? 0;
+    const extraTop = tg.platform === "ios" ? 48 : 32;
+    document.documentElement.style.setProperty("--tg-safe-top", `${safeTop}px`);
+    document.documentElement.style.setProperty("--tg-top-extra", `${extraTop}px`);
   }
 
   let initData = "";
@@ -99,6 +103,7 @@
   const nav = document.querySelector(".nav");
   const navItems = nav ? Array.from(nav.querySelectorAll(".nav-item")) : [];
   const views = Array.from(document.querySelectorAll(".view"));
+  let activeNavButton = null;
 
   const updateNavIndicator = (button) => {
     if (!nav || !button) return;
@@ -111,10 +116,8 @@
   };
 
   const syncNavIndicator = () => {
-    if (!nav) return;
-    const active = nav.querySelector(".nav-item.active");
-    if (!active) return;
-    requestAnimationFrame(() => updateNavIndicator(active));
+    if (!nav || !activeNavButton) return;
+    requestAnimationFrame(() => updateNavIndicator(activeNavButton));
   };
 
   const animateView = (viewEl) => {
@@ -135,20 +138,19 @@
       view.setAttribute("aria-hidden", isActive ? "false" : "true");
       if (isActive) {
         animateView(view);
+        view.scrollTo({ top: 0, behavior: "smooth" });
       }
     });
+  };
 
-    navItems.forEach((button) => {
-      button.classList.remove("active");
-      button.setAttribute("aria-selected", "false");
+  const setActiveNav = (button) => {
+    navItems.forEach((item) => {
+      item.classList.remove("active");
+      item.setAttribute("aria-selected", "false");
     });
-
-    navItems.forEach((button) => {
-      if (button.dataset.view !== viewId) return;
-      button.classList.add("active");
-      button.setAttribute("aria-selected", "true");
-    });
-
+    button.classList.add("active");
+    button.setAttribute("aria-selected", "true");
+    activeNavButton = button;
     syncNavIndicator();
   };
 
@@ -538,15 +540,21 @@
   if (navItems.length > 0) {
     navItems.forEach((button) => {
       button.addEventListener("click", () => {
-        const viewId = button.dataset.view || "status";
-        setActiveView(viewId);
+        const target = button.dataset.target || button.dataset.nav || "utilities";
+        setActiveNav(button);
+        setActiveView(target);
+        if (button.dataset.focus === "search" && elements.placeSearch) {
+          elements.placeSearch.scrollIntoView({ behavior: "smooth", block: "center" });
+          elements.placeSearch.focus({ preventScroll: true });
+        }
       });
     });
 
     const initial = navItems.find((item) => item.classList.contains("active")) || navItems[0];
     if (initial) {
-      const viewId = initial.dataset.view || "status";
-      setActiveView(viewId);
+      const target = initial.dataset.target || initial.dataset.nav || "utilities";
+      setActiveNav(initial);
+      setActiveView(target);
     }
 
     window.addEventListener("resize", () => {
