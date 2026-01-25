@@ -83,7 +83,7 @@ sqlite3 state.db ".backup 'state.db.$(date +%F_%H-%M-%S).bak'"
 
 Якщо сервер видалили/впав:
 1) Створи або орендуй новий сервер, дізнайся його зовнішній IP.
-2) У Cloudflare зміни DNS A запис `sensors.morgan-dev.com` на нову IP адресу.
+2) У Cloudflare зміни DNS A запис `new-england.morgan-dev.com` на нову IP адресу.
 3) Якщо на хостингу є фаєрвол — відкрий порт **18081**.
 4) Залогінься на сервер і відкрий порт у `ufw`:
 ```bash
