@@ -36,6 +36,7 @@
 
   const elements = {
     authNotice: document.getElementById("authNotice"),
+    authDebug: document.getElementById("authDebug"),
     heroStatus: document.getElementById("heroStatus"),
     buildingSelect: document.getElementById("buildingSelect"),
     buildingMeta: document.getElementById("buildingMeta"),
@@ -276,6 +277,21 @@
     initData = await resolveInitData();
     if (!initData) {
       elements.authNotice.hidden = false;
+      if (elements.authDebug) {
+        const debugInfo = {
+          hasTelegram: Boolean(tg),
+          platform: tg?.platform || null,
+          version: tg?.version || null,
+          initDataLength: tg?.initData ? tg.initData.length : 0,
+          initDataUnsafeUser: tg?.initDataUnsafe?.user?.id || null,
+          urlHasTgWebAppData: Boolean(extractInitDataFromUrl()),
+          hashLength: window.location.hash ? window.location.hash.length : 0,
+          searchLength: window.location.search ? window.location.search.length : 0,
+          userAgent: navigator.userAgent,
+        };
+        elements.authDebug.textContent = JSON.stringify(debugInfo, null, 2);
+        elements.authDebug.hidden = false;
+      }
       return;
     }
     const payload = await api("/bootstrap");
