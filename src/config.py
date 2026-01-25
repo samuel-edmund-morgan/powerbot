@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -7,6 +8,22 @@ from dotenv import load_dotenv
 # Завантажуємо .env з робочого каталогу (там де запускається скрипт)
 env_path = Path.cwd() / ".env"
 load_dotenv(env_path)
+
+
+def _set_process_timezone() -> None:
+    """Apply TZ from env so datetime.now() matches local time."""
+    tz = os.getenv("BOT_TIMEZONE") or os.getenv("WEATHER_TIMEZONE") or "Europe/Kyiv"
+    if tz:
+        os.environ["TZ"] = tz
+        if hasattr(time, "tzset"):
+            try:
+                time.tzset()
+            except Exception:
+                # Якщо tzset не підтримується - ігноруємо
+                pass
+
+
+_set_process_timezone()
 
 
 @dataclass
