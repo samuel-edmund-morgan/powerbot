@@ -43,27 +43,38 @@ BUILDINGS = {
 }
 
 
-def get_env_path(env: str) -> Path:
-    """Повертає шлях до .env файлу."""
-    return PROJECT_ROOT / env / ".env"
-
-
-def get_db_path(env: str) -> Path:
-    """Повертає шлях до БД."""
-    return PROJECT_ROOT / env / "state.db"
-
-
-def read_env_token(env: str) -> str | None:
-    """Читає SENSOR_API_KEY з .env файлу."""
-    env_path = get_env_path(env)
-    if not env_path.exists():
+def read_env_value(env_file: Path, key: str) -> str | None:
+    """Читає значення ключа з .env файлу."""
+    if not env_file.exists():
         return None
-    
-    with open(env_path, 'r') as f:
+    with env_file.open("r") as f:
         for line in f:
-            if line.startswith('SENSOR_API_KEY='):
-                return line.strip().split('=', 1)[1]
+            if line.startswith(f"{key}="):
+                return line.strip().split("=", 1)[1].strip().strip('"').strip("'")
     return None
+
+
+def resolve_db_path(db_path_arg: str | None, env_file: Path | None) -> Path:
+    """Визначає шлях до БД з параметра, .env або env-змінних."""
+    if db_path_arg:
+        return Path(db_path_arg)
+    if env_file:
+        env_db = read_env_value(env_file, "DB_PATH")
+        if env_db:
+            return Path(env_db)
+    env_db = os.getenv("DB_PATH")
+    if env_db:
+        return Path(env_db)
+    return Path.cwd() / "state.db"
+
+
+def resolve_sensor_api_key(env_file: Path | None) -> str | None:
+    """Читає SENSOR_API_KEY з .env або env-змінних."""
+    if env_file:
+        token = read_env_value(env_file, "SENSOR_API_KEY")
+        if token:
+            return token
+    return os.getenv("SENSOR_API_KEY")
 
 
 def generate_sensor_uuid(building_id: int, sensor_num: int = 1) -> str:
@@ -94,7 +105,7 @@ def cmd_buildings(args):
 
 def cmd_list(args):
     """Список сенсорів в БД."""
-    db_path = get_db_path(args.env)
+    db_path = args.db_path
     
     if not db_path.exists():
         print(f"❌ БД не знайдено: {db_path}")
@@ -114,10 +125,10 @@ def cmd_list(args):
     conn.close()
     
     if not sensors:
-        print(f"\n📭 Сенсорів в БД ({args.env}) не знайдено\n")
+        print("\n📭 Сенсорів в БД не знайдено\n")
         return
     
-    print(f"\n📡 Сенсори в БД ({args.env}):\n")
+    print("\n📡 Сенсори в БД:\n")
     print(f"{'UUID':<25} {'Будинок':<15} {'Останній heartbeat':<22} {'Статус':<10}")
     print("-" * 75)
     
@@ -141,12 +152,11 @@ def cmd_info(args):
         return
     
     sensor_uuid = generate_sensor_uuid(building_id, args.sensor_num)
-    token = read_env_token(args.env) or "НЕ НАЛАШТОВАНО"
+    token = args.sensor_api_key or "НЕ НАЛАШТОВАНО"
     
-    # API endpoint (через nginx на порт 80)
-    api_host = "64.181.205.211"
-    api_port = "80"
-    endpoint = "/api/v1/heartbeat-test" if args.env == "test" else "/api/v1/heartbeat"
+    api_host = args.api_host
+    api_port = args.api_port
+    endpoint = "/api/v1/heartbeat"
     
     print(f"""
 🏠 Будинок: {building['name']} ({building['address']})
@@ -157,7 +167,7 @@ def cmd_info(args):
 
 ⚙️ Налаштування для ESP32 (include/config.h):
 
-   #define SERVER_IP       "{api_host}"
+   #define SERVER_HOST     "{api_host}"
    #define SERVER_PORT     {api_port}
    #define API_KEY         "{token}"
    #define BUILDING_ID     {building_id}
@@ -185,7 +195,7 @@ def cmd_info(args):
 
 def cmd_delete(args):
     """Видалити сенсор з БД."""
-    db_path = get_db_path(args.env)
+    db_path = args.db_path
     
     if not db_path.exists():
         print(f"❌ БД не знайдено: {db_path}")
@@ -221,7 +231,7 @@ def cmd_delete(args):
 
 def cmd_delete_all(args):
     """Видалити ВСІ сенсори з БД."""
-    db_path = get_db_path(args.env)
+    db_path = args.db_path
     
     if not db_path.exists():
         print(f"❌ БД не знайдено: {db_path}")
@@ -264,21 +274,17 @@ def cmd_token(args):
 
 ⚠️  УВАГА:
    1. Замініть SENSOR_API_KEY в .env файлі вручну
-   2. Перезапустіть бота: sudo systemctl restart bot-{args.env}.service
+   2. Перезапустіть контейнер: docker compose restart
    3. Оновіть токен у ВСІХ ESP32 пристроях!
    
    Старий токен перестане працювати!
 """)
     else:
-        # Показати поточний токен
-        token_test = read_env_token("test")
-        token_prod = read_env_token("prod")
-        
+        token = args.sensor_api_key or "НЕ НАЛАШТОВАНО"
         print(f"""
-🔑 Поточні API токени для сенсорів:
+🔑 Поточний API токен для сенсорів:
 
-   TEST:  {token_test or "НЕ НАЛАШТОВАНО"}
-   PROD:  {token_prod or "НЕ НАЛАШТОВАНО"}
+   {token}
 
 💡 Для генерації нового токена: python sensor_manager.py token --generate
 """)
@@ -296,16 +302,15 @@ def cmd_test(args):
         print(f"❌ Будинок з ID {building_id} не існує")
         return
     
-    token = read_env_token(args.env)
+    token = args.sensor_api_key
     if not token:
-        print(f"❌ SENSOR_API_KEY не знайдено в {args.env}/.env")
+        print("❌ SENSOR_API_KEY не знайдено в .env або env-змінних")
         return
     
     sensor_uuid = generate_sensor_uuid(building_id, args.sensor_num)
     
-    # Через nginx на порт 80 (локально для тестів)
-    endpoint = "/api/v1/heartbeat-test" if args.env == "test" else "/api/v1/heartbeat"
-    url = f"http://127.0.0.1:80{endpoint}"
+    endpoint = "/api/v1/heartbeat"
+    url = f"{args.api_base.rstrip('/')}{endpoint}"
     
     data = {
         "api_key": token,
@@ -343,24 +348,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Приклади:
-  %(prog)s buildings               Список будинків
-  %(prog)s list                    Сенсори в БД (test)
-  %(prog)s list --env prod         Сенсори в БД (prod)
-  %(prog)s info 1                  Налаштування для Ньюкасла
-  %(prog)s info 2 -n 2             Налаштування для 2-го сенсора Брістоля
-  %(prog)s delete esp32-test-001   Видалити сенсор
-  %(prog)s token                   Показати токени
-  %(prog)s token --generate        Згенерувати новий токен
-  %(prog)s test 1                  Тестовий heartbeat для Ньюкасла
+  %(prog)s buildings                          Список будинків
+  %(prog)s list                               Сенсори в БД
+  %(prog)s info 1 --api-host 1.2.3.4          Налаштування для Ньюкасла
+  %(prog)s info 2 -n 2                        Налаштування для 2-го сенсора Брістоля
+  %(prog)s delete esp32-newcastle-001         Видалити сенсор
+  %(prog)s token                              Показати токен
+  %(prog)s token --generate                   Згенерувати новий токен
+  %(prog)s test 1 --api-base http://127.0.0.1:18081
 """
     )
-    
-    parser.add_argument(
-        "--env", "-e",
-        choices=["test", "prod"],
-        default="test",
-        help="Середовище (test/prod), за замовчуванням: test"
-    )
+
+    parser.add_argument("--env-file", default=".env", help="Шлях до .env файлу")
+    parser.add_argument("--db-path", help="Шлях до state.db (має пріоритет над .env)")
+    parser.add_argument("--api-host", default="127.0.0.1", help="Хост для прикладів та тестів")
+    parser.add_argument("--api-port", type=int, default=18081, help="Порт для прикладів та тестів")
+    parser.add_argument("--api-base", help="Базова URL для тесту (наприклад http://127.0.0.1:18081)")
     
     subparsers = parser.add_subparsers(dest="command", help="Команда")
     
@@ -401,7 +404,12 @@ def main():
     sub_test.set_defaults(func=cmd_test)
     
     args = parser.parse_args()
-    
+
+    env_file = Path(args.env_file) if args.env_file else None
+    args.db_path = resolve_db_path(args.db_path, env_file)
+    args.sensor_api_key = resolve_sensor_api_key(env_file)
+    args.api_base = args.api_base or f"http://{args.api_host}:{args.api_port}"
+
     if not args.command:
         parser.print_help()
         return

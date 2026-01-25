@@ -26,7 +26,7 @@ pip install platformio
 
 ```cpp
 // Налаштування сервера (вже налаштовано!)
-#define SERVER_IP       "64.181.205.211"
+#define SERVER_HOST     "64.181.205.211"
 #define SERVER_PORT     80
 #define API_KEY         "e083c38d50d164ea1f9d4491147b73df1b42741675daa8e3f520800eccebd08c"
 
@@ -56,11 +56,10 @@ pio device monitor
 ```
 sensors/
 ├── include/
-│   └── config.h        # Конфігурація (SERVER_IP, API_KEY, BUILDING_ID)
+│   └── config.h        # Конфігурація (SERVER_HOST, API_KEY, BUILDING_ID)
 ├── lib/                # Власні бібліотеки (порожньо)
 ├── src/
 │   └── main.cpp        # Основний код
-├── test/               # Тести (порожньо)
 └── platformio.ini      # Конфігурація PlatformIO
 ```
 
@@ -134,8 +133,8 @@ Content-Type: application/json
 
 ### Connection refused
 - Сервер не запущений
-- Неправильний `SERVER_IP`
-- Файрвол блокує порт 80
+- Неправильний `SERVER_HOST`
+- Файрвол блокує порт
 
 ## Корисні команди
 
@@ -143,8 +142,8 @@ Content-Type: application/json
 # Отримати інфо для конкретного будинку
 python scripts/sensor_manager.py info 1
 
-# Тестовий heartbeat
-python scripts/sensor_manager.py test 1
+# Тестовий heartbeat (приклад для порту 18081)
+python scripts/sensor_manager.py test 1 --api-base http://127.0.0.1:18081
 
 # Список сенсорів в БД
 python scripts/sensor_manager.py list

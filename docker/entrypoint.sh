@@ -1,8 +1,7 @@
 #!/usr/bin/env sh
 set -e
 
-BOT_ENV_NAME="${BOT_ENV:-prod}"
-WORKDIR="/app/${BOT_ENV_NAME}"
+WORKDIR="/app/src"
 DB_PATH="${DB_PATH:-/data/state.db}"
 SCHEMA_PATH="/app/schema.sql"
 
