@@ -1,7 +1,6 @@
 services:
   powerbot:
     image: semorgana/powerbot:latest
-    container_name: powerbot
     env_file:
       - ./.env
     environment:
@@ -14,7 +13,6 @@ services:
 
   migrate:
     image: semorgana/powerbot-migrate:latest
-    container_name: powerbot-migrate
     env_file:
       - ./.env
     environment:
