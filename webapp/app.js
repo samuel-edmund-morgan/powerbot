@@ -352,8 +352,8 @@
     const priority = (shelter) => {
       const text = `${shelter.name || ""} ${shelter.description || ""} ${shelter.address || ""}`.toLowerCase();
       if (text.includes("укрит")) return 0;
-      if (text.includes("комора")) return 1;
-      if (text.includes("паркінг")) return 2;
+      if (text.includes("паркінг")) return 1;
+      if (text.includes("комора")) return 2;
       return 3;
     };
     list.sort((a, b) => {
