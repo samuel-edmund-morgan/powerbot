@@ -752,7 +752,14 @@ async def get_all_general_services() -> list[dict]:
     """Отримати всі категорії послуг."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT id, name FROM general_services ORDER BY name"
+            """
+            SELECT s.id, s.name
+              FROM general_services s
+             WHERE EXISTS (
+                   SELECT 1 FROM places p WHERE p.service_id = s.id
+             )
+             ORDER BY s.name
+            """
         ) as cur:
             rows = await cur.fetchall()
             return [{"id": r[0], "name": r[1]} for r in rows]

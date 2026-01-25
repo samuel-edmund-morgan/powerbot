@@ -321,13 +321,19 @@
       return;
     }
     const list = [...shelters];
-    const parkingIndex = list.findIndex((shelter) => shelter.name?.toLowerCase().includes("паркінг"));
-    const pantryIndex = list.findIndex((shelter) => shelter.name?.toLowerCase().includes("комора"));
-    if (parkingIndex !== -1 && pantryIndex !== -1 && parkingIndex < pantryIndex) {
-      const temp = list[parkingIndex];
-      list[parkingIndex] = list[pantryIndex];
-      list[pantryIndex] = temp;
-    }
+    const priority = (name = "") => {
+      const lower = name.toLowerCase();
+      if (lower.includes("укриття")) return 0;
+      if (lower.includes("комора")) return 1;
+      if (lower.includes("паркінг")) return 2;
+      return 3;
+    };
+    list.sort((a, b) => {
+      const pa = priority(a.name);
+      const pb = priority(b.name);
+      if (pa !== pb) return pa - pb;
+      return (a.name || "").localeCompare(b.name || "", "uk");
+    });
     list.forEach((shelter) => {
       const card = document.createElement("div");
       card.className = "shelter-card";
@@ -624,13 +630,15 @@
       toggleShelterLike(Number(id), false).catch((err) => showToast(err.message));
     }
     if (action === "call") {
-      event.preventDefault();
       openPhoneDialer(target.dataset.phone || "");
     }
-    if (target.dataset.vote) {
-      const type = target.dataset.vote;
-      const value = target.dataset.value === "true";
-      vote(type, value).catch((err) => showToast(err.message));
+    const voteTarget = target.closest("[data-vote]");
+    if (voteTarget instanceof HTMLElement) {
+      const type = voteTarget.dataset.vote;
+      const value = voteTarget.dataset.value === "true";
+      if (type) {
+        vote(type, value).catch((err) => showToast(err.message));
+      }
     }
   });
 
