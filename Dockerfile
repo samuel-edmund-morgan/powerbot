@@ -12,6 +12,7 @@ RUN apt-get update \
     && pip install --no-cache-dir -r /app/requirements.txt
 
 COPY src/ /app/src/
+COPY webapp/ /app/webapp/
 COPY schema.sql /app/schema.sql
 COPY docker/entrypoint.sh /entrypoint.sh
 

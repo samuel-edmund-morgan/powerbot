@@ -54,6 +54,10 @@ class Config:
     api_port: int  # Порт для HTTP API сервера
     sensor_api_key: str  # API ключ для сенсорів
     sensor_timeout: int  # Таймаут в секундах для визначення відключення
+    # Web App
+    web_app_enabled: bool
+    web_app_url: str
+    web_app_debug_user_id: int | None
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -64,6 +68,28 @@ def parse_admin_ids(env_value: str) -> list[int]:
     env_value = env_value.strip().strip('"').strip("'")
     ids = [id.strip() for id in env_value.replace(",", " ").split()]
     return [int(id) for id in ids if id.isdigit()]
+
+
+def parse_bool(value: str | None, default: bool = False) -> bool:
+    """Парсить булеве значення з env."""
+    if value is None:
+        return default
+    value = value.strip().strip('"').strip("'").lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def parse_int(value: str | None) -> int | None:
+    """Парсить int з env."""
+    if value is None:
+        return None
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return None
+    return int(value)
 
 
 CFG = Config(
@@ -90,6 +116,9 @@ CFG = Config(
     api_port=int(os.getenv("API_PORT", "8080")),
     sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),
     sensor_timeout=int(os.getenv("SENSOR_TIMEOUT_SEC", "150")),
+    web_app_enabled=parse_bool(os.getenv("WEB_APP", "0")),
+    web_app_url=os.getenv("WEB_APP_URL", "").strip().strip('"').strip("'"),
+    web_app_debug_user_id=parse_int(os.getenv("WEB_APP_DEBUG_USER_ID")),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу
