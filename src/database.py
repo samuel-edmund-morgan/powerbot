@@ -868,6 +868,32 @@ async def get_all_places() -> list[dict]:
             ]
 
 
+async def get_all_places_with_likes() -> list[dict]:
+    """Отримати всі заклади з кількістю лайків."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
+                      s.name as service_name,
+                      COALESCE(l.likes_count, 0) as likes_count
+               FROM places p
+               JOIN general_services s ON p.service_id = s.id
+               LEFT JOIN (
+                   SELECT place_id, COUNT(*) as likes_count
+                   FROM place_likes
+                   GROUP BY place_id
+               ) l ON p.id = l.place_id
+               ORDER BY s.name, p.name"""
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "id": r[0], "service_id": r[1], "name": r[2], "description": r[3],
+                    "address": r[4], "keywords": r[5], "service_name": r[6], "likes_count": r[7]
+                }
+                for r in rows
+            ]
+
+
 async def search_places(query: str) -> list[dict]:
     """Пошук закладів за назвою, описом, адресою або ключовими словами.
 
@@ -917,6 +943,61 @@ async def search_places(query: str) -> list[dict]:
     # Параметри для match_score дублюють ті ж самі placeholders
     score_params = params.copy()
     all_params = params + score_params
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(sql, all_params) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "id": r[0], "service_id": r[1], "name": r[2], "description": r[3],
+                    "address": r[4], "keywords": r[5], "service_name": r[6], "likes_count": r[7]
+                }
+                for r in rows
+            ]
+
+
+async def search_places_by_service(query: str, service_id: int) -> list[dict]:
+    """Пошук закладів у межах категорії."""
+    raw_tokens = tokenize_query(query)
+    if not raw_tokens:
+        return []
+    tokens = []
+    for t in raw_tokens:
+        if t not in tokens:
+            tokens.append(t)
+
+    where_conditions = []
+    params: list[str] = []
+    score_parts = []
+
+    for token in tokens:
+        like = f"%{token}%"
+        condition = (
+            "(LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ? "
+            "OR LOWER(p.address) LIKE ? OR LOWER(COALESCE(p.keywords, '')) LIKE ?)"
+        )
+        where_conditions.append(condition)
+        params.extend([like, like, like, like])
+
+        score_parts.append(
+            "CASE WHEN " + condition + " THEN 1 ELSE 0 END"
+        )
+
+    where_clause = " OR ".join(where_conditions)
+    match_score_expr = " + ".join(score_parts) if score_parts else "0"
+
+    sql = f"""SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
+                        s.name as service_name,
+                        (SELECT COUNT(*) FROM place_likes pl WHERE pl.place_id = p.id) as likes_count,
+                        {match_score_expr} as match_score
+                 FROM places p
+                 JOIN general_services s ON p.service_id = s.id
+                 WHERE p.service_id = ? AND ({where_clause})
+                 ORDER BY match_score DESC, likes_count DESC, p.name
+                 LIMIT 20"""
+
+    score_params = params.copy()
+    all_params = [service_id] + params + score_params
 
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(sql, all_params) as cur:

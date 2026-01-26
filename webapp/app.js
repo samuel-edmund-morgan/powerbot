@@ -91,6 +91,7 @@
     placesList: document.getElementById("placesList"),
     placeSearch: document.getElementById("placeSearch"),
     searchPlaces: document.getElementById("searchPlaces"),
+    useCategory: document.getElementById("useCategory"),
     serviceCards: document.getElementById("serviceCards"),
     lightToggle: document.getElementById("lightToggle"),
     alertToggle: document.getElementById("alertToggle"),
@@ -579,16 +580,18 @@
     const selectedCategoryId = elements.placesCategorySelect?.value
       ? Number(elements.placesCategorySelect.value)
       : null;
-    if (!query && !selectedCategoryId) {
-      showToast("Введіть запит або оберіть категорію");
-      return;
+
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (selectedCategoryId) params.set("service_id", String(selectedCategoryId));
+
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const payload = await api(`/places${suffix}`);
+    if (selectedCategoryId) {
+      state.placesCategoryId = selectedCategoryId;
+    } else {
+      state.placesCategoryId = null;
     }
-    if (!query && selectedCategoryId) {
-      await loadPlacesByCategory(selectedCategoryId);
-      return;
-    }
-    state.placesCategoryId = null;
-    const payload = await api(`/places?q=${encodeURIComponent(query)}`);
     renderPlaces(payload.places);
   };
 
@@ -630,12 +633,14 @@
     searchPlaces().catch((err) => showToast(err.message));
   });
 
-  if (elements.placesCategorySelect) {
-    elements.placesCategorySelect.addEventListener("change", () => {
+  if (elements.useCategory) {
+    elements.useCategory.addEventListener("click", () => {
       const selected = elements.placesCategorySelect?.value;
-      if (selected && !elements.placeSearch.value.trim()) {
-        loadPlacesByCategory(Number(selected)).catch((err) => showToast(err.message));
+      if (!selected) {
+        showToast("Оберіть категорію");
+        return;
       }
+      searchPlaces().catch((err) => showToast(err.message));
     });
   }
 

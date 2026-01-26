@@ -42,8 +42,10 @@ from database import (
     vote_heating,
     vote_water,
     get_all_general_services,
+    get_all_places_with_likes,
     get_places_by_service_with_likes,
     search_places,
+    search_places_by_service,
     has_liked_place,
     like_place,
     unlike_place,
@@ -511,10 +513,16 @@ async def webapp_places_handler(request: web.Request) -> web.Response:
     await _ensure_subscriber(user)
     user_id = int(user["id"])
 
-    query = request.query.get("q")
+    query = (request.query.get("q") or "").strip()
     service_id = request.query.get("service_id")
     places: list[dict] = []
-    if query:
+    if query and service_id is not None:
+        try:
+            service_id_int = int(service_id)
+        except ValueError:
+            return web.json_response({"status": "error", "message": "Invalid service_id"}, status=400)
+        places = await search_places_by_service(query, service_id_int)
+    elif query:
         places = await search_places(query)
     elif service_id is not None:
         try:
@@ -523,7 +531,7 @@ async def webapp_places_handler(request: web.Request) -> web.Response:
             return web.json_response({"status": "error", "message": "Invalid service_id"}, status=400)
         places = await get_places_by_service_with_likes(service_id_int)
     else:
-        return web.json_response({"status": "error", "message": "Missing query or service_id"}, status=400)
+        places = await get_all_places_with_likes()
 
     payload = []
     for p in places:
