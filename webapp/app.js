@@ -91,7 +91,6 @@
     placesList: document.getElementById("placesList"),
     placeSearch: document.getElementById("placeSearch"),
     searchPlaces: document.getElementById("searchPlaces"),
-    useCategory: document.getElementById("useCategory"),
     serviceCards: document.getElementById("serviceCards"),
     lightToggle: document.getElementById("lightToggle"),
     alertToggle: document.getElementById("alertToggle"),
@@ -630,17 +629,6 @@
   elements.searchPlaces.addEventListener("click", () => {
     searchPlaces().catch((err) => showToast(err.message));
   });
-
-  if (elements.useCategory) {
-    elements.useCategory.addEventListener("click", () => {
-      const selected = elements.placesCategorySelect?.value;
-      if (!selected) {
-        showToast("Оберіть категорію");
-        return;
-      }
-      loadPlacesByCategory(Number(selected)).catch((err) => showToast(err.message));
-    });
-  }
 
   if (elements.placesCategorySelect) {
     elements.placesCategorySelect.addEventListener("change", () => {
