@@ -11,6 +11,7 @@ from database import (
     db_get, db_set, add_event, get_last_event, get_subscribers_for_notification, 
     get_events_since, reset_votes, save_notification, get_active_notifications, 
     delete_notification, get_heating_stats, get_water_stats,
+    get_last_bot_message, delete_last_bot_message_record,
     get_subscribers_for_light_notification, get_subscribers_for_alert_notification,
     NEWCASTLE_BUILDING_ID, get_all_active_sensors, get_building_power_state,
     set_building_power_state, get_sensors_by_building, get_building_by_id,
@@ -497,6 +498,13 @@ async def alert_monitor_loop(bot: Bot):
                 }
 
                 async def send_alert(chat_id: int):
+                    last_menu_id = await get_last_bot_message(chat_id)
+                    if last_menu_id:
+                        try:
+                            await bot.delete_message(chat_id, last_menu_id)
+                        except Exception:
+                            pass
+                        await delete_last_bot_message_record(chat_id)
                     prev = existing_alerts.get(chat_id)
                     if prev:
                         try:
@@ -660,6 +668,13 @@ async def sensors_monitor_loop(bot: Bot):
                 }
 
                 async def send_light(chat_id: int):
+                    last_menu_id = await get_last_bot_message(chat_id)
+                    if last_menu_id:
+                        try:
+                            await bot.delete_message(chat_id, last_menu_id)
+                        except Exception:
+                            pass
+                        await delete_last_bot_message_record(chat_id)
                     prev = existing_notifications.get(chat_id)
                     if prev:
                         try:
