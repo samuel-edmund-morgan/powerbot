@@ -10,7 +10,7 @@ from config import CFG
 from database import (
     db_get, db_set, add_event, get_last_event, get_subscribers_for_notification, 
     get_events_since, reset_votes, save_notification, get_active_notifications, 
-    delete_notification, clear_all_notifications, get_heating_stats, get_water_stats,
+    delete_notification, get_heating_stats, get_water_stats,
     get_subscribers_for_light_notification, get_subscribers_for_alert_notification,
     NEWCASTLE_BUILDING_ID, get_all_active_sensors, get_building_power_state,
     set_building_power_state, get_sensors_by_building, get_building_by_id,
@@ -345,7 +345,7 @@ async def update_notifications_loop(bot: Bot):
         try:
             await asyncio.sleep(30)  # Оновлення кожні 30 секунд
             
-            notifications = await get_active_notifications()
+        notifications = await get_active_notifications("power_change")
             if not notifications:
                 continue
             
@@ -491,8 +491,21 @@ async def alert_monitor_loop(bot: Bot):
                 current_hour = datetime.now().hour
                 subscribers = await get_subscribers_for_alert_notification(current_hour)
 
+                existing_alerts = {
+                    notif["chat_id"]: notif
+                    for notif in await get_active_notifications("alert")
+                }
+
                 async def send_alert(chat_id: int):
-                    await bot.send_message(chat_id, text, reply_markup=keyboard)
+                    prev = existing_alerts.get(chat_id)
+                    if prev:
+                        try:
+                            await bot.delete_message(chat_id, prev["message_id"])
+                        except Exception:
+                            pass
+                        await delete_notification(prev["id"])
+                    msg = await bot.send_message(chat_id, text, reply_markup=keyboard)
+                    await save_notification(chat_id, msg.message_id, "alert")
 
                 await broadcast_messages(subscribers, send_alert)
         
@@ -638,14 +651,22 @@ async def sensors_monitor_loop(bot: Bot):
                     ],
                 ])
                 
-                # Очищаємо старі сповіщення
-                await clear_all_notifications()
-                
                 # Надсилаємо підписникам цього будинку
                 current_hour = datetime.now().hour
                 subscribers = await get_subscribers_for_light_notification(current_hour, building_id)
+                existing_notifications = {
+                    notif["chat_id"]: notif
+                    for notif in await get_active_notifications("power_change")
+                }
 
                 async def send_light(chat_id: int):
+                    prev = existing_notifications.get(chat_id)
+                    if prev:
+                        try:
+                            await bot.delete_message(chat_id, prev["message_id"])
+                        except Exception:
+                            pass
+                        await delete_notification(prev["id"])
                     msg = await bot.send_message(chat_id, text, reply_markup=vote_keyboard)
                     async with _notification_save_lock:
                         await save_notification(chat_id, msg.message_id)
