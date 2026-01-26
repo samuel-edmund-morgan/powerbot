@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -604,7 +605,18 @@ async def webapp_index_handler(_: web.Request) -> web.Response:
     """Повертає HTML WebApp."""
     if not WEBAPP_DIR.exists():
         return web.Response(status=404, text="WebApp not found")
-    return web.FileResponse(WEBAPP_DIR / "index.html")
+    index_path = WEBAPP_DIR / "index.html"
+    try:
+        content = index_path.read_text(encoding="utf-8")
+    except OSError:
+        return web.Response(status=404, text="WebApp not found")
+    version = str(int(time.time()))
+    content = content.replace("__WEBAPP_VERSION__", version)
+    return web.Response(
+        text=content,
+        content_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def create_api_app() -> web.Application:
