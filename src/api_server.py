@@ -45,8 +45,7 @@ from database import (
     get_all_general_services,
     get_all_places_with_likes,
     get_places_by_service_with_likes,
-    search_places,
-    search_places_by_service,
+    tokenize_query,
     has_liked_place,
     like_place,
     unlike_place,
@@ -66,6 +65,44 @@ logger = logging.getLogger(__name__)
 WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 MAPS_DIR = Path(__file__).resolve().parent / "maps"
 DONATE_URL = "https://send.monobank.ua/jar/7d56pmvjEB"
+
+
+def _filter_places_by_query(places: list[dict], query: str, limit: int = 20) -> list[dict]:
+    tokens_raw = tokenize_query(query)
+    if not tokens_raw:
+        return []
+    tokens: list[str] = []
+    for t in tokens_raw:
+        if t not in tokens:
+            tokens.append(t)
+
+    results: list[dict] = []
+    for place in places:
+        haystack = " ".join(
+            [
+                place.get("name") or "",
+                place.get("description") or "",
+                place.get("address") or "",
+                place.get("keywords") or "",
+            ]
+        ).casefold()
+        score = sum(1 for token in tokens if token in haystack)
+        if score:
+            item = dict(place)
+            item["_match_score"] = score
+            results.append(item)
+
+    results.sort(
+        key=lambda item: (
+            -item.get("_match_score", 0),
+            -(item.get("likes_count") or 0),
+            item.get("name") or "",
+        )
+    )
+    trimmed = results[:limit]
+    for item in trimmed:
+        item.pop("_match_score", None)
+    return trimmed
 
 
 async def heartbeat_handler(request: web.Request) -> web.Response:
@@ -517,14 +554,16 @@ async def webapp_places_handler(request: web.Request) -> web.Response:
     query = (request.query.get("q") or "").strip()
     service_id = request.query.get("service_id")
     places: list[dict] = []
-    if query and service_id is not None:
-        try:
-            service_id_int = int(service_id)
-        except ValueError:
-            return web.json_response({"status": "error", "message": "Invalid service_id"}, status=400)
-        places = await search_places_by_service(query, service_id_int)
-    elif query:
-        places = await search_places(query)
+    if query:
+        if service_id is not None:
+            try:
+                service_id_int = int(service_id)
+            except ValueError:
+                return web.json_response({"status": "error", "message": "Invalid service_id"}, status=400)
+            base_places = await get_places_by_service_with_likes(service_id_int)
+        else:
+            base_places = await get_all_places_with_likes()
+        places = _filter_places_by_query(base_places, query)
     elif service_id is not None:
         try:
             service_id_int = int(service_id)
