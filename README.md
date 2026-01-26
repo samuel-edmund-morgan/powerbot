@@ -83,7 +83,53 @@ docker compose --profile migrate run --rm migrate
 sqlite3 state.db ".backup 'state.db.$(date +%F_%H-%M-%S).bak'"
 ```
 
-## 3) Відновлення з критичних ситуацій
+## 3) Шпаргалка (команди)
+
+Ось базові команди керування контейнером для твого сетапу (припускаю, що docker-compose.yml, .env і state.db лежать в одному каталозі).
+
+```bash
+# старт (або оновлення) у фоні
+docker compose up -d
+
+# зупинка контейнерів
+docker compose down
+
+# перезапуск сервісу
+docker compose restart
+
+# Оновлення на новий image
+docker compose pull
+docker compose up -d
+
+# Логи
+docker compose logs -f powerbot
+
+# tail + grep
+docker compose logs -f powerbot | rg "INFO:handlers:User"
+
+# Статус
+docker compose ps
+
+# Разова міграція (якщо треба)
+docker compose --profile migrate run --rm migrate
+```
+
+Бекап / відновлення state.db:
+- з Google Drive беру останній бекап і виконую:
+```bash
+docker compose restart
+```
+
+Деплой:
+```bash
+# Тест-деплой
+git add . && git commit -m "<опис змін>" && git push origin main
+
+# Прод-деплой
+gh workflow run deploy.yml -f run_migrate=auto
+```
+
+## 4) Відновлення з критичних ситуацій
 
 Якщо сервер видалили/впав:
 1) Створи або орендуй новий сервер, дізнайся його зовнішній IP.
