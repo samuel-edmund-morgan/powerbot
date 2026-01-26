@@ -17,7 +17,7 @@ from config import CFG
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
-    get_last_event, get_subscriber_building, get_building_by_id
+    get_last_event, get_subscriber_building, get_building_by_id, save_last_bot_message
 )
 from services import state_text, calculate_stats, format_duration
 
@@ -586,10 +586,11 @@ async def cmd_start(message: Message):
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
-    await message.answer(
+    menu_msg = await message.answer(
         f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
+    await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
 @router.message(Command("menu"))
@@ -605,10 +606,11 @@ async def cmd_menu(message: Message):
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
-    await message.answer(
+    menu_msg = await message.answer(
         f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
+    await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
 @router.message(Command("unsubscribe"))
@@ -757,18 +759,22 @@ async def cb_menu(callback: CallbackQuery):
     text = f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:"
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
+    menu_msg = None
     if callback.message.photo:
         try:
             await callback.message.delete()
         except Exception:
             pass
-        await callback.message.answer(text, reply_markup=get_main_keyboard())
+        menu_msg = await callback.message.answer(text, reply_markup=get_main_keyboard())
     else:
         try:
             await callback.message.edit_text(text, reply_markup=get_main_keyboard())
+            menu_msg = callback.message
         except Exception:
             # Якщо не вдалось редагувати - надсилаємо нове
-            await callback.message.answer(text, reply_markup=get_main_keyboard())
+            menu_msg = await callback.message.answer(text, reply_markup=get_main_keyboard())
+    if menu_msg:
+        await save_last_bot_message(callback.message.chat.id, menu_msg.message_id)
     await callback.answer()
 
 
