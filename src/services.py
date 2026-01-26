@@ -344,8 +344,8 @@ async def update_notifications_loop(bot: Bot):
     while True:
         try:
             await asyncio.sleep(30)  # Оновлення кожні 30 секунд
-            
-        notifications = await get_active_notifications("power_change")
+
+            notifications = await get_active_notifications("power_change")
             if not notifications:
                 continue
             
