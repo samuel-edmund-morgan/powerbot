@@ -557,6 +557,10 @@ async def cb_building_selected(callback: CallbackQuery):
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Підписати чат на сповіщення або обробити deep link."""
+    try:
+        await message.delete()
+    except Exception:
+        pass
     user = message.from_user
     await add_subscriber(
         chat_id=message.chat.id,
@@ -577,11 +581,15 @@ async def cmd_start(message: Message):
         except (ValueError, Exception):
             pass
     
-    # Показуємо ReplyKeyboard (великі кнопки внизу)
-    await message.answer(
-        "👋 Привіт! Підписав цей чат на сповіщення про світло.",
-        reply_markup=get_reply_keyboard()
-    )
+    # Показуємо ReplyKeyboard (великі кнопки внизу) без зайвого повідомлення
+    try:
+        kb_msg = await message.answer(" ", reply_markup=get_reply_keyboard())
+        try:
+            await kb_msg.delete()
+        except Exception:
+            pass
+    except Exception:
+        pass
     # Також показуємо InlineKeyboard в чаті
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
