@@ -33,7 +33,6 @@ env/
 # IDE
 .idea/
 .vscode/
-.github/
 *.swp
 *.swo
 *~
@@ -65,11 +64,15 @@ Thumbs.db
 *.temp
 .cache/
 
+# GitHub (дозволяємо workflows)
+.github/*
+!.github/workflows/
+!.github/workflows/**
+
 # Test coverage
 htmlcov/
 .coverage
 .coverage.*
 coverage.xml
 *.cover
-.github/
 AGENTS.md

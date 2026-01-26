@@ -1,0 +1,70 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_migrate:
+        description: "Run DB migrate (auto/true/false)"
+        required: false
+        default: "auto"
+
+jobs:
+  deploy_test:
+    if: github.event_name == 'push'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version
+        run: echo "VERSION=$(date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
+      - name: Detect migration need
+        run: |
+          set -e
+          CHANGED="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
+          if echo "$CHANGED" | grep -E -q '^(schema\.sql|migrate_db\.py)$'; then
+            echo "MIGRATE=1" >> $GITHUB_ENV
+          else
+            echo "MIGRATE=0" >> $GITHUB_ENV
+          fi
+
+      - name: Deploy test
+        env:
+          DOCKERHUB_USER: semorgana
+        run: ./scripts/deploy_test.sh
+
+  deploy_prod:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version
+        run: echo "VERSION=$(date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
+      - name: Detect migration need
+        run: |
+          set -e
+          if [[ "${{ inputs.run_migrate }}" == "true" ]]; then
+            echo "MIGRATE=1" >> $GITHUB_ENV
+            exit 0
+          fi
+          if [[ "${{ inputs.run_migrate }}" == "false" ]]; then
+            echo "MIGRATE=0" >> $GITHUB_ENV
+            exit 0
+          fi
+          CHANGED="$(git diff --name-only HEAD~1 HEAD)"
+          if echo "$CHANGED" | grep -E -q '^(schema\.sql|migrate_db\.py)$'; then
+            echo "MIGRATE=1" >> $GITHUB_ENV
+          else
+            echo "MIGRATE=0" >> $GITHUB_ENV
+          fi
+
+      - name: Deploy prod
+        env:
+          DOCKERHUB_USER: semorgana
+        run: ./scripts/deploy_prod.sh
