@@ -1341,9 +1341,13 @@ async def reset_votes(building_id: int | None = None):
 # ============ Активні сповіщення для оновлення ============
 
 async def save_notification(chat_id: int, message_id: int, notification_type: str = "power_change"):
-    """Зберегти сповіщення для подальшого оновлення."""
+    """Зберегти сповіщення для подальшого оновлення (одне на чат і тип)."""
     now = datetime.now().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM active_notifications WHERE chat_id=? AND notification_type=?",
+            (chat_id, notification_type)
+        )
         await db.execute(
             "INSERT INTO active_notifications(chat_id, message_id, created_at, notification_type) VALUES(?, ?, ?, ?)",
             (chat_id, message_id, now, notification_type)
@@ -1351,13 +1355,28 @@ async def save_notification(chat_id: int, message_id: int, notification_type: st
         await db.commit()
 
 
-async def get_active_notifications() -> list[dict]:
-    """Отримати всі активні сповіщення для оновлення."""
+async def get_active_notifications(notification_type: str | None = None) -> list[dict]:
+    """Отримати активні сповіщення для оновлення."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT id, chat_id, message_id, created_at FROM active_notifications") as cur:
+        if notification_type:
+            query = "SELECT id, chat_id, message_id, created_at, notification_type FROM active_notifications WHERE notification_type=?"
+            params = (notification_type,)
+        else:
+            query = "SELECT id, chat_id, message_id, created_at, notification_type FROM active_notifications"
+            params = ()
+        async with db.execute(query, params) as cur:
             rows = await cur.fetchall()
-            return [{"id": r["id"], "chat_id": r["chat_id"], "message_id": r["message_id"], "created_at": r["created_at"]} for r in rows]
+            return [
+                {
+                    "id": r["id"],
+                    "chat_id": r["chat_id"],
+                    "message_id": r["message_id"],
+                    "created_at": r["created_at"],
+                    "notification_type": r["notification_type"],
+                }
+                for r in rows
+            ]
 
 
 async def delete_notification(notification_id: int):
