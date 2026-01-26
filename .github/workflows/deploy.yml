@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set version
         run: echo "VERSION=$(date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
@@ -24,7 +26,10 @@ jobs:
       - name: Detect migration need
         run: |
           set -e
-          CHANGED="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
+          CHANGED="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || true)"
+          if [[ -z "$CHANGED" ]]; then
+            CHANGED="$(git show --name-only --pretty='' ${{ github.sha }})"
+          fi
           if echo "$CHANGED" | grep -E -q '^(schema\.sql|migrate_db\.py)$'; then
             echo "MIGRATE=1" >> $GITHUB_ENV
           else
@@ -42,6 +47,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set version
         run: echo "VERSION=$(date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
@@ -57,7 +64,10 @@ jobs:
             echo "MIGRATE=0" >> $GITHUB_ENV
             exit 0
           fi
-          CHANGED="$(git diff --name-only HEAD~1 HEAD)"
+          CHANGED="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
+          if [[ -z "$CHANGED" ]]; then
+            CHANGED="$(git show --name-only --pretty='' HEAD)"
+          fi
           if echo "$CHANGED" | grep -E -q '^(schema\.sql|migrate_db\.py)$'; then
             echo "MIGRATE=1" >> $GITHUB_ENV
           else
