@@ -55,11 +55,16 @@ fi
 docker compose up -d
 
 echo "Health check (prod)..."
-curl -s http://new-england.morgan-dev.com:18081/api/v1/health >/dev/null
+for i in {1..10}; do
+  if curl -s http://127.0.0.1:18081/api/v1/health >/dev/null; then
+    break
+  fi
+  sleep 1
+done
 
 SENSOR_API_KEY="$(grep -m1 "^SENSOR_API_KEY=" .env | sed 's/^SENSOR_API_KEY=//')"
 if [[ -n "${SENSOR_API_KEY}" ]]; then
-  curl -s -H "X-API-Key: ${SENSOR_API_KEY}" http://new-england.morgan-dev.com:18081/api/v1/sensors >/dev/null
+  curl -s -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18081/api/v1/sensors >/dev/null
 fi
 
 docker compose ps
