@@ -34,7 +34,7 @@ async def handle_webapp_reply_keyboard(message: Message) -> bool:
     except Exception:
         pass
     await message.answer(
-        "📱 Меню тепер у Mini App. Відкрийте його через кнопку Menu у профілі бота.",
+        "📱 Меню тепер у додатку. Відкрийте його через кнопку \"Меню\" у профілі бота.",
         reply_markup=ReplyKeyboardRemove()
     )
     return True
