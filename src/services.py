@@ -456,7 +456,7 @@ async def alert_monitor_loop(bot: Bot):
     # Інтервал перевірки тривог (секунди)
     # alerts.in.ua: soft limit 8-10 req/min, hard limit 12 req/min
     # 2 боти на одній IP = max 6 req/min на бота
-    # 11 сек × 75% alerts.in.ua = ~4 req/min на бота (разом ~8, в межах soft limit)
+    # За ALERTS_IN_UA_RATIO=7: ukrainealarm ~раз на 88 сек, решта alerts.in.ua (~5.4 req/min)
     ALERT_CHECK_INTERVAL = 11
     
     while True:

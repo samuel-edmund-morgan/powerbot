@@ -111,7 +111,8 @@ CFG = Config(
     alerts_city_uid_alerts_in_ua=os.getenv("ALERTS_CITY_UID_ALERTS_IN_UA", "31").strip().strip('"').strip("'"),
     alerts_api_url=os.getenv("ALERTS_API_URL", "https://api.ukrainealarm.com/api/v3").strip().strip('"').strip("'"),
     alerts_in_ua_api_url=os.getenv("ALERTS_IN_UA_API_URL", "https://api.alerts.in.ua/v1").strip().strip('"').strip("'"),
-    alerts_in_ua_ratio=int(os.getenv("ALERTS_IN_UA_RATIO", "3")),
+    # За замовчуванням частіше ходимо в alerts.in.ua, щоб не ловити 401 у ukrainealarm
+    alerts_in_ua_ratio=int(os.getenv("ALERTS_IN_UA_RATIO", "7")),
     # API сервер
     api_port=int(os.getenv("API_PORT", "8080")),
     sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),

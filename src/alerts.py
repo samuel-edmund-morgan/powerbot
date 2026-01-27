@@ -34,19 +34,19 @@ class AlertStatus:
 # Лічильник запитів для балансування джерел
 # alerts.in.ua оновлюється кожні 15 сек, ukrainealarm має суворіший rate limit
 _request_counter = 0
-# alerts.in.ua як основне джерело (3 з 4 запитів), ukrainealarm як резерв (1 з 4)
-ALERTS_IN_UA_RATIO = max(0, CFG.alerts_in_ua_ratio)  # 75% запитів до alerts.in.ua за замовчуванням
+# alerts.in.ua як основне джерело, ukrainealarm як рідший резерв
+ALERTS_IN_UA_RATIO = max(0, CFG.alerts_in_ua_ratio)
 
 
 def _get_next_source() -> AlertSource:
     """
     Отримати наступне джерело для запиту.
-    Пріоритет: alerts.in.ua (75%), ukrainealarm (25%).
+    Пріоритет: alerts.in.ua (ALERTS_IN_UA_RATIO з ALERTS_IN_UA_RATIO + 1 запитів).
     """
     global _request_counter
     _request_counter += 1
     
-    # Кожен 4-й запит до ukrainealarm, решта до alerts.in.ua
+    # Кожен (ALERTS_IN_UA_RATIO + 1)-й запит до ukrainealarm, решта до alerts.in.ua
     if _request_counter % (ALERTS_IN_UA_RATIO + 1) == 0:
         return AlertSource.UKRAINEALARM
     return AlertSource.ALERTS_IN_UA
