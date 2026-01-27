@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    BufferedInputFile, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
+    BufferedInputFile, ReplyKeyboardRemove,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     FSInputFile
 )
@@ -25,18 +25,35 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
+async def remove_reply_keyboard(message: Message) -> None:
+    """Намагаємось прибрати ReplyKeyboard без зайвих повідомлень у чаті."""
+    try:
+        rm_msg = await message.answer(" ", reply_markup=ReplyKeyboardRemove())
+        try:
+            await rm_msg.delete()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 async def handle_webapp_reply_keyboard(message: Message) -> bool:
-    """Якщо WebApp увімкнено — прибрати ReplyKeyboard та підказати Menu Button."""
+    """У режимі WebApp прибираємо застарілі ReplyKeyboard-повідомлення."""
     if not CFG.web_app_enabled:
         return False
     try:
         await message.delete()
     except Exception:
         pass
-    await message.answer(
-        "📱 Меню тепер у додатку. Відкрийте його через кнопку \"Меню\" у профілі бота.",
-        reply_markup=ReplyKeyboardRemove()
+    building_text = await get_user_building_text(message.chat.id)
+    light_status = await get_light_status_text(message.chat.id)
+    alert_status = await get_alert_status_text()
+    menu_msg = await message.answer(
+        f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
+        reply_markup=get_main_keyboard(),
     )
+    await remove_reply_keyboard(message)
+    await save_last_bot_message(message.chat.id, menu_msg.message_id)
     return True
 
 
@@ -282,40 +299,6 @@ async def get_light_status_text(user_id: int) -> str:
         return "💡 Є світло"
     else:
         return "💡 Немає світла"
-
-
-def get_reply_keyboard() -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
-    """ReplyKeyboard — великі кнопки внизу екрану замість клавіатури."""
-    if CFG.web_app_enabled:
-        return ReplyKeyboardRemove()
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="🏠 Обрати будинок"),
-            ],
-            [
-                KeyboardButton(text="💡 Світло/опалення/вода"),
-            ],
-            [
-                KeyboardButton(text="🏢 Заклади в ЖК"),
-                KeyboardButton(text="🔍 Пошук закладу"),
-            ],
-            [
-                KeyboardButton(text="🚨 Тривоги та укриття"),
-                KeyboardButton(text="📞 Сервісна служба"),
-            ],
-            [
-                KeyboardButton(text="🔔 Сповіщення та тихі години"),
-            ],
-            [
-                KeyboardButton(text="☕ Подякувати розробнику"),
-            ],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
 def get_main_keyboard() -> InlineKeyboardMarkup:
     """Головна клавіатура з основними діями."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -581,15 +564,6 @@ async def cmd_start(message: Message):
         except (ValueError, Exception):
             pass
     
-    # Показуємо ReplyKeyboard (великі кнопки внизу) без зайвого повідомлення
-    try:
-        kb_msg = await message.answer(" ", reply_markup=get_reply_keyboard())
-        try:
-            await kb_msg.delete()
-        except Exception:
-            pass
-    except Exception:
-        pass
     # Також показуємо InlineKeyboard в чаті
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
@@ -598,6 +572,7 @@ async def cmd_start(message: Message):
         f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
+    await remove_reply_keyboard(message)
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
@@ -605,11 +580,6 @@ async def cmd_start(message: Message):
 async def cmd_menu(message: Message):
     """Показати головне меню з кнопками."""
     logger.info(f"User {message.chat.id} opened menu")
-    # Оновлюємо ReplyKeyboard
-    await message.answer(
-        "🏠 <b>Головне меню</b>",
-        reply_markup=get_reply_keyboard()
-    )
     # Показуємо InlineKeyboard
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
@@ -618,6 +588,7 @@ async def cmd_menu(message: Message):
         f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
+    await remove_reply_keyboard(message)
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
@@ -1838,11 +1809,11 @@ async def reply_quiet(message: Message):
 
 
 # ============ Обробники для СТАРИХ кнопок (сумісність з попередньою версією) ============
-# Ці обробники оновлюють reply keyboard до нової версії
+# У режимі WebApp ці кнопки прибирають кешовану ReplyKeyboard і показують актуальне меню.
 
 @router.message(F.text == "💡 Світло")
 async def reply_light_old(message: Message):
-    """Обробник СТАРОЇ кнопки 'Світло' - оновлюємо клавіатуру і показуємо статус."""
+    """Обробник СТАРОЇ кнопки 'Світло'."""
     if await handle_webapp_reply_keyboard(message):
         return
     logger.info(f"User {message.chat.id} uses old button: Світло - updating keyboard")
@@ -1850,8 +1821,7 @@ async def reply_light_old(message: Message):
         await message.delete()
     except Exception:
         pass
-    # Надсилаємо повідомлення з НОВОЮ reply keyboard
-    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    await remove_reply_keyboard(message)
     # Викликаємо нову функціональність - показуємо статус світла
     text = await format_light_status(message.chat.id)
     await message.answer(
@@ -1865,7 +1835,7 @@ async def reply_light_old(message: Message):
 
 @router.message(F.text == "♨️ Опалення")
 async def reply_heating_old(message: Message):
-    """Обробник СТАРОЇ кнопки 'Опалення' - оновлюємо клавіатуру і показуємо статус."""
+    """Обробник СТАРОЇ кнопки 'Опалення'."""
     if await handle_webapp_reply_keyboard(message):
         return
     logger.info(f"User {message.chat.id} uses old button: Опалення - updating keyboard")
@@ -1873,8 +1843,7 @@ async def reply_heating_old(message: Message):
         await message.delete()
     except Exception:
         pass
-    # Надсилаємо повідомлення з НОВОЮ reply keyboard
-    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    await remove_reply_keyboard(message)
     # Викликаємо нову функціональність
     from database import get_user_vote
     user_vote = await get_user_vote(message.chat.id, "heating")
@@ -1884,7 +1853,7 @@ async def reply_heating_old(message: Message):
 
 @router.message(F.text == "💧 Вода")
 async def reply_water_old(message: Message):
-    """Обробник СТАРОЇ кнопки 'Вода' - оновлюємо клавіатуру і показуємо статус."""
+    """Обробник СТАРОЇ кнопки 'Вода'."""
     if await handle_webapp_reply_keyboard(message):
         return
     logger.info(f"User {message.chat.id} uses old button: Вода - updating keyboard")
@@ -1892,8 +1861,7 @@ async def reply_water_old(message: Message):
         await message.delete()
     except Exception:
         pass
-    # Надсилаємо повідомлення з НОВОЮ reply keyboard
-    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    await remove_reply_keyboard(message)
     # Викликаємо нову функціональність
     from database import get_user_vote
     user_vote = await get_user_vote(message.chat.id, "water")
@@ -1903,19 +1871,18 @@ async def reply_water_old(message: Message):
 
 @router.message(F.text == "🔔 Сповіщення")
 async def reply_notifications_old(message: Message):
-    """Обробник СТАРОЇ кнопки 'Сповіщення' - оновлюємо клавіатуру."""
+    """Обробник СТАРОЇ кнопки 'Сповіщення'."""
     if await handle_webapp_reply_keyboard(message):
         return
     logger.info(f"User {message.chat.id} uses old button: Сповіщення - updating keyboard")
-    # Надсилаємо повідомлення з НОВОЮ reply keyboard (тихо оновлюємо)
-    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    await remove_reply_keyboard(message)
     # Перенаправляємо на нову функцію
     await reply_notifications(message)
 
 
 @router.message(F.text == "🔍 Пошук")
 async def reply_search_old(message: Message):
-    """Обробник СТАРОЇ кнопки 'Пошук' - оновлюємо клавіатуру."""
+    """Обробник СТАРОЇ кнопки 'Пошук'."""
     if await handle_webapp_reply_keyboard(message):
         return
     logger.info(f"User {message.chat.id} uses old button: Пошук - updating keyboard")
@@ -1923,8 +1890,7 @@ async def reply_search_old(message: Message):
         await message.delete()
     except Exception:
         pass
-    # Надсилаємо повідомлення з НОВОЮ reply keyboard
-    await message.answer("🔄 Оновлення клавіатури...", reply_markup=get_reply_keyboard())
+    await remove_reply_keyboard(message)
     # Показуємо пошук
     await message.answer(
         "🔍 <b>Пошук закладу</b>\n\nВведіть назву або ключове слово для пошуку:",
