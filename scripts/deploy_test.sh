@@ -50,6 +50,8 @@ if [[ "${MIGRATE}" == "1" ]]; then
 fi
 docker compose up -d
 
+docker compose ps
+
 echo "Health check (test)..."
 for i in {1..10}; do
   if curl -s http://127.0.0.1:18082/api/v1/health >/dev/null; then
@@ -63,4 +65,8 @@ if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -s -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
 fi
 
-docker compose ps
+# Optional: mini app health if endpoint exists.
+curl -s http://127.0.0.1:18082/api/v1/webapp/health >/dev/null || true
+
+# Log health gate (fail only on bad patterns).
+"${REPO_DIR}/scripts/log_health_check.sh" powerbot
