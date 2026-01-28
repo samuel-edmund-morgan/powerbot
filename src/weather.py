@@ -2,6 +2,7 @@
 
 import aiohttp
 import logging
+import time
 
 from config import CFG
 
@@ -54,7 +55,7 @@ async def get_weather() -> str | None:
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(CFG.weather_api_url, params=params, timeout=10) as resp:
+            async with session.get(CFG.weather_api_url, params=params, timeout=3) as resp:
                 if resp.status != 200:
                     logging.warning("Weather API returned %s", resp.status)
                     return None
@@ -89,7 +90,20 @@ async def get_weather_line() -> str:
     Отримати рядок з погодою для сповіщення.
     Повертає порожній рядок при помилці.
     """
+    now = time.monotonic()
+    if now - _WEATHER_CACHE["ts"] < _WEATHER_CACHE_TTL:
+        return _WEATHER_CACHE["value"]
+
     weather = await get_weather()
     if weather:
-        return f"\n🌡 Погода: {weather}"
-    return ""
+        line = f"\n🌡 Погода: {weather}"
+    else:
+        line = ""
+
+    _WEATHER_CACHE["ts"] = now
+    _WEATHER_CACHE["value"] = line
+    return line
+
+
+_WEATHER_CACHE_TTL = 300  # 5 хвилин
+_WEATHER_CACHE = {"ts": 0.0, "value": ""}
