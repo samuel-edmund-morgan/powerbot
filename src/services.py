@@ -127,10 +127,13 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
 
     weather_text = await get_weather_line()
     if weather_text:
-        lines.append(weather_text)
+        weather_line = weather_text.strip()
+        if "Погода" in weather_line and not any("Погода" in line for line in lines):
+            lines.append(weather_line)
 
     updated = datetime.now().strftime("%H:%M:%S")
-    lines.append(f"\nОновлено: {updated}")
+    if not any("Оновлено" in line for line in lines):
+        lines.append(f"Оновлено: {updated}")
 
     if include_vote_prompt:
         lines.append("\n👇 <b>Допоможи сусідам!</b> Повідом, чи є опалення та вода:")
