@@ -507,8 +507,7 @@ async def cmd_status(message: Message):
     text = await format_light_status(message.chat.id, include_vote_prompt=False)
     text += weather_text
     
-    now = datetime.now().strftime("%H:%M:%S")
-    text += f"\n\n<i>Оновлено: {now}</i>"
+    # Оновлено вже додається у format_light_status
     
     await message.answer(text)
 
@@ -2870,8 +2869,7 @@ async def cb_heating_menu(callback: CallbackQuery):
     user_vote = await get_user_vote(callback.message.chat.id, "heating")
     text = await format_heating_status(callback.message.chat.id)
     
-    now = datetime.now().strftime("%H:%M:%S")
-    text += f"\n\n<i>Оновлено: {now}</i>"
+    # Оновлено вже додається у format_light_status
     
     try:
         await callback.message.edit_text(text, reply_markup=get_heating_vote_keyboard(user_vote))
