@@ -18,6 +18,7 @@ from database import (
     get_sensors_count_by_building,
     get_last_events,
     get_subscriber_building,
+    get_last_event_before,
 )
 
 # Налаштування масових розсилок (можна перевизначити через env)
@@ -393,45 +394,73 @@ async def calculate_stats(period_days: int | None = None) -> dict:
     now = datetime.now()
     
     if period_days:
-        since = now - timedelta(days=period_days)
+        if period_days == 1:
+            since = datetime(now.year, now.month, now.day)
+        else:
+            since = now - timedelta(days=period_days)
         events = await get_events_since(since)
     else:
         from database import get_all_events
         events = await get_all_events()
         since = events[0][1] if events else now
-    
-    if not events:
-        return {
-            'total_downtime': 0,
-            'total_uptime': 0,
-            'uptime_percent': 100.0,
-            'outage_count': 0,
-            'period_start': since,
-            'period_end': now,
-        }
-    
+
     total_downtime = 0.0
     total_uptime = 0.0
     outage_count = 0
-    
-    # Обробляємо події парами
-    for i in range(len(events)):
-        event_type, event_time = events[i]
-        
-        # Визначаємо кінець періоду
-        if i + 1 < len(events):
-            next_time = events[i + 1][1]
-        else:
-            next_time = now
-        
-        duration = (next_time - event_time).total_seconds()
-        
-        if event_type == "down":
-            total_downtime += duration
-            outage_count += 1
-        else:
-            total_uptime += duration
-    
+
+    # Визначаємо стан на початку періоду
+    start_state = None  # "up" або "down"
+    prev = await get_last_event_before(since)
+    if prev:
+        start_state = prev[0]
+    elif events:
+        start_state = "up" if events[0][0] == "down" else "down"
+    else:
+        last = await get_last_event()
+        if last:
+            start_state = last[0]
+
+    cursor_time = since
+
+    if events:
+        first_type, first_time = events[0]
+        if start_state in ("up", "down"):
+            duration = (first_time - since).total_seconds()
+            if duration > 0:
+                if start_state == "down":
+                    total_downtime += duration
+                else:
+                    total_uptime += duration
+        cursor_time = first_time
+
+        for event_type, event_time in events:
+            duration = (event_time - cursor_time).total_seconds()
+            if duration > 0 and start_state in ("up", "down"):
+                if start_state == "down":
+                    total_downtime += duration
+                else:
+                    total_uptime += duration
+
+            start_state = event_type
+            if event_type == "down":
+                outage_count += 1
+            cursor_time = event_time
+
+        tail_duration = (now - cursor_time).total_seconds()
+        if tail_duration > 0 and start_state in ("up", "down"):
+            if start_state == "down":
+                total_downtime += tail_duration
+            else:
+                total_uptime += tail_duration
+    else:
+        if start_state in ("up", "down"):
+            duration = (now - since).total_seconds()
+            if duration > 0:
+                if start_state == "down":
+                    total_downtime += duration
+                else:
+                    total_uptime += duration
+
     total_time = total_uptime + total_downtime
     uptime_percent = (total_uptime / total_time * 100) if total_time > 0 else 100.0
     
