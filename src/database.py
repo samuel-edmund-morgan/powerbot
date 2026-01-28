@@ -690,6 +690,19 @@ async def get_last_event(event_type: str | None = None) -> tuple[str, datetime] 
             return None
 
 
+async def get_last_event_before(before: datetime) -> tuple[str, datetime] | None:
+    """Отримати останню подію до вказаного часу."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT event_type, timestamp FROM events WHERE timestamp < ? ORDER BY id DESC LIMIT 1",
+            (before.isoformat(),),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return row[0], datetime.fromisoformat(row[1])
+            return None
+
+
 async def get_events_since(since: datetime) -> list[tuple[str, datetime]]:
     """Отримати всі події після вказаного часу."""
     async with aiosqlite.connect(DB_PATH) as db:
