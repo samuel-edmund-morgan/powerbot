@@ -16,6 +16,8 @@ from database import (
     NEWCASTLE_BUILDING_ID, get_all_active_sensors, get_building_power_state,
     set_building_power_state, get_sensors_by_building, get_building_by_id,
     get_sensors_count_by_building,
+    get_last_events,
+    get_subscriber_building,
 )
 
 # Налаштування масових розсилок (можна перевизначити через env)
@@ -25,6 +27,114 @@ BROADCAST_MAX_RETRIES = int(os.getenv("BROADCAST_MAX_RETRIES", "1"))
 
 # Синхронізація записів у БД для уникнення SQLite lock при масовій розсилці
 _notification_save_lock = asyncio.Lock()
+
+
+async def format_light_status(user_id: int, include_vote_prompt: bool = False) -> str:
+    """
+    Форматувати статус світла зі шкалою для будинку користувача.
+    Використовується як у хендлері, так і в сповіщеннях.
+    """
+    from weather import get_weather_line
+
+    user_building_id = await get_subscriber_building(user_id)
+    user_building = get_building_by_id(user_building_id) if user_building_id else None
+
+    sensors = await get_sensors_by_building(user_building_id) if user_building_id else []
+    sensors_count = len(sensors)
+
+    sensors_online = 0
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    for s in sensors:
+        if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
+            sensors_online += 1
+
+    is_up = sensors_online > 0
+
+    last_event = await get_last_event()
+    last_change_text = ""
+    if last_event:
+        event_type, event_time = last_event
+        time_str = event_time.strftime("%d.%m.%Y о %H:%M")
+        if event_type == "up":
+            last_change_text = f"🕐 Увімкнули: {time_str}"
+        else:
+            last_change_text = f"🕐 Вимкнули: {time_str}"
+
+    duration_text = ""
+    last_events = await get_last_events(2)
+    if len(last_events) >= 2:
+        last_type, last_time = last_events[0]
+        prev_type, prev_time = last_events[1]
+        duration_seconds = (last_time - prev_time).total_seconds()
+        duration_formatted = format_duration(duration_seconds)
+        if last_type == "down":
+            duration_text = f"⏱ Було зі світлом: {duration_formatted}"
+        else:
+            duration_text = f"⏱ Було без світла: {duration_formatted}"
+
+    stats = await calculate_stats(period_days=1)
+    today_uptime = format_duration(stats["total_uptime"])
+    today_downtime = format_duration(stats["total_downtime"])
+    stats_info = f"📊 Сьогодні: ✅ {today_uptime} | ❌ {today_downtime}"
+
+    lines = ["☀️ <b>Стан електропостачання</b>\n"]
+
+    if not user_building:
+        lines.append("⚠️ Ви ще не обрали свій будинок.")
+        lines.append("Натисніть «🏠 Обрати будинок» щоб отримувати точну інформацію.")
+        return "\n".join(lines)
+
+    display_name = f"{user_building['name']} ({user_building['address']})"
+
+    if sensors_count > 0:
+        percent = round(sensors_online / sensors_count * 100)
+        status_text = "✅ Світло є" if is_up else "❌ Світла немає"
+        bar_length = 10
+        filled = round(percent / 100 * bar_length)
+        bar = "🟩" * filled + "🟥" * (bar_length - filled)
+        lines.append(f"🏠 <b>{display_name}</b>")
+        lines.append(f"{bar} <b>{percent}%</b>")
+        lines.append(f"{status_text} (сенсорів: {sensors_online}/{sensors_count})")
+    else:
+        bar = "⬜" * 10
+        lines.append(f"🏠 <b>{display_name}</b>")
+        lines.append(f"{bar}")
+        lines.append("⚠️ Сенсорів немає (в розробці)")
+
+    if last_change_text:
+        lines.append(f"\n{last_change_text}")
+    if duration_text:
+        lines.append(duration_text)
+    lines.append(stats_info)
+
+    phone = CFG.electrician_phone
+    if sensors_count > 0:
+        if is_up:
+            lines.append(
+                "\n💡 Якщо у вашій квартирі відсутнє світло — "
+                "ймовірно, вибило автомат у вашій квартирі або секції."
+            )
+        else:
+            lines.append(
+                "\n💡 Якщо у вас світло досі є — "
+                "це означає, що відсутня електроенергія в одній із секцій будинку."
+            )
+
+    if phone:
+        lines.append(f"📞 Черговий електрик: <code>{phone}</code>")
+
+    weather_text = await get_weather_line()
+    if weather_text:
+        lines.append(weather_text)
+
+    updated = datetime.now().strftime("%H:%M:%S")
+    lines.append(f"\nОновлено: {updated}")
+
+    if include_vote_prompt:
+        lines.append("\n👇 <b>Допоможи сусідам!</b> Повідом, чи є опалення та вода:")
+
+    return "\n".join(lines)
 
 
 class BroadcastRateLimiter:
@@ -572,23 +682,8 @@ async def sensors_monitor_loop(bot: Bot):
                 if not building:
                     continue
                 
-                building_name = building["name"]
-                
                 # Скидаємо голоси за опалення/воду при зміні стану світла
                 await reset_votes(building_id)
-                
-                # Обчислюємо тривалість попереднього стану
-                duration_text = ""
-                now = datetime.now()
-                if old_last_change:
-                    duration_seconds = (now - old_last_change).total_seconds()
-                    duration_formatted = format_duration(duration_seconds)
-                    if is_up:
-                        # Зараз увімкнули = до цього було без світла
-                        duration_text = f"⏱ Було без світла: {duration_formatted}"
-                    else:
-                        # Зараз вимкнули = до цього було світло
-                        duration_text = f"⏱ Було зі світлом: {duration_formatted}"
                 
                 # Записуємо подію в історію
                 event_type = "up" if is_up else "down"
@@ -596,47 +691,9 @@ async def sensors_monitor_loop(bot: Bot):
                 
                 logging.info(f"Building {building_name} power state changed to: {'UP' if is_up else 'DOWN'}")
                 
-                # Формуємо текст сповіщення
-                if is_up:
-                    status_emoji = "✅"
-                    status_text = "Є світло!"
-                    advice = (
-                        "💡 Якщо у вашій квартирі відсутнє світло — "
-                        "ймовірно, вибило автомат у вашій квартирі або секції."
-                    )
-                else:
-                    status_emoji = "❌"
-                    status_text = "Немає світла"
-                    advice = (
-                        "💡 Якщо у вас світло досі є — "
-                        "це означає, що відсутня електроенергія в одній із секцій будинку."
-                    )
-                
-                # Інформація про час зміни стану
-                time_str = now.strftime("%H:%M")
-                time_info = f"\n🕐 Час: {time_str}"
-                
-                # Додаємо тривалість попереднього стану
-                if duration_text:
-                    time_info += f"\n{duration_text}"
-                
-                # Статистика за сьогодні
-                stats = await calculate_stats(period_days=1)
-                today_uptime = format_duration(stats['total_uptime'])
-                today_downtime = format_duration(stats['total_downtime'])
-                stats_info = f"\n📊 Сьогодні: ✅ {today_uptime} | ❌ {today_downtime}"
-                
-                # Погода
-                from weather import get_weather_line
-                weather_text = await get_weather_line()
-                
-                # Голосування
-                vote_text = "\n\n👇 <b>Допоможи сусідам!</b> Повідом, чи є опалення та вода:"
-                
-                phone = CFG.electrician_phone
-                phone_text = f"\n📞 Черговий електрик: <code>{phone}</code>" if phone else ""
-                
-                text = f"{status_emoji} <b>{building_name}:</b> {status_text}{time_info}{stats_info}{weather_text}\n\n{advice}{phone_text}{vote_text}"
+                # Формуємо уніфікований текст (як у хендлері)
+                # Голосування лишаємо клавіатурою, без текстового промпту.
+                text = await format_light_status(chat_id, include_vote_prompt=False)
                 
                 # Перевіряємо глобальний прапорець сповіщень
                 global_enabled = (await db_get("light_notifications_global")) != "off"

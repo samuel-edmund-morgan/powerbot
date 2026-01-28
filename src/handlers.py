@@ -19,7 +19,7 @@ from database import (
     get_notification_settings, set_light_notifications, set_alert_notifications,
     get_last_event, get_subscriber_building, get_building_by_id, save_last_bot_message
 )
-from services import state_text, calculate_stats, format_duration
+from services import state_text, calculate_stats, format_duration, format_light_status
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -65,108 +65,6 @@ class AddPlaceStates(StatesGroup):
     waiting_for_description = State()
     waiting_for_address = State()
     waiting_for_keywords = State()
-
-
-async def format_light_status(user_id: int) -> str:
-    """
-    Форматувати статус світла зі шкалою для будинку користувача.
-    
-    Логіка ESP32 сенсора:
-    - Сенсор вставлений в розетку і живиться від мережі
-    - Якщо heartbeat приходить → плата працює → світло Є
-    - Якщо heartbeat не приходить (timeout) → плата вимкнулась → світла НЕМАЄ
-    """
-    from database import (
-        get_subscriber_building, get_building_by_id, 
-        get_last_event, get_sensors_by_building
-    )
-    
-    user_building_id = await get_subscriber_building(user_id)
-    user_building = get_building_by_id(user_building_id) if user_building_id else None
-    
-    # Отримуємо інформацію про сенсори будинку
-    sensors = await get_sensors_by_building(user_building_id) if user_building_id else []
-    sensors_count = len(sensors)
-    
-    # Рахуємо онлайн сенсори (= скільки сенсорів показують що світло є)
-    # Сенсор онлайн = heartbeat свіжий = плата працює = світло є
-    sensors_online = 0
-    now = datetime.now()
-    timeout = timedelta(seconds=CFG.sensor_timeout)
-    for s in sensors:
-        if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
-            sensors_online += 1
-    
-    # Світло є якщо хоча б один сенсор онлайн
-    is_up = sensors_online > 0
-    
-    # Отримуємо час останньої зміни
-    last_event = await get_last_event()
-    last_change_text = ""
-    if last_event:
-        event_type, event_time = last_event
-        time_str = event_time.strftime("%d.%m.%Y о %H:%M")
-        if event_type == "up":
-            last_change_text = f"🕐 Увімкнули: {time_str}"
-        else:
-            last_change_text = f"🕐 Вимкнули: {time_str}"
-    
-    lines = ["☀️ <b>Стан електропостачання</b>\n"]
-    
-    # Якщо користувач не обрав будинок
-    if not user_building:
-        lines.append("⚠️ Ви ще не обрали свій будинок.")
-        lines.append("Натисніть «🏠 Обрати будинок» щоб отримувати точну інформацію.")
-        return "\n".join(lines)
-    
-    display_name = f"{user_building['name']} ({user_building['address']})"
-    
-    # Показуємо шкалу для будинку користувача
-    if sensors_count > 0:
-        # Є сенсори - світло є якщо хоча б один сенсор онлайн
-        percent = round(sensors_online / sensors_count * 100)
-        
-        if is_up:
-            status_text = "✅ Світло є"
-        else:
-            status_text = "❌ Світла немає"
-        
-        bar_length = 10
-        filled = round(percent / 100 * bar_length)
-        bar = "🟩" * filled + "🟥" * (bar_length - filled)
-        
-        lines.append(f"🏠 <b>{display_name}</b>")
-        lines.append(f"{bar} <b>{percent}%</b>")
-        lines.append(f"{status_text} (сенсорів: {sensors_online}/{sensors_count})")
-    else:
-        # Немає сенсорів
-        bar = "⬜" * 10
-        lines.append(f"🏠 <b>{display_name}</b>")
-        lines.append(f"{bar}")
-        lines.append("⚠️ Сенсорів немає (в розробці)")
-    
-    # Додаємо час останньої події
-    if last_change_text:
-        lines.append(f"\n{last_change_text}")
-    
-    # Поради
-    phone = CFG.electrician_phone
-    if sensors_count > 0:
-        if is_up:
-            lines.append(
-                "\n💡 Якщо у вашій квартирі відсутнє світло — "
-                "ймовірно, вибило автомат у вашій квартирі або секції."
-            )
-        else:
-            lines.append(
-                "\n💡 Якщо у вас світло досі є — "
-                "це означає, що відсутня електроенергія в одній із секцій будинку."
-            )
-    
-    if phone:
-        lines.append(f"📞 Черговий електрик: <code>{phone}</code>")
-    
-    return "\n".join(lines)
 
 
 # Маппінг будинків до файлів карт (винесено для повторного використання)
@@ -606,7 +504,7 @@ async def cmd_status(message: Message):
     from weather import get_weather_line
     weather_text = await get_weather_line()
     
-    text = await format_light_status(message.chat.id)
+    text = await format_light_status(message.chat.id, include_vote_prompt=True)
     text += weather_text
     
     now = datetime.now().strftime("%H:%M:%S")
@@ -1017,7 +915,7 @@ async def cb_status(callback: CallbackQuery):
     from weather import get_weather_line
     weather_text = await get_weather_line()
     
-    text = await format_light_status(callback.message.chat.id)
+    text = await format_light_status(callback.message.chat.id, include_vote_prompt=True)
     text += weather_text
     text += f"\n\n<i>Оновлено: {now}</i>"
     
@@ -1823,7 +1721,7 @@ async def reply_light_old(message: Message):
         pass
     await remove_reply_keyboard(message)
     # Викликаємо нову функціональність - показуємо статус світла
-    text = await format_light_status(message.chat.id)
+    text = await format_light_status(message.chat.id, include_vote_prompt=True)
     await message.answer(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3166,7 +3064,7 @@ async def do_search(query: str, user_id: int | None = None) -> str:
             from weather import get_weather_line
             weather_text = await get_weather_line()
             now = datetime.now().strftime("%H:%M:%S")
-            text = await format_light_status(user_id)
+            text = await format_light_status(user_id, include_vote_prompt=True)
             text += weather_text
             text += f"\n\n<i>Оновлено: {now}</i>"
             return text
