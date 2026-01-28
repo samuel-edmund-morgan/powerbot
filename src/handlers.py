@@ -504,7 +504,7 @@ async def cmd_status(message: Message):
     from weather import get_weather_line
     weather_text = await get_weather_line()
     
-    text = await format_light_status(message.chat.id, include_vote_prompt=True)
+    text = await format_light_status(message.chat.id, include_vote_prompt=False)
     text += weather_text
     
     now = datetime.now().strftime("%H:%M:%S")
@@ -915,7 +915,7 @@ async def cb_status(callback: CallbackQuery):
     from weather import get_weather_line
     weather_text = await get_weather_line()
     
-    text = await format_light_status(callback.message.chat.id, include_vote_prompt=True)
+    text = await format_light_status(callback.message.chat.id, include_vote_prompt=False)
     text += weather_text
     text += f"\n\n<i>Оновлено: {now}</i>"
     
@@ -1721,7 +1721,7 @@ async def reply_light_old(message: Message):
         pass
     await remove_reply_keyboard(message)
     # Викликаємо нову функціональність - показуємо статус світла
-    text = await format_light_status(message.chat.id, include_vote_prompt=True)
+    text = await format_light_status(message.chat.id, include_vote_prompt=False)
     await message.answer(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3064,7 +3064,7 @@ async def do_search(query: str, user_id: int | None = None) -> str:
             from weather import get_weather_line
             weather_text = await get_weather_line()
             now = datetime.now().strftime("%H:%M:%S")
-            text = await format_light_status(user_id, include_vote_prompt=True)
+            text = await format_light_status(user_id, include_vote_prompt=False)
             text += weather_text
             text += f"\n\n<i>Оновлено: {now}</i>"
             return text
