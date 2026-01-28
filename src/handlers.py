@@ -59,8 +59,18 @@ router.message.middleware(ReplyKeyboardAutoClearMiddleware())
 async def remove_reply_keyboard(message: Message) -> None:
     """Намагаємось прибрати ReplyKeyboard без зайвих повідомлень у чаті."""
     try:
-        # Важливо: не видаляємо це повідомлення, інакше клієнт може повернути стару клавіатуру
-        await message.answer(" ", reply_markup=ReplyKeyboardRemove(), disable_notification=True)
+        # Відправляємо видиме повідомлення, щоб клієнти точно застосували ReplyKeyboardRemove,
+        # потім прибираємо його, щоб не засмічувати чат.
+        removal_msg = await message.answer(
+            "Оновлюю меню…",
+            reply_markup=ReplyKeyboardRemove(),
+            disable_notification=True
+        )
+        try:
+            await asyncio.sleep(0.8)
+            await removal_msg.delete()
+        except Exception:
+            pass
     except Exception:
         pass
 
