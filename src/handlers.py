@@ -13,6 +13,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict
+import re
 
 from config import CFG
 from database import (
@@ -1750,6 +1751,16 @@ LEGACY_REPLY_TEXTS = {
     "Тривоги та укриття",
 }
 
+# Додатковий regex для ловлі старих кнопок з емоджі/зайвими символами
+LEGACY_REPLY_REGEX = re.compile(
+    r"^\s*[^A-Za-zА-Яа-яІіЇїЄєҐґ0-9]*\s*("
+    r"Головне меню|Меню|Обрати будинок|Світло/опалення/вода|Світло|Опалення|Вода|"
+    r"Заклади в ЖК|Пошук закладу|Пошук|Сервісна служба|Статистика|"
+    r"Сповіщення та тихі години|Сповіщення|Тривоги та укриття|Подякувати розробнику"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
 @router.message(F.text == "💡 Світло")
 async def reply_light_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Світло'."""
@@ -1844,6 +1855,18 @@ async def reply_keyboard_fallback(message: Message):
     """Фолбек: якщо прийшов текст з ReplyKeyboard у режимі WebApp — прибираємо клавіатуру."""
     if await handle_webapp_reply_keyboard(message):
         return
+
+
+@router.message(F.text)
+async def reply_keyboard_regex_fallback(message: Message):
+    """Regex-фолбек для дуже старих або варіативних reply-кнопок."""
+    if not CFG.web_app_enabled:
+        return
+    text = message.text or ""
+    if text in LEGACY_REPLY_TEXTS:
+        return
+    if LEGACY_REPLY_REGEX.match(text):
+        await handle_webapp_reply_keyboard(message)
 
 
 @router.message(F.text == "📞 Сервісна служба")
