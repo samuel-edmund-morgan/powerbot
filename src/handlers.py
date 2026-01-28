@@ -42,6 +42,7 @@ async def handle_webapp_reply_keyboard(message: Message) -> bool:
         await message.delete()
     except Exception:
         pass
+    await remove_reply_keyboard(message)
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
@@ -49,7 +50,6 @@ async def handle_webapp_reply_keyboard(message: Message) -> bool:
         f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard(),
     )
-    await remove_reply_keyboard(message)
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
     return True
 
@@ -463,11 +463,11 @@ async def cmd_start(message: Message):
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
+    await remove_reply_keyboard(message)
     menu_msg = await message.answer(
         f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
-    await remove_reply_keyboard(message)
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
@@ -479,11 +479,11 @@ async def cmd_menu(message: Message):
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
+    await remove_reply_keyboard(message)
     menu_msg = await message.answer(
         f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=get_main_keyboard()
     )
-    await remove_reply_keyboard(message)
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
