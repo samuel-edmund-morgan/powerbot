@@ -1,4 +1,4 @@
-from aiogram import Router, F
+from aiogram import Router, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
@@ -12,6 +12,7 @@ import os
 import logging
 import asyncio
 from datetime import datetime, timedelta
+from typing import Any, Awaitable, Callable, Dict
 
 from config import CFG
 from database import (
@@ -23,6 +24,35 @@ from services import state_text, calculate_stats, format_duration, format_light_
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+async def maybe_autoclear_reply_keyboard(message: Message) -> None:
+    """Разово прибрати стару ReplyKeyboard для користувача у режимі WebApp."""
+    if not CFG.web_app_enabled:
+        return
+    if not message.from_user:
+        return
+    chat_id = message.chat.id
+    key = f"replykbd_cleared:{chat_id}"
+    if await db_get(key):
+        return
+    await remove_reply_keyboard(message)
+    await db_set(key, "1")
+
+
+class ReplyKeyboardAutoClearMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message):
+            await maybe_autoclear_reply_keyboard(event)
+        return await handler(event, data)
+
+
+router.message.middleware(ReplyKeyboardAutoClearMiddleware())
 
 
 async def remove_reply_keyboard(message: Message) -> None:
