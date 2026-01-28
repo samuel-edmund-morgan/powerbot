@@ -28,11 +28,8 @@ logger = logging.getLogger(__name__)
 async def remove_reply_keyboard(message: Message) -> None:
     """Намагаємось прибрати ReplyKeyboard без зайвих повідомлень у чаті."""
     try:
-        rm_msg = await message.answer(" ", reply_markup=ReplyKeyboardRemove())
-        try:
-            await rm_msg.delete()
-        except Exception:
-            pass
+        # Важливо: не видаляємо це повідомлення, інакше клієнт може повернути стару клавіатуру
+        await message.answer(" ", reply_markup=ReplyKeyboardRemove(), disable_notification=True)
     except Exception:
         pass
 
