@@ -711,6 +711,17 @@ async def get_all_events() -> list[tuple[str, datetime]]:
             return [(r[0], datetime.fromisoformat(r[1])) for r in rows]
 
 
+async def get_last_events(limit: int = 2) -> list[tuple[str, datetime]]:
+    """Отримати останні N подій (за замовчуванням 2)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT event_type, timestamp FROM events ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+            return [(r[0], datetime.fromisoformat(r[1])) for r in rows]
+
+
 # ============ Функції для категорій послуг ============
 
 async def add_general_service(name: str) -> int:
