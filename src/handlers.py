@@ -500,15 +500,7 @@ async def cmd_unsub(message: Message):
 @router.message(Command("status"))
 async def cmd_status(message: Message):
     """Показати поточний статус світла."""
-    # Додаємо погоду
-    from weather import get_weather_line
-    weather_text = await get_weather_line()
-    
     text = await format_light_status(message.chat.id, include_vote_prompt=False)
-    text += weather_text
-    
-    # Оновлено вже додається у format_light_status
-    
     await message.answer(text)
 
 
@@ -908,15 +900,7 @@ async def cb_unlike_shelter(callback: CallbackQuery):
 async def cb_status(callback: CallbackQuery):
     """Показати поточний статус світла."""
     logger.info(f"User {callback.from_user.id} clicked: Світло")
-    now = datetime.now().strftime("%H:%M:%S")
-    
-    # Додаємо погоду
-    from weather import get_weather_line
-    weather_text = await get_weather_line()
-    
     text = await format_light_status(callback.message.chat.id, include_vote_prompt=False)
-    text += weather_text
-    text += f"\n\n<i>Оновлено: {now}</i>"
     
     await callback.message.edit_text(
         text,
@@ -3059,12 +3043,7 @@ async def do_search(query: str, user_id: int | None = None) -> str:
     # Якщо запит містить 'світло' — показуємо статус світла і не шукаємо заклади
     if is_light_query(query):
         if user_id:
-            from weather import get_weather_line
-            weather_text = await get_weather_line()
-            now = datetime.now().strftime("%H:%M:%S")
             text = await format_light_status(user_id, include_vote_prompt=False)
-            text += weather_text
-            text += f"\n\n<i>Оновлено: {now}</i>"
             return text
         else:
             # Fallback для inline режиму без user_id
