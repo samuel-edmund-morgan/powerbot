@@ -61,6 +61,7 @@ from database import (
 
 
 logger = logging.getLogger(__name__)
+webapp_logger = logging.getLogger("handlers")
 
 WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 MAPS_DIR = Path(__file__).resolve().parent / "maps"
@@ -276,6 +277,25 @@ def _get_webapp_user(request: web.Request) -> dict | None:
     return user
 
 
+def _format_webapp_user_label(user: dict | None) -> str:
+    """Readable user label for logs: @username (First Last) - id."""
+    if not user:
+        return "unknown"
+    user_id = user.get("id")
+    username = user.get("username")
+    first = (user.get("first_name") or "").strip()
+    last = (user.get("last_name") or "").strip()
+    name = " ".join(part for part in [first, last] if part).strip()
+
+    if username and name:
+        return f"@{username} ({name}) - {user_id}"
+    if username:
+        return f"@{username} - {user_id}"
+    if name:
+        return f"{name} - {user_id}"
+    return str(user_id) if user_id is not None else "unknown"
+
+
 async def _ensure_subscriber(user: dict) -> None:
     """Переконатися, що користувач є у subscribers."""
     await add_subscriber(
@@ -385,6 +405,7 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Unauthorized"}, status=401)
 
     await _ensure_subscriber(user)
+    webapp_logger.info("User %s webapp: bootstrap", _format_webapp_user_label(user))
     user_id = int(user["id"])
 
     building_id = await get_subscriber_building(user_id)
@@ -433,6 +454,7 @@ async def webapp_status_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Unauthorized"}, status=401)
 
     await _ensure_subscriber(user)
+    webapp_logger.info("User %s webapp: status", _format_webapp_user_label(user))
     user_id = int(user["id"])
     building_id = await get_subscriber_building(user_id)
 
@@ -472,6 +494,11 @@ async def webapp_building_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Building not found"}, status=404)
 
     success = await set_subscriber_building(int(user["id"]), building_id)
+    webapp_logger.info(
+        "User %s webapp: set building %s",
+        _format_webapp_user_label(user),
+        building_id,
+    )
     return web.json_response({"status": "ok", "updated": success, "building": building})
 
 
@@ -501,6 +528,7 @@ async def webapp_notifications_handler(request: web.Request) -> web.Response:
             return web.json_response({"status": "error", "message": "quiet_end must be integer"}, status=400)
         await set_quiet_hours(user_id, quiet_start, quiet_end)
 
+    webapp_logger.info("User %s webapp: update notifications", _format_webapp_user_label(user))
     settings = await get_notification_settings(user_id)
     return web.json_response({"status": "ok", "settings": settings})
 
@@ -536,6 +564,12 @@ async def webapp_vote_handler(request: web.Request) -> web.Response:
     heating_vote = await get_user_vote(user_id, "heating")
     water_vote = await get_user_vote(user_id, "water")
 
+    webapp_logger.info(
+        "User %s webapp: vote %s=%s",
+        _format_webapp_user_label(user),
+        vote_type,
+        value,
+    )
     return web.json_response({
         "status": "ok",
         "heating": {**heating_stats, "user_vote": heating_vote},
@@ -549,6 +583,7 @@ async def webapp_places_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Unauthorized"}, status=401)
 
     await _ensure_subscriber(user)
+    webapp_logger.info("User %s webapp: places", _format_webapp_user_label(user))
     user_id = int(user["id"])
 
     query = (request.query.get("q") or "").strip()
@@ -590,6 +625,11 @@ async def webapp_place_like_handler(request: web.Request) -> web.Response:
     user_id = int(user["id"])
     place_id = int(request.match_info.get("place_id"))
     await like_place(place_id, user_id)
+    webapp_logger.info(
+        "User %s webapp: like place %s",
+        _format_webapp_user_label(user),
+        place_id,
+    )
     return web.json_response({"status": "ok"})
 
 
@@ -602,6 +642,11 @@ async def webapp_place_unlike_handler(request: web.Request) -> web.Response:
     user_id = int(user["id"])
     place_id = int(request.match_info.get("place_id"))
     await unlike_place(place_id, user_id)
+    webapp_logger.info(
+        "User %s webapp: unlike place %s",
+        _format_webapp_user_label(user),
+        place_id,
+    )
     return web.json_response({"status": "ok"})
 
 
@@ -611,6 +656,7 @@ async def webapp_shelters_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Unauthorized"}, status=401)
 
     await _ensure_subscriber(user)
+    webapp_logger.info("User %s webapp: shelters", _format_webapp_user_label(user))
     user_id = int(user["id"])
     shelters = await _get_shelters_payload(user_id)
     return web.json_response({"status": "ok", "shelters": shelters})
@@ -625,6 +671,11 @@ async def webapp_shelter_like_handler(request: web.Request) -> web.Response:
     user_id = int(user["id"])
     shelter_id = int(request.match_info.get("shelter_id"))
     await like_shelter(shelter_id, user_id)
+    webapp_logger.info(
+        "User %s webapp: like shelter %s",
+        _format_webapp_user_label(user),
+        shelter_id,
+    )
     return web.json_response({"status": "ok"})
 
 
@@ -637,6 +688,11 @@ async def webapp_shelter_unlike_handler(request: web.Request) -> web.Response:
     user_id = int(user["id"])
     shelter_id = int(request.match_info.get("shelter_id"))
     await unlike_shelter(shelter_id, user_id)
+    webapp_logger.info(
+        "User %s webapp: unlike shelter %s",
+        _format_webapp_user_label(user),
+        shelter_id,
+    )
     return web.json_response({"status": "ok"})
 
 
