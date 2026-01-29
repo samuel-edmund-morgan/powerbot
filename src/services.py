@@ -720,12 +720,13 @@ async def sensors_monitor_loop(bot: Bot):
                 # Записуємо подію в історію
                 event_type = "up" if is_up else "down"
                 await add_event(event_type)
-                
-                logging.info(f"Building {building_name} power state changed to: {'UP' if is_up else 'DOWN'}")
-                
-                # Формуємо уніфікований текст (як у хендлері)
-                # Голосування лишаємо клавіатурою, без текстового промпту.
-                text = await format_light_status(chat_id, include_vote_prompt=False)
+
+                building_name = building["name"] if building else f"ID:{building_id}"
+                logging.info(
+                    "Building %s power state changed to: %s",
+                    building_name,
+                    "UP" if is_up else "DOWN",
+                )
                 
                 # Перевіряємо глобальний прапорець сповіщень
                 global_enabled = (await db_get("light_notifications_global")) != "off"
@@ -757,6 +758,9 @@ async def sensors_monitor_loop(bot: Bot):
                 }
 
                 async def send_light(chat_id: int):
+                    # Формуємо уніфікований текст (як у хендлері) для конкретного користувача
+                    # Голосування лишаємо клавіатурою, без текстового промпту.
+                    text = await format_light_status(chat_id, include_vote_prompt=False)
                     last_menu_id = await get_last_bot_message(chat_id)
                     if last_menu_id:
                         try:
