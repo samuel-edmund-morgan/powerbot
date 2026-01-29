@@ -1,10 +1,10 @@
 from aiogram import Router, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     BufferedInputFile, ReplyKeyboardRemove,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
-    FSInputFile
+    FSInputFile, User
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -25,6 +25,25 @@ from services import state_text, calculate_stats, format_duration, format_light_
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+def format_user_label(user: User | None, fallback_id: int | None = None) -> str:
+    """Повертає читабельний формат користувача: @username (First Last) - id."""
+    if not user:
+        return str(fallback_id) if fallback_id is not None else "unknown"
+    user_id = user.id
+    username = user.username
+    first = (user.first_name or "").strip()
+    last = (user.last_name or "").strip()
+    name = " ".join([part for part in [first, last] if part]).strip()
+
+    if username and name:
+        return f"@{username} ({name}) - {user_id}"
+    if username:
+        return f"@{username} - {user_id}"
+    if name:
+        return f"{name} - {user_id}"
+    return str(user_id)
 
 
 async def maybe_autoclear_reply_keyboard(message: Message) -> None:
@@ -366,7 +385,7 @@ async def reply_select_building(message: Message):
     """Обробник кнопки 'Обрати будинок' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Обрати будинок")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Обрати будинок")
     try:
         await message.delete()
     except Exception:
@@ -391,7 +410,7 @@ async def reply_select_building(message: Message):
 @router.callback_query(F.data == "select_building")
 async def cb_select_building(callback: CallbackQuery):
     """Показати меню вибору будинку."""
-    logger.info(f"User {callback.from_user.id} clicked: Обрати будинок")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Обрати будинок")
     from database import get_subscriber_building, get_building_by_id
     
     building_id = await get_subscriber_building(callback.message.chat.id)
@@ -486,7 +505,7 @@ async def cmd_start(message: Message):
         username=user.username if user else None,
         first_name=user.first_name if user else None,
     )
-    logger.info(f"User {message.chat.id} ({user.username or user.first_name}) started bot")
+    logger.info(f"User {format_user_label(user, message.chat.id)} started bot")
     
     # Перевіряємо чи є deep link параметр (place_123)
     args = message.text.split()[1] if len(message.text.split()) > 1 else None
@@ -658,7 +677,7 @@ async def cmd_stats(message: Message):
 @router.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery):
     """Показати головне меню."""
-    logger.info(f"User {callback.from_user.id} clicked: Головне меню")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Головне меню")
     building_text = await get_user_building_text(callback.from_user.id)
     light_status = await get_light_status_text(callback.message.chat.id)
     alert_status = await get_alert_status_text()
@@ -687,7 +706,7 @@ async def cb_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "utilities_menu")
 async def cb_utilities_menu(callback: CallbackQuery):
     """Показати меню Світло/Опалення/Вода."""
-    logger.info(f"User {callback.from_user.id} clicked: Світло/опалення/вода")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Світло/опалення/вода")
     text = "💡 <b>Світло / Опалення / Вода</b>\n\nОберіть розділ:"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -713,7 +732,7 @@ async def cb_utilities_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "alerts_menu")
 async def cb_alerts_menu(callback: CallbackQuery):
     """Показати меню Тривоги та укриття."""
-    logger.info(f"User {callback.from_user.id} clicked: Тривоги та укриття")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Тривоги та укриття")
     alert_status = await get_alert_status_text()
     text = f"🚨 <b>Тривоги та укриття</b>\n\nПоточний стан: {alert_status}\n\nОберіть дію:"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -734,7 +753,7 @@ async def cb_alerts_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "alert_status")
 async def cb_alert_status(callback: CallbackQuery):
     """Показати поточний стан тривоги (з кешу БД)."""
-    logger.info(f"User {callback.from_user.id} clicked: Стан тривоги")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Стан тривоги")
     alert_state = await db_get("last_alert_state")
     
     if alert_state == "active":
@@ -770,7 +789,7 @@ async def cb_alert_status(callback: CallbackQuery):
 @router.callback_query(F.data == "shelters")
 async def cb_shelters(callback: CallbackQuery):
     """Показати інформацію про укриття."""
-    logger.info(f"User {callback.from_user.id} clicked: Укриття")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Укриття")
     from database import get_shelter_places_with_likes
     
     text = (
@@ -937,7 +956,7 @@ async def cb_unlike_shelter(callback: CallbackQuery):
 @router.callback_query(F.data == "status")
 async def cb_status(callback: CallbackQuery):
     """Показати поточний статус світла."""
-    logger.info(f"User {callback.from_user.id} clicked: Світло")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Світло")
     text = await format_light_status(callback.message.chat.id, include_vote_prompt=False)
     
     await callback.message.edit_text(
@@ -980,7 +999,7 @@ async def format_stats_message(days: int | None, period_text: str) -> str:
 @router.callback_query(F.data == "stats")
 async def cb_stats(callback: CallbackQuery):
     """Показати статистику за весь час."""
-    logger.info(f"User {callback.from_user.id} clicked: Статистика (весь час)")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (весь час)")
     text = await format_stats_message(None, "за весь час")
     await callback.message.edit_text(
         text,
@@ -999,7 +1018,7 @@ async def cb_stats(callback: CallbackQuery):
 @router.callback_query(F.data == "stats_day")
 async def cb_stats_day(callback: CallbackQuery):
     """Показати статистику за день."""
-    logger.info(f"User {callback.from_user.id} clicked: Статистика (день)")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (день)")
     text = await format_stats_message(1, "за останню добу")
     await callback.message.edit_text(
         text,
@@ -1018,7 +1037,7 @@ async def cb_stats_day(callback: CallbackQuery):
 @router.callback_query(F.data == "stats_week")
 async def cb_stats_week(callback: CallbackQuery):
     """Показати статистику за тиждень."""
-    logger.info(f"User {callback.from_user.id} clicked: Статистика (тиждень)")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (тиждень)")
     text = await format_stats_message(7, "за останній тиждень")
     await callback.message.edit_text(
         text,
@@ -1037,7 +1056,7 @@ async def cb_stats_week(callback: CallbackQuery):
 @router.callback_query(F.data == "stats_month")
 async def cb_stats_month(callback: CallbackQuery):
     """Показати статистику за місяць."""
-    logger.info(f"User {callback.from_user.id} clicked: Статистика (місяць)")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (місяць)")
     text = await format_stats_message(30, "за останній місяць")
     await callback.message.edit_text(
         text,
@@ -1148,7 +1167,7 @@ async def cb_quiet_info(callback: CallbackQuery):
 @router.callback_query(F.data == "donate")
 async def cb_donate(callback: CallbackQuery):
     """Показати інформацію про підтримку розробника."""
-    logger.info(f"User {callback.from_user.id} clicked: Подякувати розробнику")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Подякувати розробнику")
     text = (
         "☕ <b>Подякувати розробнику</b>\n\n"
         "Цей бот — некомерційний проєкт, створений для зручності мешканців ЖК.\n\n"
@@ -1636,7 +1655,7 @@ async def reply_utilities(message: Message):
     """Обробник кнопки 'Світло/опалення/вода' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Світло/опалення/вода")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Світло/опалення/вода")
     try:
         await message.delete()
     except Exception:
@@ -1668,7 +1687,7 @@ async def reply_alerts(message: Message):
     """Обробник кнопки 'Тривоги та укриття' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Тривоги та укриття")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Тривоги та укриття")
     try:
         await message.delete()
     except Exception:
@@ -1695,7 +1714,7 @@ async def reply_notifications(message: Message):
     """Обробник кнопки 'Сповіщення та тихі години' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Сповіщення та тихі години")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Сповіщення та тихі години")
     try:
         await message.delete()
     except Exception:
@@ -1776,7 +1795,7 @@ async def reply_light_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Світло'."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} uses old button: Світло - updating keyboard")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} uses old button: Світло - updating keyboard")
     try:
         await message.delete()
     except Exception:
@@ -1798,7 +1817,7 @@ async def reply_heating_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Опалення'."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} uses old button: Опалення - updating keyboard")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} uses old button: Опалення - updating keyboard")
     try:
         await message.delete()
     except Exception:
@@ -1816,7 +1835,7 @@ async def reply_water_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Вода'."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} uses old button: Вода - updating keyboard")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} uses old button: Вода - updating keyboard")
     try:
         await message.delete()
     except Exception:
@@ -1834,7 +1853,7 @@ async def reply_notifications_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Сповіщення'."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} uses old button: Сповіщення - updating keyboard")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} uses old button: Сповіщення - updating keyboard")
     await remove_reply_keyboard(message)
     # Перенаправляємо на нову функцію
     await reply_notifications(message)
@@ -1845,7 +1864,7 @@ async def reply_search_old(message: Message):
     """Обробник СТАРОЇ кнопки 'Пошук'."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} uses old button: Пошук - updating keyboard")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} uses old button: Пошук - updating keyboard")
     try:
         await message.delete()
     except Exception:
@@ -1884,7 +1903,7 @@ async def reply_service(message: Message):
     """Обробник кнопки 'Сервісна служба' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Сервісна служба")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Сервісна служба")
     try:
         await message.delete()
     except Exception:
@@ -1902,7 +1921,7 @@ async def reply_service(message: Message):
 @router.callback_query(F.data == "service_menu")
 async def cb_service_menu(callback: CallbackQuery):
     """Показати меню сервісної служби."""
-    logger.info(f"User {callback.from_user.id} clicked: Сервісна служба")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Сервісна служба")
     await callback.message.edit_text(
         "📞 <b>Цілодобова сервісна служба</b>\n\n"
         "Оберіть службу для отримання контактного телефону:",
@@ -2037,7 +2056,7 @@ async def reply_places(message: Message):
     """Обробник кнопки 'Заклади в ЖК' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Заклади в ЖК")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Заклади в ЖК")
     try:
         await message.delete()
     except Exception:
@@ -2068,7 +2087,7 @@ async def reply_places(message: Message):
 @router.callback_query(F.data == "places_menu")
 async def cb_places_menu(callback: CallbackQuery):
     """Показати меню закладів."""
-    logger.info(f"User {callback.from_user.id} clicked: Заклади в ЖК")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Заклади в ЖК")
     from database import get_all_general_services
     
     services = await get_all_general_services()
@@ -3096,7 +3115,7 @@ async def reply_search(message: Message):
     """Обробник кнопки 'Пошук закладу' з ReplyKeyboard."""
     if await handle_webapp_reply_keyboard(message):
         return
-    logger.info(f"User {message.chat.id} clicked reply: Пошук закладу")
+    logger.info(f"User {format_user_label(message.from_user, message.chat.id)} clicked reply: Пошук закладу")
     try:
         await message.delete()
     except Exception:
@@ -3119,7 +3138,7 @@ async def reply_search(message: Message):
 @router.callback_query(F.data == "search_menu")
 async def cb_search_menu(callback: CallbackQuery):
     """Показати меню пошуку."""
-    logger.info(f"User {callback.from_user.id} clicked: Пошук закладу")
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Пошук закладу")
     search_waiting_users.add(callback.message.chat.id)
     await callback.message.edit_text(
         "🔍 <b>Пошук закладів</b>\n\n"
