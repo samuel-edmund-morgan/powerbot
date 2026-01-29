@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramRetryAfter
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
 
 from config import CFG
 from database import (
@@ -16,7 +16,7 @@ from database import (
     NEWCASTLE_BUILDING_ID, get_all_active_sensors, get_building_power_state,
     set_building_power_state, get_sensors_by_building, get_building_by_id,
     get_sensors_count_by_building,
-    get_last_events,
+    get_last_events, remove_subscriber,
     get_subscriber_building,
     get_last_event_before,
 )
@@ -191,6 +191,25 @@ async def _broadcast_worker(
                         attempt,
                     )
                     await asyncio.sleep(exc.retry_after)
+                except TelegramForbiddenError as exc:
+                    # Користувач заблокував бота — прибираємо зі списку підписників
+                    logging.warning(
+                        "TelegramForbiddenError chat_id=%s; removing subscriber", chat_id
+                    )
+                    await remove_subscriber(chat_id)
+                    break
+                except TelegramBadRequest as exc:
+                    msg = str(exc).lower()
+                    # Типові кейси недійсних чатів/деактивованих акаунтів
+                    if "chat not found" in msg or "user is deactivated" in msg:
+                        logging.warning(
+                            "TelegramBadRequest (%s) chat_id=%s; removing subscriber",
+                            msg,
+                            chat_id,
+                        )
+                        await remove_subscriber(chat_id)
+                        break
+                    raise
         except Exception:
             logging.exception("Failed to notify chat_id=%s", chat_id)
         finally:
