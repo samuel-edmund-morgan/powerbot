@@ -415,16 +415,13 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
     base_x = 20 + label_width
     base_y = header_height
 
-    # Header hours (vertical labels)
+    # Header hours (horizontal labels)
     for h in range(hours):
         x = base_x + h * hour_width
-        draw.rectangle([x, base_y - 48, x + hour_width, base_y - 4], outline=grid, width=1, fill=light)
-        label = f"{h:02d}-{(h + 1) % 24:02d}"
-        text_img = Image.new("RGBA", (20, 44), (0, 0, 0, 0))
-        text_draw = ImageDraw.Draw(text_img)
-        text_draw.text((0, 0), label, fill=accent, font=font_small)
-        rotated = text_img.rotate(90, expand=1)
-        img.paste(rotated, (x + 6, base_y - 46), rotated)
+        draw.rectangle([x, base_y - 32, x + hour_width, base_y - 4], outline=grid, width=1, fill=light)
+        label = f"{h:02d}"
+        tw, th = draw.textsize(label, font=font_small)
+        draw.text((x + (hour_width - tw) / 2, base_y - 28), label, fill=accent, font=font_small)
 
     y = base_y
     for queue in queues:
