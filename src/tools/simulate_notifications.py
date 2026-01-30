@@ -33,6 +33,7 @@ def _build_vote_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💧 Є вода", callback_data="vote_water_yes"),
             InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
         ],
+        [InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")],
         [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
     ])
 

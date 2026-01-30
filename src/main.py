@@ -11,6 +11,7 @@ from database import init_db
 from handlers import router
 from services import alert_monitor_loop, sensors_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
+from yasno import planned_outages_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +41,9 @@ async def main():
     
     # Моніторинг тривог
     asyncio.create_task(alert_monitor_loop(bot))
+
+    # Оновлення кешу графіків ЯСНО
+    asyncio.create_task(planned_outages_loop())
     
     try:
         await dp.start_polling(bot)
