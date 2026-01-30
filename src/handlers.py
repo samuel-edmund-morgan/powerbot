@@ -60,6 +60,15 @@ async def maybe_autoclear_reply_keyboard(message: Message) -> None:
     await db_set(key, "1")
 
 
+async def _auto_answer_callback(callback: CallbackQuery, delay: float = 0.25) -> None:
+    """Auto-answer callback after short delay to remove Telegram 'pending' state."""
+    await asyncio.sleep(delay)
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+
 class ReplyKeyboardAutoClearMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -73,6 +82,21 @@ class ReplyKeyboardAutoClearMiddleware(BaseMiddleware):
 
 
 router.message.middleware(ReplyKeyboardAutoClearMiddleware())
+
+
+class CallbackAutoAnswerMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[CallbackQuery, Dict[str, Any]], Awaitable[Any]],
+        event: CallbackQuery,
+        data: Dict[str, Any],
+    ) -> Any:
+        if isinstance(event, CallbackQuery):
+            asyncio.create_task(_auto_answer_callback(event))
+        return await handler(event, data)
+
+
+router.callback_query.middleware(CallbackAutoAnswerMiddleware())
 
 
 async def remove_reply_keyboard(message: Message) -> None:
