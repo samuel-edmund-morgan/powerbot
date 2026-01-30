@@ -12,7 +12,11 @@ from handlers import router
 from services import alert_monitor_loop, sensors_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 async def main():
