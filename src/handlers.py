@@ -1002,7 +1002,7 @@ async def cb_yasno_schedule(callback: CallbackQuery):
     """Показати орієнтовні графіки відключень."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Орієнтовні графіки")
     from database import get_subscriber_building
-    from yasno import get_building_schedule_text, get_building_schedule_pngs
+    from yasno import get_building_schedule_text, get_building_schedule_svg
 
     building_id = await get_subscriber_building(callback.message.chat.id)
     text = await get_building_schedule_text(building_id) if building_id else "⚠️ Спочатку оберіть будинок."
@@ -1010,18 +1010,18 @@ async def cb_yasno_schedule(callback: CallbackQuery):
         [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
     ])
     if CFG.yasno_svg_enabled and building_id:
-        images, error = await get_building_schedule_pngs(building_id)
-        if images:
+        svg_bytes, error = await get_building_schedule_svg(building_id)
+        if svg_bytes:
             try:
                 from aiogram.types import BufferedInputFile
-                for label, png_bytes in images:
-                    png_file = BufferedInputFile(png_bytes, filename=f"yasno_{label}.png")
-                    await callback.message.answer_photo(
-                        png_file,
-                        caption=f"🗓 Орієнтовні графіки • {label}",
-                    )
+
+                svg_file = BufferedInputFile(svg_bytes, filename="yasno_schedule.svg")
+                await callback.message.answer_document(
+                    svg_file,
+                    caption="🗓 Орієнтовні графіки (SVG)",
+                )
             except Exception as exc:
-                logger.warning("Failed to send PNG schedule: %s", exc)
+                logger.warning("Failed to send SVG schedule: %s", exc)
         elif error:
             text = error
     await callback.message.edit_text(text, reply_markup=keyboard)

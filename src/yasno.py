@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Any
 
 import aiohttp
-from PIL import Image, ImageDraw, ImageFont
 
 from config import CFG
 from database import db_get, db_set, get_building_by_id
@@ -354,107 +353,12 @@ def _build_schedule_svg(data: dict[str, Any]) -> bytes:
     return "\n".join(parts).encode("utf-8")
 
 
-def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
-    queues = data["queues"]
-    building = data.get("building")
-
-    label_width = 140
-    hour_width = 36
-    hours = 24
-    grid_width = hour_width * hours
-    header_height = 56
-    row_height = 42
-    row_gap = 10
-    total_rows = len(queues)
-    height = header_height + total_rows * (row_height + row_gap) + 36
-    width = label_width + grid_width + 40
-
-    bg = "#f7f2e9"
-    grid = "#cfd8e3"
-    outage = "#b7bfc9"
-    text_main = "#2a2a2a"
-    border = "#b8c7dc"
-
-    img = Image.new("RGB", (width, height), bg)
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default()
-
-    title = "Орієнтовні графіки відключень"
-    draw.text((20, 12), title, fill=text_main, font=font)
-
-    now_label = datetime.now().strftime("%d.%m.%Y %H:%M")
-    draw.text((width - 240, 12), f"Оновлено: {now_label}", fill=text_main, font=font)
-
-    if building:
-        draw.text((20, 28), f"{building['name']} ({building['address']})", fill=text_main, font=font)
-
-    day_label = "Сьогодні" if day_key == "today" else "Завтра"
-    draw.text((20, 44), day_label, fill=text_main, font=font)
-
-    base_x = 20 + label_width
-    base_y = header_height
-
-    # Header hours
-    for h in range(hours):
-        x = base_x + h * hour_width
-        draw.rectangle([x, base_y - 28, x + hour_width, base_y - 6], outline=border, width=1)
-        draw.text((x + 6, base_y - 26), f"{h:02d}-{(h + 1) % 24:02d}", fill="#4a5a70", font=font)
-
-    y = base_y
-    for queue in queues:
-        label = queue["label"]
-        draw.rectangle([20, y, base_x, y + row_height], outline=border, width=1)
-        draw.text((26, y + 12), label, fill=text_main, font=font)
-
-        day_data = queue["data"].get(day_key) if queue["data"] else None
-        slots = day_data.get("slots", []) if day_data else []
-        ranges = _extract_definite_ranges(slots)
-
-        for h in range(hours):
-            x = base_x + h * hour_width
-            cell = [x, y, x + hour_width, y + row_height]
-            draw.rectangle(cell, outline=border, width=1)
-            start = h * 60
-            end = (h + 1) * 60
-            if any(r[0] < end and r[1] > start for r in ranges):
-                draw.rectangle([x + 2, y + 2, x + hour_width - 2, y + row_height - 2], fill=outage)
-
-        y += row_height + row_gap
-
-    return img
-
-
-def _png_bytes(img: Image.Image) -> bytes:
-    from io import BytesIO
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
 async def get_building_schedule_svg(building_id: int) -> tuple[bytes | None, str | None]:
     data, error = await _get_building_schedule_data(building_id)
     if error:
         return None, error
     svg = _build_schedule_svg(data)
     return svg, None
-
-
-async def get_building_schedule_pngs(building_id: int) -> tuple[list[tuple[str, bytes]] | None, str | None]:
-    data, error = await _get_building_schedule_data(building_id)
-    if error:
-        return None, error
-
-    results: list[tuple[str, bytes]] = []
-    for day_key, day_label in (("today", "Сьогодні"), ("tomorrow", "Завтра")):
-        # If no data for day, skip
-        has_day = any((q["data"] or {}).get(day_key) for q in data["queues"])
-        if not has_day:
-            continue
-        img = _build_schedule_png(data, day_key)
-        results.append((day_label, _png_bytes(img)))
-    if not results:
-        return None, "⚠️ Дані про графіки відсутні."
-    return results, None
 
 
 async def planned_outages_loop() -> None:
