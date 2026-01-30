@@ -37,10 +37,13 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
     """
     from weather import get_weather_line
 
+    perf_start = asyncio.get_running_loop().time()
     user_building_id = await get_subscriber_building(user_id)
+    perf_after_building = asyncio.get_running_loop().time()
     user_building = get_building_by_id(user_building_id) if user_building_id else None
 
     sensors = await get_sensors_by_building(user_building_id) if user_building_id else []
+    perf_after_sensors = asyncio.get_running_loop().time()
     sensors_count = len(sensors)
 
     sensors_online = 0
@@ -53,6 +56,7 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
     is_up = sensors_online > 0
 
     last_event = await get_last_event()
+    perf_after_last_event = asyncio.get_running_loop().time()
     last_change_text = ""
     if last_event:
         event_type, event_time = last_event
@@ -64,6 +68,7 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
 
     duration_text = ""
     last_events = await get_last_events(2)
+    perf_after_last_events = asyncio.get_running_loop().time()
     if len(last_events) >= 2:
         last_type, last_time = last_events[0]
         prev_type, prev_time = last_events[1]
@@ -75,6 +80,7 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
             duration_text = f"⏱ Було без світла: {duration_formatted}"
 
     stats = await calculate_stats(period_days=1)
+    perf_after_stats = asyncio.get_running_loop().time()
     today_uptime = format_duration(stats["total_uptime"])
     today_downtime = format_duration(stats["total_downtime"])
     stats_info = f"📊 Сьогодні: ✅ {today_uptime} | ❌ {today_downtime}"
@@ -126,6 +132,7 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
         lines.append(f"📞 Черговий електрик: <code>{phone}</code>")
 
     weather_text = await get_weather_line()
+    perf_after_weather = asyncio.get_running_loop().time()
     if weather_text:
         weather_line = weather_text.strip()
         if "Погода" in weather_line and not any("Погода" in line for line in lines):
@@ -137,6 +144,20 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
 
     if include_vote_prompt:
         lines.append("\n👇 <b>Допоможи сусідам!</b> Повідом, чи є опалення та вода:")
+
+    total_ms = (perf_after_weather - perf_start) * 1000
+    if total_ms > 500:
+        logging.info(
+            "perf:format_light_status user=%s total=%.0fms building=%.0fms sensors=%.0fms last_event=%.0fms last_events=%.0fms stats=%.0fms weather=%.0fms",
+            user_id,
+            total_ms,
+            (perf_after_building - perf_start) * 1000,
+            (perf_after_sensors - perf_after_building) * 1000,
+            (perf_after_last_event - perf_after_sensors) * 1000,
+            (perf_after_last_events - perf_after_last_event) * 1000,
+            (perf_after_stats - perf_after_last_events) * 1000,
+            (perf_after_weather - perf_after_stats) * 1000,
+        )
 
     return "\n".join(lines)
 
@@ -789,11 +810,14 @@ async def sensors_monitor_loop(bot: Bot):
                         await delete_last_bot_message_record(chat_id)
                     prev = existing_notifications.get(chat_id)
                     if prev:
-                        try:
-                            await bot.delete_message(chat_id, prev["message_id"])
-                        except Exception:
-                            pass
-                        await delete_notification(prev["id"])
+                        async def _cleanup_prev() -> None:
+                            try:
+                                await bot.delete_message(chat_id, prev["message_id"])
+                            except Exception:
+                                pass
+                            await delete_notification(prev["id"])
+
+                        asyncio.create_task(_cleanup_prev())
                     msg = await bot.send_message(chat_id, text, reply_markup=vote_keyboard)
                     async with _notification_save_lock:
                         await save_notification(chat_id, msg.message_id)
