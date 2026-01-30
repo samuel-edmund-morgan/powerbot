@@ -785,9 +785,6 @@ async def sensors_monitor_loop(bot: Bot):
                         InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
                     ],
                     [
-                        InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule"),
-                    ],
-                    [
                         InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu"),
                     ],
                 ])

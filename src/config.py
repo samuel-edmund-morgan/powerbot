@@ -58,9 +58,6 @@ class Config:
     web_app_enabled: bool
     web_app_url: str
     web_app_debug_user_id: int | None
-    # Yasno planned outages
-    yasno_region_id: int
-    yasno_dso_id: int
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -123,8 +120,6 @@ CFG = Config(
     web_app_enabled=parse_bool(os.getenv("WEB_APP", "0")),
     web_app_url=os.getenv("WEB_APP_URL", "").strip().strip('"').strip("'"),
     web_app_debug_user_id=parse_int(os.getenv("WEB_APP_DEBUG_USER_ID")),
-    yasno_region_id=int(os.getenv("YASNO_REGION_ID", "25")),
-    yasno_dso_id=int(os.getenv("YASNO_DSO_ID", "902")),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу
