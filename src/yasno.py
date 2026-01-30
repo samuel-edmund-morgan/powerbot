@@ -358,11 +358,11 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
     queues = data["queues"]
     building = data.get("building")
 
-    label_width = 140
-    hour_width = 30
+    label_width = 120
+    hour_width = 34
     hours = 24
     grid_width = hour_width * hours
-    header_height = 78
+    header_height = 64
     row_height = 44
     row_gap = 8
     total_rows = len(queues)
@@ -401,10 +401,10 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
     draw.rounded_rectangle([8, 8, width - 8, height - 8], radius=14, outline=frame, width=2, fill=bg)
 
     title = "Орієнтовні графіки відключень"
-    draw.text((20, 10), title, fill=text_main, font=font_title)
+    draw.text((20, 12), title, fill=text_main, font=font_title)
 
     now_label = datetime.now().strftime("%d.%m.%Y %H:%M")
-    draw.text((width - 230, 10), f"Оновлено: {now_label}", fill=text_main, font=font_small)
+    draw.text((width - 220, 8), f"Оновлено: {now_label}", fill=text_main, font=font_small)
 
     if building:
         draw.text((20, 30), f"{building['name']} ({building['address']})", fill=text_main, font=font)
@@ -418,19 +418,19 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
     # Header hours (vertical labels)
     for h in range(hours):
         x = base_x + h * hour_width
-        draw.rectangle([x, base_y - 48, x + hour_width, base_y - 4], outline=grid, width=1, fill=light)
+        draw.rectangle([x, base_y - 40, x + hour_width, base_y - 4], outline=grid, width=1, fill=light)
         label = f"{h:02d}-{(h + 1) % 24:02d}"
-        text_img = Image.new("RGBA", (20, 44), (0, 0, 0, 0))
+        text_img = Image.new("RGBA", (20, 40), (0, 0, 0, 0))
         text_draw = ImageDraw.Draw(text_img)
         text_draw.text((0, 0), label, fill=accent, font=font_small)
         rotated = text_img.rotate(90, expand=1)
-        img.paste(rotated, (x + 6, base_y - 46), rotated)
+        img.paste(rotated, (x + 6, base_y - 38), rotated)
 
     y = base_y
     for queue in queues:
         label = queue["label"]
         draw.rectangle([20, y, base_x, y + row_height], outline=grid, width=1, fill=light)
-        draw.text((20, y + 12), label, fill=text_main, font=font)
+        draw.text((20, y + 14), label, fill=text_main, font=font)
 
         day_data = queue["data"].get(day_key) if queue["data"] else None
         slots = day_data.get("slots", []) if day_data else []
@@ -444,7 +444,7 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
             end = (h + 1) * 60
             if any(r[0] < end and r[1] > start for r in ranges):
                 draw.rectangle([x + 2, y + 2, x + hour_width - 2, y + row_height - 2], fill=outage)
-                # simple bolt icon centered
+                # simple bolt icon
                 bx = x + hour_width / 2
                 by = y + row_height / 2
                 bolt = [
