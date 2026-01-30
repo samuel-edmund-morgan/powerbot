@@ -1,10 +1,12 @@
 """Модуль для отримання погоди."""
 
 import aiohttp
+import json
 import logging
 import time
 
 from config import CFG
+from database import db_get, db_set
 
 # Коди погоди WMO -> текст українською
 WMO_CODES = {
@@ -90,20 +92,46 @@ async def get_weather_line() -> str:
     Отримати рядок з погодою для сповіщення.
     Повертає порожній рядок при помилці.
     """
-    now = time.monotonic()
+    now = time.time()
     if now - _WEATHER_CACHE["ts"] < _WEATHER_CACHE_TTL:
         return _WEATHER_CACHE["value"]
+
+    cached_line = ""
+    cached_ts = 0.0
+    cached_raw = await db_get(_WEATHER_CACHE_KEY)
+    if cached_raw:
+        try:
+            cached = json.loads(cached_raw)
+            cached_ts = float(cached.get("ts") or 0)
+            cached_line = cached.get("value") or ""
+        except Exception:
+            cached_line = ""
+            cached_ts = 0.0
+
+    if cached_line and now - cached_ts < _WEATHER_CACHE_TTL:
+        _WEATHER_CACHE["ts"] = now
+        _WEATHER_CACHE["value"] = cached_line
+        return cached_line
 
     weather = await get_weather()
     if weather:
         line = f"\n🌡 Погода: {weather}"
-    else:
-        line = ""
+        payload = json.dumps({"ts": now, "value": line})
+        await db_set(_WEATHER_CACHE_KEY, payload)
+        _WEATHER_CACHE["ts"] = now
+        _WEATHER_CACHE["value"] = line
+        return line
+
+    if cached_line:
+        _WEATHER_CACHE["ts"] = now
+        _WEATHER_CACHE["value"] = cached_line
+        return cached_line
 
     _WEATHER_CACHE["ts"] = now
-    _WEATHER_CACHE["value"] = line
-    return line
+    _WEATHER_CACHE["value"] = ""
+    return ""
 
 
-_WEATHER_CACHE_TTL = 300  # 5 хвилин
+_WEATHER_CACHE_TTL = 3600  # 1 година
 _WEATHER_CACHE = {"ts": 0.0, "value": ""}
+_WEATHER_CACHE_KEY = "weather_cache_v1"
