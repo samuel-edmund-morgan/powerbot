@@ -358,53 +358,68 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
     queues = data["queues"]
     building = data.get("building")
 
-    label_width = 140
-    hour_width = 36
+    label_width = 120
+    hour_width = 34
     hours = 24
     grid_width = hour_width * hours
-    header_height = 56
-    row_height = 42
-    row_gap = 10
+    header_height = 64
+    row_height = 44
+    row_gap = 8
     total_rows = len(queues)
-    height = header_height + total_rows * (row_height + row_gap) + 36
-    width = label_width + grid_width + 40
+    height = header_height + total_rows * (row_height + row_gap) + 60
+    width = label_width + grid_width + 32
 
-    bg = "#f7f2e9"
-    grid = "#cfd8e3"
-    outage = "#b7bfc9"
-    text_main = "#2a2a2a"
-    border = "#b8c7dc"
+    bg = "#f8fbff"
+    grid = "#c9d7ea"
+    outage = "#b9c3cf"
+    text_main = "#2b2f3a"
+    border = "#bcd0e6"
+    accent = "#5d7aa5"
 
     img = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default()
+
+    font_path = os.path.join(os.path.dirname(__file__), "assets", "DejaVuSans.ttf")
+    try:
+        font = ImageFont.truetype(font_path, 12)
+        font_small = ImageFont.truetype(font_path, 10)
+        font_title = ImageFont.truetype(font_path, 13)
+    except Exception:
+        font = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+        font_title = ImageFont.load_default()
 
     title = "Орієнтовні графіки відключень"
-    draw.text((20, 12), title, fill=text_main, font=font)
+    draw.text((16, 8), title, fill=text_main, font=font_title)
 
     now_label = datetime.now().strftime("%d.%m.%Y %H:%M")
-    draw.text((width - 240, 12), f"Оновлено: {now_label}", fill=text_main, font=font)
+    draw.text((width - 220, 8), f"Оновлено: {now_label}", fill=text_main, font=font_small)
 
     if building:
-        draw.text((20, 28), f"{building['name']} ({building['address']})", fill=text_main, font=font)
+        draw.text((16, 26), f"{building['name']} ({building['address']})", fill=text_main, font=font)
 
     day_label = "Сьогодні" if day_key == "today" else "Завтра"
-    draw.text((20, 44), day_label, fill=text_main, font=font)
+    draw.text((16, 44), day_label, fill=text_main, font=font)
 
-    base_x = 20 + label_width
+    base_x = 16 + label_width
     base_y = header_height
 
-    # Header hours
+    # Header hours (vertical labels)
     for h in range(hours):
         x = base_x + h * hour_width
-        draw.rectangle([x, base_y - 28, x + hour_width, base_y - 6], outline=border, width=1)
-        draw.text((x + 6, base_y - 26), f"{h:02d}-{(h + 1) % 24:02d}", fill="#4a5a70", font=font)
+        draw.rectangle([x, base_y - 40, x + hour_width, base_y - 4], outline=border, width=1)
+        label = f"{h:02d}-{(h + 1) % 24:02d}"
+        text_img = Image.new("RGBA", (20, 40), (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_img)
+        text_draw.text((0, 0), label, fill=accent, font=font_small)
+        rotated = text_img.rotate(90, expand=1)
+        img.paste(rotated, (x + 6, base_y - 38), rotated)
 
     y = base_y
     for queue in queues:
         label = queue["label"]
-        draw.rectangle([20, y, base_x, y + row_height], outline=border, width=1)
-        draw.text((26, y + 12), label, fill=text_main, font=font)
+        draw.rectangle([16, y, base_x, y + row_height], outline=border, width=1)
+        draw.text((20, y + 14), label, fill=text_main, font=font)
 
         day_data = queue["data"].get(day_key) if queue["data"] else None
         slots = day_data.get("slots", []) if day_data else []
@@ -418,8 +433,16 @@ def _build_schedule_png(data: dict[str, Any], day_key: str) -> Image.Image:
             end = (h + 1) * 60
             if any(r[0] < end and r[1] > start for r in ranges):
                 draw.rectangle([x + 2, y + 2, x + hour_width - 2, y + row_height - 2], fill=outage)
+                draw.text((x + 10, y + 12), "⚡", fill="#53667f", font=font)
 
         y += row_height + row_gap
+
+    # Legend
+    legend_y = height - 28
+    draw.rectangle([16, legend_y, 28, legend_y + 12], fill=outage, outline=border, width=1)
+    draw.text((34, legend_y - 2), "Світла немає", fill=text_main, font=font)
+    draw.rectangle([160, legend_y, 172, legend_y + 12], fill="#ffffff", outline=border, width=1)
+    draw.text((178, legend_y - 2), "Світло є", fill=text_main, font=font)
 
     return img
 
