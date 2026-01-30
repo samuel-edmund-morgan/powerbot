@@ -42,13 +42,6 @@ if [[ -f "${REPO_DIR}/.env.example" ]]; then
   done < "${REPO_DIR}/.env.example"
 fi
 
-# Enable SVG schedules only in test bot.
-if grep -q "^YASNO_SVG=" "${TEST_DIR}/.env"; then
-  sed -i -E "s/^YASNO_SVG=.*/YASNO_SVG=1/" "${TEST_DIR}/.env"
-else
-  echo "YASNO_SVG=1" >> "${TEST_DIR}/.env"
-fi
-
 cd "${TEST_DIR}"
 docker compose down
 docker compose pull
