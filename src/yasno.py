@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
 import aiohttp
 
@@ -178,7 +179,7 @@ async def _get_group_info(street_id: int, house_id: int) -> dict | None:
     return None
 
 
-def _format_slots(slots: list[dict]) -> str:
+def _extract_definite_ranges(slots: list[dict]) -> list[tuple[int, int]]:
     ranges = []
     for slot in slots or []:
         if slot.get("type") != "Definite":
@@ -187,6 +188,13 @@ def _format_slots(slots: list[dict]) -> str:
         end = int(slot.get("end", 0))
         if end <= start:
             continue
+        ranges.append((start, end))
+    return ranges
+
+
+def _format_slots(slots: list[dict]) -> str:
+    ranges = []
+    for start, end in _extract_definite_ranges(slots):
         ranges.append((start, end))
     if not ranges:
         return "немає відключень"
@@ -215,18 +223,18 @@ def _format_day(outage: dict | None) -> tuple[str, str]:
     return date_label, _format_slots(slots)
 
 
-async def get_building_schedule_text(building_id: int) -> str:
+async def _get_building_schedule_data(building_id: int) -> tuple[dict[str, Any] | None, str | None]:
     street_query, house_queries = _get_building_queries(building_id)
     if not street_query or not house_queries:
-        return "ℹ️ Графіки для цього будинку не налаштовані."
+        return None, "ℹ️ Графіки для цього будинку не налаштовані."
 
     planned = await get_planned_outages()
     if not planned:
-        return "⚠️ Дані про графіки від ЯСНО недоступні."
+        return None, "⚠️ Дані про графіки від ЯСНО недоступні."
 
     street_id = await _get_street_id(street_query)
     if not street_id:
-        return "⚠️ Не вдалося отримати адресу для графіків."
+        return None, "⚠️ Не вдалося отримати адресу для графіків."
 
     queues = []
     seen_house_ids: set[int] = set()
@@ -248,10 +256,21 @@ async def get_building_schedule_text(building_id: int) -> str:
             })
 
     if not queues:
-        return "⚠️ Графіки для цього будинку недоступні."
+        return None, "⚠️ Графіки для цього будинку недоступні."
+
+    building = get_building_by_id(building_id)
+    return {"building": building, "queues": queues}, None
+
+
+async def get_building_schedule_text(building_id: int) -> str:
+    data, error = await _get_building_schedule_data(building_id)
+    if error:
+        return error
+
+    queues = data["queues"]
 
     lines = ["🗓 <b>Орієнтовні графіки</b>"]
-    building = get_building_by_id(building_id)
+    building = data["building"]
     if building:
         lines.append(f"🏠 {building['name']} ({building['address']})")
 
@@ -272,6 +291,76 @@ async def get_building_schedule_text(building_id: int) -> str:
     return "\n".join(lines)
 
 
+def _build_schedule_svg(data: dict[str, Any]) -> bytes:
+    queues = data["queues"]
+    building = data.get("building")
+
+    label_width = 200
+    hour_width = 18
+    hours = 24
+    grid_width = hour_width * hours
+    header_height = 34
+    row_height = 26
+    row_gap = 6
+    total_rows = len(queues) * 2
+    height = header_height + total_rows * (row_height + row_gap) + 20
+    width = label_width + grid_width + 20
+
+    bg = "#f8f3ea"
+    grid = "#d9cfc3"
+    outage = "#c45b5b"
+    text_main = "#3b2f2f"
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+        f'<rect x="0" y="0" width="{width}" height="{height}" fill="{bg}" rx="18"/>',
+        f'<text x="20" y="26" font-family="Arial, sans-serif" font-size="16" fill="{text_main}">Орієнтовні графіки</text>',
+    ]
+
+    if building:
+        parts.append(
+            f'<text x="20" y="46" font-family="Arial, sans-serif" font-size="12" fill="{text_main}">{building["name"]} ({building["address"]})</text>'
+        )
+
+    # Header hours
+    base_x = 10 + label_width
+    base_y = header_height
+    parts.append(f'<rect x="{base_x}" y="{base_y - 24}" width="{grid_width}" height="24" fill="none" />')
+    for h in range(hours):
+        x = base_x + h * hour_width
+        parts.append(f'<text x="{x + 2}" y="{base_y - 8}" font-family="Arial, sans-serif" font-size="9" fill="{text_main}">{h:02d}</text>')
+        parts.append(f'<line x1="{x}" y1="{base_y - 6}" x2="{x}" y2="{height - 10}" stroke="{grid}" stroke-width="0.5"/>')
+
+    y = base_y
+    for queue in queues:
+        queue_label = f'{queue["label"]} • {queue["key"]}'
+        for day_key, day_label in (("today", "Сьогодні"), ("tomorrow", "Завтра")):
+            day_data = queue["data"].get(day_key) if queue["data"] else None
+            slots = day_data.get("slots", []) if day_data else []
+            ranges = _extract_definite_ranges(slots)
+
+            parts.append(f'<text x="20" y="{y + 17}" font-family="Arial, sans-serif" font-size="11" fill="{text_main}">{queue_label} — {day_label}</text>')
+            parts.append(f'<rect x="{base_x}" y="{y}" width="{grid_width}" height="{row_height}" fill="white" rx="6" stroke="{grid}" stroke-width="0.6"/>')
+
+            for start, end in ranges:
+                x = base_x + (start / 60) * hour_width
+                w = max(1, (end - start) / 60 * hour_width)
+                parts.append(f'<rect x="{x:.1f}" y="{y + 2}" width="{w:.1f}" height="{row_height - 4}" fill="{outage}" rx="4"/>')
+
+            y += row_height + row_gap
+
+    parts.append("</svg>")
+    return "\n".join(parts).encode("utf-8")
+
+
+async def get_building_schedule_svg(building_id: int) -> tuple[bytes | None, str | None]:
+    data, error = await _get_building_schedule_data(building_id)
+    if error:
+        return None, error
+    svg = _build_schedule_svg(data)
+    return svg, None
+
+
 async def planned_outages_loop() -> None:
     while True:
         try:
@@ -279,4 +368,3 @@ async def planned_outages_loop() -> None:
         except Exception:
             logger.exception("planned_outages_loop error")
         await asyncio.sleep(_PLANNED_OUTAGES_TTL)
-
