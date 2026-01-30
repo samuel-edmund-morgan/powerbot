@@ -746,9 +746,6 @@ async def cb_utilities_menu(callback: CallbackQuery):
             InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
         ],
         [
-            InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule"),
-        ],
-        [
             InlineKeyboardButton(text="« Меню", callback_data="menu"),
         ],
     ])
@@ -990,26 +987,9 @@ async def cb_status(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
-            [InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")],
             [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "yasno_schedule")
-async def cb_yasno_schedule(callback: CallbackQuery):
-    """Показати орієнтовні графіки відключень."""
-    logger.info(f"User {format_user_label(callback.from_user)} clicked: Орієнтовні графіки")
-    from database import get_subscriber_building
-    from yasno import get_building_schedule_text
-
-    building_id = await get_subscriber_building(callback.message.chat.id)
-    text = await get_building_schedule_text(building_id) if building_id else "⚠️ Спочатку оберіть будинок."
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
-    ])
-    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
 
@@ -1718,9 +1698,6 @@ async def reply_utilities(message: Message):
         ],
         [
             InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
-        ],
-        [
-            InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule"),
         ],
         [
             InlineKeyboardButton(text="« Меню", callback_data="menu"),
