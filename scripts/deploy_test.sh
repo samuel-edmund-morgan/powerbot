@@ -42,6 +42,13 @@ if [[ -f "${REPO_DIR}/.env.example" ]]; then
   done < "${REPO_DIR}/.env.example"
 fi
 
+# Увімкнути ЯСНО-графіки лише для тестового бота
+if grep -q "^YASNO_ENABLED=" "${TEST_DIR}/.env"; then
+  sed -i -E 's/^YASNO_ENABLED=.*/YASNO_ENABLED=1/' "${TEST_DIR}/.env"
+else
+  echo "YASNO_ENABLED=1" >> "${TEST_DIR}/.env"
+fi
+
 cd "${TEST_DIR}"
 docker compose down
 docker compose pull

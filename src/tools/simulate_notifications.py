@@ -24,7 +24,7 @@ from database import (
 
 
 def _build_vote_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [
             InlineKeyboardButton(text="♨️ Є опалення", callback_data="vote_heating_yes"),
             InlineKeyboardButton(text="❄️ Немає", callback_data="vote_heating_no"),
@@ -33,8 +33,11 @@ def _build_vote_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💧 Є вода", callback_data="vote_water_yes"),
             InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
         ],
-        [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
-    ])
+    ]
+    if CFG.yasno_enabled:
+        rows.append([InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")])
+    rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _build_alert_keyboard() -> InlineKeyboardMarkup:

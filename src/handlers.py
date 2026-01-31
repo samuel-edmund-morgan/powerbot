@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Dict
 import re
 
 from config import CFG
+from yasno import get_building_schedule_text, get_building_schedule_pngs
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
@@ -732,23 +733,16 @@ async def cb_utilities_menu(callback: CallbackQuery):
     """Показати меню Світло/Опалення/Вода."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Світло/опалення/вода")
     text = "💡 <b>Світло / Опалення / Вода</b>\n\nОберіть розділ:"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="☀️ Світло", callback_data="status"),
-        ],
-        [
-            InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu"),
-        ],
-        [
-            InlineKeyboardButton(text="💧 Вода", callback_data="water_menu"),
-        ],
-        [
-            InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
-        ],
-        [
-            InlineKeyboardButton(text="« Меню", callback_data="menu"),
-        ],
-    ])
+    buttons = [
+        [InlineKeyboardButton(text="☀️ Світло", callback_data="status")],
+        [InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu")],
+        [InlineKeyboardButton(text="💧 Вода", callback_data="water_menu")],
+        [InlineKeyboardButton(text="📈 Статистика", callback_data="stats")],
+    ]
+    if CFG.yasno_enabled:
+        buttons.append([InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")])
+    buttons.append([InlineKeyboardButton(text="« Меню", callback_data="menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
@@ -982,14 +976,56 @@ async def cb_status(callback: CallbackQuery):
     """Показати поточний статус світла."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Світло")
     text = await format_light_status(callback.message.chat.id, include_vote_prompt=False)
-    
+
+    buttons = [[InlineKeyboardButton(text="🔄 Оновити", callback_data="status")]]
+    if CFG.yasno_enabled:
+        buttons.append([InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")])
+    buttons.append([InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")])
+
     await callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
-            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
-        ])
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "yasno_schedule")
+async def cb_yasno_schedule(callback: CallbackQuery):
+    """Показати орієнтовні графіки відключень ЯСНО."""
+    logger.info(f"User {format_user_label(callback.from_user)} clicked: Орієнтовні графіки")
+    if not CFG.yasno_enabled:
+        await callback.answer("Графіки тимчасово недоступні", show_alert=True)
+        return
+
+    building_id = await get_subscriber_building(callback.from_user.id)
+    if not building_id:
+        await callback.message.answer(
+            "⚠️ Спершу оберіть будинок, щоб показати графіки.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Обрати будинок", callback_data="select_building")],
+                [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            ]),
+        )
+        await callback.answer()
+        return
+
+    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
+    ])
+
+    if CFG.yasno_image_enabled:
+        images, error = await get_building_schedule_pngs(building_id)
+        if error:
+            await callback.message.answer(error, reply_markup=back_keyboard)
+        else:
+            for idx, (label, data) in enumerate(images):
+                file = BufferedInputFile(data, filename=f"yasno_{building_id}_{idx}.png")
+                caption = f"🗓 <b>Орієнтовні графіки</b>\n{label}"
+                await callback.message.answer_photo(file, caption=caption, reply_markup=back_keyboard)
+    else:
+        text = await get_building_schedule_text(building_id)
+        await callback.message.answer(text, reply_markup=back_keyboard)
+
     await callback.answer()
 
 
@@ -1686,23 +1722,16 @@ async def reply_utilities(message: Message):
         pass
     
     text = "💡 <b>Світло / Опалення / Вода</b>\n\nОберіть розділ:"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="☀️ Світло", callback_data="status"),
-        ],
-        [
-            InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu"),
-        ],
-        [
-            InlineKeyboardButton(text="💧 Вода", callback_data="water_menu"),
-        ],
-        [
-            InlineKeyboardButton(text="📈 Статистика", callback_data="stats"),
-        ],
-        [
-            InlineKeyboardButton(text="« Меню", callback_data="menu"),
-        ],
-    ])
+    buttons = [
+        [InlineKeyboardButton(text="☀️ Світло", callback_data="status")],
+        [InlineKeyboardButton(text="♨️ Опалення", callback_data="heating_menu")],
+        [InlineKeyboardButton(text="💧 Вода", callback_data="water_menu")],
+        [InlineKeyboardButton(text="📈 Статистика", callback_data="stats")],
+    ]
+    if CFG.yasno_enabled:
+        buttons.append([InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")])
+    buttons.append([InlineKeyboardButton(text="« Меню", callback_data="menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -1827,12 +1856,13 @@ async def reply_light_old(message: Message):
     await remove_reply_keyboard(message)
     # Викликаємо нову функціональність - показуємо статус світла
     text = await format_light_status(message.chat.id, include_vote_prompt=False)
+    buttons = [[InlineKeyboardButton(text="🔄 Оновити", callback_data="status")]]
+    if CFG.yasno_enabled:
+        buttons.append([InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")])
+    buttons.append([InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")])
     await message.answer(
         text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Оновити", callback_data="status")],
-            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
 
