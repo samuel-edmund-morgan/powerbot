@@ -1551,54 +1551,18 @@ async def cmd_broadcast(message: Message):
         return
     
     from database import list_subscribers
-    
+    from services import broadcast_messages
+
     subscribers = await list_subscribers()
-    sent = 0
-    failed = 0
-    
-    for chat_id in subscribers:
-        try:
-            await message.bot.send_message(chat_id, f"📢 {text}")
-            sent += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.04)  # 40ms затримка = 25 msg/sec (захист від rate limit)
-        await message.answer("❌ Ця команда доступна тільки адміністраторам.")
+    if not subscribers:
+        await message.answer("ℹ️ Немає підписників для розсилки.")
         return
-    
-    from database import list_subscribers
-    
-    subscribers = await list_subscribers()
-    
-    text = (
-        f"🔧 <b>Адмін-панель</b>\n\n"
-        f"👥 Підписників: {len(subscribers)}\n\n"
-        
-        f"<b>📢 Розсилка та управління:</b>\n"
-        f"<code>/broadcast текст</code> — розіслати всім\n"
-        f"<code>/subscribers</code> — список підписників\n"
-        f"<code>/myid</code> — дізнатися свій ID\n\n"
-        f"<code>/light_notify on/off</code> — глобально увімкнути/вимкнути сповіщення про світло\n\n"
-        
-        f"<b>📁 Категорії послуг:</b>\n"
-        f"<code>/show_general_services</code> — всі категорії з ID\n"
-        f"<code>/add_general_service Назва</code> — додати\n"
-        f"<code>/edit_general_service ID Нова назва</code> — редагувати\n"
-        f"<code>/delete_general_service ID</code> — видалити\n\n"
-        
-        f"<b>🏢 Заклади:</b>\n"
-        f"<code>/list_places</code> — всі заклади з ID\n"
-        f"<code>/add_place ID;Назва;Опис;Адреса;ключові,слова</code>\n"
-        f"<code>/edit_place PlaceID ID;Назва;Опис;Адреса;ключові,слова</code>\n"
-        f"<code>/set_keywords PlaceID ключ1,ключ2,ключ3</code>\n"
-        f"<code>/delete_place PlaceID</code>\n\n"
-        
-        f"<b>📍 Формат адреси для карти:</b>\n"
-        f"<code>Брістоль (24-б), зі сторони Бермінгема</code>\n"
-        f"<code>Манчестер (26-г), зі сторони Брайтона, -1 поверх</code>"
-    )
-    
-    await message.answer(text)
+
+    async def send_broadcast(chat_id: int):
+        await message.bot.send_message(chat_id, f"📢 {text}")
+
+    await broadcast_messages(subscribers, send_broadcast)
+    await message.answer(f"✅ Розсилка завершена. Одержувачів: {len(subscribers)}")
 
 
 @router.message(Command("light_notify"))
