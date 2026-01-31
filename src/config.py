@@ -62,7 +62,6 @@ class Config:
     yasno_enabled: bool
     yasno_region_id: int
     yasno_dso_id: int
-    yasno_image_enabled: bool
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -128,7 +127,6 @@ CFG = Config(
     yasno_enabled=parse_bool(os.getenv("YASNO_ENABLED", "0")),
     yasno_region_id=int(os.getenv("YASNO_REGION_ID", "25")),
     yasno_dso_id=int(os.getenv("YASNO_DSO_ID", "902")),
-    yasno_image_enabled=parse_bool(os.getenv("YASNO_IMAGE", os.getenv("YASNO_SVG", "0"))),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу

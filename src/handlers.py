@@ -16,7 +16,7 @@ from typing import Any, Awaitable, Callable, Dict
 import re
 
 from config import CFG
-from yasno import get_building_schedule_text, get_building_schedule_pngs
+from yasno import get_building_schedule_text
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
@@ -996,18 +996,8 @@ async def cb_status(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
 
-        if CFG.yasno_image_enabled:
-            images, error = await get_building_schedule_pngs(building_id)
-            if error:
-                await callback.message.answer(error, reply_markup=back_keyboard)
-            else:
-                for idx, (label, data) in enumerate(images):
-                    file = BufferedInputFile(data, filename=f"yasno_{building_id}_{idx}.png")
-                    caption = f"🗓 <b>Орієнтовні графіки</b>\n{label}"
-                    await callback.message.answer_photo(file, caption=caption, reply_markup=back_keyboard)
-        else:
-            text = await get_building_schedule_text(building_id)
-            await callback.message.answer(text, reply_markup=back_keyboard)
+        text = await get_building_schedule_text(building_id)
+        await callback.message.answer(text, reply_markup=back_keyboard)
 
         await callback.answer()
         return
