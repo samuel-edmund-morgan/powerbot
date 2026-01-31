@@ -1,0 +1,454 @@
+import asyncio
+import json
+import logging
+import os
+from datetime import datetime
+from typing import Any
+
+import aiohttp
+from PIL import Image, ImageDraw, ImageFont
+
+from config import CFG
+from database import db_get, db_set, get_building_by_id
+
+
+logger = logging.getLogger(__name__)
+
+_BASE_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
+_PLANNED_OUTAGES_KEY = "yasno:planned_outages"
+_PLANNED_OUTAGES_TTL = 600  # 10 хвилин
+_ADDRESS_CACHE_TTL = 6 * 3600  # 6 годин
+
+
+def _now_ts() -> float:
+    return datetime.now().timestamp()
+
+
+def _parse_cached(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def _fetch_json(url: str, params: dict, timeout: int = 12):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params, timeout=timeout) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Yasno API returned {resp.status}")
+            return await resp.json()
+
+
+def _building_env_prefix(building_id: int) -> str:
+    return f"YASNO_BUILDING_{building_id}"
+
+
+def _parse_queries(value: str | None) -> list[str]:
+    if not value:
+        return []
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return []
+    parts: list[str] = []
+    for chunk in value.replace("|", ",").split(","):
+        item = chunk.strip()
+        if item:
+            parts.append(item)
+    return parts
+
+
+def _get_building_queries(building_id: int) -> tuple[str | None, list[str]]:
+    prefix = _building_env_prefix(building_id)
+    street_query = os.getenv(f"{prefix}_STREET_QUERY")
+    house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES")
+    if street_query:
+        street_query = street_query.strip().strip('"').strip("'")
+    house_queries = _parse_queries(house_queries_raw)
+    if not street_query:
+        street_query = os.getenv("YASNO_STREET_QUERY_DEFAULT", "").strip().strip('"').strip("'")
+    if not house_queries:
+        return None, []
+    return street_query or None, house_queries
+
+
+async def get_planned_outages(force: bool = False) -> dict | None:
+    if not CFG.yasno_enabled:
+        return None
+    cached = _parse_cached(await db_get(_PLANNED_OUTAGES_KEY))
+    now = _now_ts()
+    if not force and cached and now - cached.get("ts", 0) < _PLANNED_OUTAGES_TTL:
+        return cached.get("data")
+
+    try:
+        data = await _fetch_json(
+            f"{_BASE_URL}/regions/{CFG.yasno_region_id}/dsos/{CFG.yasno_dso_id}/planned-outages",
+            params={},
+            timeout=15,
+        )
+        await db_set(_PLANNED_OUTAGES_KEY, json.dumps({"ts": now, "data": data}))
+        return data
+    except Exception as exc:
+        logger.warning("Failed to fetch planned outages: %s", exc)
+        if cached:
+            return cached.get("data")
+        return None
+
+
+async def _get_street_id(street_query: str) -> int | None:
+    cache_key = f"yasno:street:{CFG.yasno_region_id}:{CFG.yasno_dso_id}:{street_query}"
+    cached = _parse_cached(await db_get(cache_key))
+    now = _now_ts()
+    if cached and now - cached.get("ts", 0) < _ADDRESS_CACHE_TTL:
+        return cached.get("id")
+
+    try:
+        data = await _fetch_json(
+            f"{_BASE_URL}/addresses/v2/streets",
+            params={
+                "regionId": CFG.yasno_region_id,
+                "query": street_query,
+                "dsoId": CFG.yasno_dso_id,
+            },
+        )
+        if data:
+            street_id = data[0].get("id")
+            if street_id:
+                await db_set(cache_key, json.dumps({"ts": now, "id": int(street_id)}))
+                return int(street_id)
+    except Exception as exc:
+        logger.warning("Failed to fetch street id (%s): %s", street_query, exc)
+        if cached:
+            return cached.get("id")
+    return None
+
+
+async def _get_house_ids(street_id: int, house_query: str) -> list[dict]:
+    cache_key = f"yasno:house:{CFG.yasno_region_id}:{CFG.yasno_dso_id}:{street_id}:{house_query}"
+    cached = _parse_cached(await db_get(cache_key))
+    now = _now_ts()
+    if cached and now - cached.get("ts", 0) < _ADDRESS_CACHE_TTL:
+        return cached.get("houses", [])
+
+    try:
+        data = await _fetch_json(
+            f"{_BASE_URL}/addresses/v2/houses",
+            params={
+                "regionId": CFG.yasno_region_id,
+                "streetId": street_id,
+                "query": house_query,
+                "dsoId": CFG.yasno_dso_id,
+            },
+        )
+        houses = [
+            {"id": int(item.get("id")), "value": item.get("value")}
+            for item in data or []
+            if item.get("id")
+        ]
+        await db_set(cache_key, json.dumps({"ts": now, "houses": houses}))
+        return houses
+    except Exception as exc:
+        logger.warning("Failed to fetch house ids (%s): %s", house_query, exc)
+        if cached:
+            return cached.get("houses", [])
+    return []
+
+
+async def _get_group_info(street_id: int, house_id: int) -> dict | None:
+    cache_key = f"yasno:group:{CFG.yasno_region_id}:{CFG.yasno_dso_id}:{street_id}:{house_id}"
+    cached = _parse_cached(await db_get(cache_key))
+    now = _now_ts()
+    if cached and now - cached.get("ts", 0) < _ADDRESS_CACHE_TTL:
+        return cached.get("group")
+
+    try:
+        data = await _fetch_json(
+            f"{_BASE_URL}/addresses/v2/group",
+            params={
+                "regionId": CFG.yasno_region_id,
+                "streetId": street_id,
+                "houseId": house_id,
+                "dsoId": CFG.yasno_dso_id,
+            },
+        )
+        if data and data.get("group") is not None and data.get("subgroup") is not None:
+            await db_set(cache_key, json.dumps({"ts": now, "group": data}))
+            return data
+    except Exception as exc:
+        logger.warning("Failed to fetch group info house_id=%s: %s", house_id, exc)
+        if cached:
+            return cached.get("group")
+    return None
+
+
+def _extract_definite_ranges(slots: list[dict]) -> list[tuple[int, int]]:
+    ranges = []
+    for slot in slots or []:
+        if slot.get("type") != "Definite":
+            continue
+        start = int(slot.get("start", 0))
+        end = int(slot.get("end", 0))
+        if end <= start:
+            continue
+        ranges.append((start, end))
+    return ranges
+
+
+def _format_day(outage: dict | None) -> tuple[str, str]:
+    if not outage:
+        return "", "немає даних"
+    date_raw = outage.get("date")
+    date_label = ""
+    if date_raw:
+        try:
+            date_label = datetime.fromisoformat(date_raw).strftime("%d.%m")
+        except Exception:
+            date_label = ""
+    if outage.get("status") != "ScheduleApplies":
+        return date_label, "немає даних"
+    slots = outage.get("slots", [])
+    ranges = _extract_definite_ranges(slots)
+    if not ranges:
+        return date_label, "немає відключень"
+
+    def fmt(minutes: int) -> str:
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+    return date_label, ", ".join(f"{fmt(s)}–{fmt(e)}" for s, e in ranges)
+
+
+async def _get_building_schedule_data(building_id: int) -> tuple[dict[str, Any] | None, str | None]:
+    if not CFG.yasno_enabled:
+        return None, "ℹ️ Графіки не ввімкнені."
+    street_query, house_queries = _get_building_queries(building_id)
+    if not street_query or not house_queries:
+        return None, "ℹ️ Графіки для цього будинку не налаштовані."
+
+    planned = await get_planned_outages()
+    if not planned:
+        return None, "⚠️ Дані про графіки від ЯСНО недоступні."
+
+    street_id = await _get_street_id(street_query)
+    if not street_id:
+        return None, "⚠️ Не вдалося отримати адресу для графіків."
+
+    queues = []
+    seen_house_ids: set[int] = set()
+    for house_query in house_queries:
+        houses = await _get_house_ids(street_id, house_query)
+        for house in houses:
+            house_id = house.get("id")
+            if not house_id or house_id in seen_house_ids:
+                continue
+            seen_house_ids.add(house_id)
+            group_info = await _get_group_info(street_id, house_id)
+            if not group_info:
+                continue
+            group_key = f"{group_info['group']}.{group_info['subgroup']}"
+            queues.append({
+                "key": group_key,
+                "label": house.get("value") or house_query,
+                "data": planned.get(group_key),
+            })
+
+    if not queues:
+        return None, "⚠️ Графіки для цього будинку недоступні."
+
+    building = get_building_by_id(building_id)
+    return {"building": building, "queues": queues}, None
+
+
+async def get_building_schedule_text(building_id: int) -> str:
+    data, error = await _get_building_schedule_data(building_id)
+    if error:
+        return error
+
+    queues = data["queues"]
+    lines = ["🗓 <b>Орієнтовні графіки</b>"]
+    building = data["building"]
+    if building:
+        lines.append(f"🏠 {building['name']} ({building['address']})")
+
+    for queue in queues:
+        today_label, today_text = _format_day(queue["data"].get("today") if queue["data"] else None)
+        tomorrow_label, tomorrow_text = _format_day(queue["data"].get("tomorrow") if queue["data"] else None)
+        lines.append("")
+        lines.append(f"<b>{queue['label']}</b> • черга {queue['key']}")
+        if today_label:
+            lines.append(f"Сьогодні ({today_label}): {today_text}")
+        else:
+            lines.append(f"Сьогодні: {today_text}")
+        if tomorrow_label:
+            lines.append(f"Завтра ({tomorrow_label}): {tomorrow_text}")
+        else:
+            lines.append(f"Завтра: {tomorrow_text}")
+
+    return "\n".join(lines)
+
+
+def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    font_path = os.path.join(os.path.dirname(__file__), "assets", "DejaVuSans.ttf")
+    try:
+        return ImageFont.truetype(font_path, size)
+    except Exception:
+        fallback_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        try:
+            return ImageFont.truetype(fallback_path, size)
+        except Exception:
+            return ImageFont.load_default()
+
+
+def _build_schedule_image(data: dict[str, Any], day_key: str) -> Image.Image:
+    queues = data["queues"]
+    building = data.get("building")
+
+    margin = 16
+    label_width = 180
+    hour_width = 48
+    hours = 24
+    grid_width = hour_width * hours
+
+    title_h = 20
+    building_h = 18
+    day_h = 18
+    header_h = 64
+    row_h = 50
+    row_gap = 6
+    legend_h = 26
+
+    width = margin * 2 + label_width + grid_width
+    height = (
+        margin * 2
+        + title_h
+        + building_h
+        + day_h
+        + header_h
+        + len(queues) * (row_h + row_gap)
+        + legend_h
+        + 8
+    )
+
+    bg = "#ffffff"
+    grid = "#c7d7ee"
+    outage = "#c0c9d4"
+    text_main = "#2b2f3a"
+    accent = "#5d7aa5"
+
+    img = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(img)
+
+    font_title = _load_font(14)
+    font = _load_font(12)
+    font_small = _load_font(10)
+
+    # Outer frame
+    draw.rounded_rectangle([6, 6, width - 6, height - 6], radius=14, outline=grid, width=2, fill=bg)
+
+    now_label = datetime.now().strftime("%d.%m.%Y %H:%M")
+    draw.text((margin + 4, margin), "Орієнтовні графіки відключень", fill=text_main, font=font_title)
+    draw.text((width - 260, margin), f"Оновлено: {now_label}", fill=text_main, font=font_small)
+
+    y = margin + title_h
+    if building:
+        draw.text((margin + 4, y), f"{building['name']} ({building['address']})", fill=text_main, font=font)
+    y += building_h
+
+    day_label = "Сьогодні" if day_key == "today" else "Завтра"
+    draw.text((margin + 4, y), day_label, fill=accent, font=font)
+    y += day_h
+
+    # Header row
+    header_top = y + 6
+    draw.rectangle([margin, header_top, margin + label_width, header_top + header_h], outline=grid, width=1)
+    draw.text((margin + 10, header_top + header_h / 2 - 8), "Черга", fill=text_main, font=font)
+
+    for h in range(hours):
+        x = margin + label_width + h * hour_width
+        draw.rectangle([x, header_top, x + hour_width, header_top + header_h], outline=grid, width=1)
+        label = f"{h:02d}-{(h + 1) % 24:02d}"
+        text_img = Image.new("RGBA", (hour_width, header_h), (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_img)
+        text_draw.text((0, 0), label, fill=accent, font=font_small)
+        rotated = text_img.rotate(90, expand=1)
+        img.paste(
+            rotated,
+            (x + (hour_width - rotated.width) // 2, header_top + (header_h - rotated.height) // 2),
+            rotated,
+        )
+
+    row_y = header_top + header_h + row_gap
+    for queue in queues:
+        draw.rectangle([margin, row_y, margin + label_width, row_y + row_h], outline=grid, width=1)
+        draw.text((margin + 8, row_y + row_h / 2 - 8), queue["label"], fill=text_main, font=font)
+
+        day_data = queue["data"].get(day_key) if queue["data"] else None
+        slots = day_data.get("slots", []) if day_data else []
+        ranges = _extract_definite_ranges(slots)
+
+        for h in range(hours):
+            x = margin + label_width + h * hour_width
+            draw.rectangle([x, row_y, x + hour_width, row_y + row_h], outline=grid, width=1)
+            start = h * 60
+            end = (h + 1) * 60
+            if any(r[0] < end and r[1] > start for r in ranges):
+                draw.rectangle([x + 2, row_y + 2, x + hour_width - 2, row_y + row_h - 2], fill=outage)
+                # Bolt icon
+                bx = x + hour_width / 2
+                by = row_y + row_h / 2
+                bolt = [
+                    (bx - 4, by - 10),
+                    (bx + 1, by - 2),
+                    (bx - 2, by - 2),
+                    (bx + 4, by + 10),
+                    (bx - 1, by + 2),
+                    (bx + 2, by + 2),
+                ]
+                draw.polygon(bolt, fill="#6a7688")
+
+        row_y += row_h + row_gap
+
+    legend_y = height - legend_h - 8
+    draw.rectangle([margin, legend_y, margin + 16, legend_y + 16], fill=outage, outline=grid, width=1)
+    draw.text((margin + 22, legend_y - 2), "Світла немає", fill=text_main, font=font)
+    draw.rectangle([margin + 160, legend_y, margin + 176, legend_y + 16], fill=bg, outline=grid, width=1)
+    draw.text((margin + 182, legend_y - 2), "Світло є", fill=text_main, font=font)
+
+    return img
+
+
+def _png_bytes(img: Image.Image) -> bytes:
+    from io import BytesIO
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def get_building_schedule_pngs(building_id: int) -> tuple[list[tuple[str, bytes]] | None, str | None]:
+    data, error = await _get_building_schedule_data(building_id)
+    if error:
+        return None, error
+
+    results: list[tuple[str, bytes]] = []
+    for day_key, day_label in (("today", "Сьогодні"), ("tomorrow", "Завтра")):
+        has_day = any((q["data"] or {}).get(day_key) for q in data["queues"])
+        if not has_day:
+            continue
+        img = _build_schedule_image(data, day_key)
+        results.append((day_label, _png_bytes(img)))
+    if not results:
+        return None, "⚠️ Дані про графіки відсутні."
+    return results, None
+
+
+async def planned_outages_loop() -> None:
+    if not CFG.yasno_enabled:
+        return
+    while True:
+        try:
+            await get_planned_outages(force=True)
+        except Exception:
+            logger.exception("planned_outages_loop error")
+        await asyncio.sleep(_PLANNED_OUTAGES_TTL)

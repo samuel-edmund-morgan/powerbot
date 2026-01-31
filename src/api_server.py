@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl
 from aiohttp import web
 
 from config import CFG
+from yasno import get_planned_outages
 from database import (
     get_sensor_by_uuid,
     register_sensor,
@@ -228,6 +229,16 @@ async def sensors_info_handler(request: web.Request) -> web.Response:
         ],
         "total": len(sensors),
     })
+
+
+async def yasno_outages_handler(request: web.Request) -> web.Response:
+    """Повернути кешовані графіки відключень ЯСНО."""
+    if not CFG.yasno_enabled:
+        return web.json_response({"status": "error", "message": "Disabled"}, status=503)
+    data = await get_planned_outages()
+    if not data:
+        return web.json_response({"status": "error", "message": "No data"}, status=503)
+    return web.json_response({"status": "ok", "data": data})
 
 
 def _parse_init_data(init_data: str) -> dict | None:
@@ -722,6 +733,7 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/v1/heartbeat", heartbeat_handler)
     app.router.add_get("/api/v1/health", health_handler)
     app.router.add_get("/api/v1/sensors", sensors_info_handler)
+    app.router.add_get("/api/v1/yasno/outages", yasno_outages_handler)
 
     # Web App API
     app.router.add_get("/api/v1/webapp/bootstrap", webapp_bootstrap_handler)

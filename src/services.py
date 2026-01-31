@@ -587,7 +587,7 @@ async def update_notifications_loop(bot: Bot):
             text = f"{state_text(current)}{duration_text}{weather_text}{heating_text}{water_text}"
             
             # Клавіатура для голосування
-            vote_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            vote_rows = [
                 [
                     InlineKeyboardButton(text="♨️ Є опалення", callback_data="vote_heating_yes"),
                     InlineKeyboardButton(text="❄️ Немає", callback_data="vote_heating_no"),
@@ -596,10 +596,13 @@ async def update_notifications_loop(bot: Bot):
                     InlineKeyboardButton(text="💧 Є вода", callback_data="vote_water_yes"),
                     InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
                 ],
-                [
-                    InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu"),
-                ],
-            ])
+            ]
+            if CFG.yasno_enabled:
+                vote_rows.append(
+                    [InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")]
+                )
+            vote_rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")])
+            vote_keyboard = InlineKeyboardMarkup(inline_keyboard=vote_rows)
             
             # Оновлюємо всі сповіщення
             for notif in notifications:
@@ -775,7 +778,7 @@ async def sensors_monitor_loop(bot: Bot):
                     continue
                 
                 # Клавіатура для голосування
-                vote_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                vote_rows = [
                     [
                         InlineKeyboardButton(text="♨️ Є опалення", callback_data="vote_heating_yes"),
                         InlineKeyboardButton(text="❄️ Немає", callback_data="vote_heating_no"),
@@ -784,10 +787,13 @@ async def sensors_monitor_loop(bot: Bot):
                         InlineKeyboardButton(text="💧 Є вода", callback_data="vote_water_yes"),
                         InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
                     ],
-                    [
-                        InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu"),
-                    ],
-                ])
+                ]
+                if CFG.yasno_enabled:
+                    vote_rows.append(
+                        [InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")]
+                    )
+                vote_rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")])
+                vote_keyboard = InlineKeyboardMarkup(inline_keyboard=vote_rows)
                 
                 # Надсилаємо підписникам цього будинку
                 current_hour = datetime.now().hour
