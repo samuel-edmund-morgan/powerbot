@@ -10,6 +10,7 @@
     showToast,
     renderBuildings,
     renderPower,
+    renderSchedule,
     renderAlerts,
     renderStats,
     renderVoteBars,
@@ -67,6 +68,7 @@
 
     renderBuildings(payload.buildings, payload.settings.building_id);
     renderPower(payload.power);
+    renderSchedule(payload.schedule);
     renderAlerts(payload.alerts);
     renderStats(elements.heatingStats, payload.heating);
     renderStats(elements.waterStats, payload.water);
@@ -84,6 +86,7 @@
   const refreshStatus = async () => {
     const payload = await app.api("/status");
     renderPower(payload.power);
+    renderSchedule(payload.schedule);
     renderAlerts(payload.alerts);
     renderStats(elements.heatingStats, payload.heating);
     renderStats(elements.waterStats, payload.water);
