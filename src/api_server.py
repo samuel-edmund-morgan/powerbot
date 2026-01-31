@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl
 from aiohttp import web
 
 from config import CFG
-from yasno import get_planned_outages
+from yasno import get_planned_outages, get_building_schedule_text
 from database import (
     get_sensor_by_uuid,
     register_sensor,
@@ -369,6 +369,29 @@ async def _get_power_payload(building_id: int | None) -> dict:
     }
 
 
+def _strip_schedule_header(text: str) -> str:
+    lines = text.splitlines()
+    if lines and lines[0].strip().startswith("🗓"):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+async def _get_schedule_payload(building_id: int | None) -> dict:
+    if not building_id:
+        return {"text": ""}
+    try:
+        text = await get_building_schedule_text(building_id, include_building=False)
+    except Exception as exc:
+        logger.warning("Failed to get webapp schedule: %s", exc)
+        return {"text": "⚠️ Не вдалося отримати графіки."}
+
+    if text:
+        text = _strip_schedule_header(text)
+    return {"text": text or ""}
+
+
 async def _get_alert_payload() -> dict:
     state = await db_get("last_alert_state")
     if state not in {"active", "inactive"}:
@@ -423,6 +446,7 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
     buildings = await get_all_buildings()
     notifications = await get_notification_settings(user_id)
     power = await _get_power_payload(building_id)
+    schedule = await _get_schedule_payload(building_id)
     alerts_payload = await _get_alert_payload()
     heating_stats = await get_heating_stats(building_id)
     water_stats = await get_water_stats(building_id)
@@ -444,6 +468,7 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
         },
         "buildings": buildings,
         "power": power,
+        "schedule": schedule,
         "alerts": alerts_payload,
         "heating": {**heating_stats, "user_vote": heating_vote},
         "water": {**water_stats, "user_vote": water_vote},
@@ -470,6 +495,7 @@ async def webapp_status_handler(request: web.Request) -> web.Response:
     building_id = await get_subscriber_building(user_id)
 
     power = await _get_power_payload(building_id)
+    schedule = await _get_schedule_payload(building_id)
     alerts_payload = await _get_alert_payload()
     heating_stats = await get_heating_stats(building_id)
     water_stats = await get_water_stats(building_id)
@@ -479,6 +505,7 @@ async def webapp_status_handler(request: web.Request) -> web.Response:
     return web.json_response({
         "status": "ok",
         "power": power,
+        "schedule": schedule,
         "alerts": alerts_payload,
         "heating": {**heating_stats, "user_vote": heating_vote},
         "water": {**water_stats, "user_vote": water_vote},

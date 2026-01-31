@@ -509,6 +509,11 @@ body::after {
   font-size: 14px;
 }
 
+.schedule-text {
+  white-space: pre-line;
+  line-height: 1.45;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;

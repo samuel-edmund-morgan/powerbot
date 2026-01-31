@@ -14,6 +14,7 @@
     powerStatus: document.getElementById("powerStatus"),
     powerMeta: document.getElementById("powerMeta"),
     powerMeter: document.getElementById("powerMeter"),
+    scheduleText: document.getElementById("scheduleText"),
     alertPill: document.getElementById("alertPill"),
     alertMeta: document.getElementById("alertMeta"),
     alertPillLarge: document.getElementById("alertPillLarge"),

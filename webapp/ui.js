@@ -118,6 +118,16 @@
     elements.heroStatus.textContent = is_up ? "Світло є" : "Світла немає";
   };
 
+  const renderSchedule = (schedule) => {
+    if (!elements.scheduleText) return;
+    const text = schedule?.text ? String(schedule.text).trim() : "";
+    if (!text) {
+      elements.scheduleText.textContent = "—";
+      return;
+    }
+    elements.scheduleText.innerHTML = text.replace(/\n/g, "<br>");
+  };
+
   const renderAlerts = (alerts) => {
     if (!alerts) return;
     if (alerts.status === "active") {
@@ -338,6 +348,7 @@
     showToast,
     renderBuildings,
     renderPower,
+    renderSchedule,
     renderAlerts,
     renderStats,
     renderVoteBars,
