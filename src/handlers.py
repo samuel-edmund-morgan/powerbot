@@ -971,9 +971,47 @@ async def cb_unlike_shelter(callback: CallbackQuery):
         pass
 
 
-@router.callback_query(F.data == "status")
+@router.callback_query(F.data.in_({"status", "yasno_schedule"}))
 async def cb_status(callback: CallbackQuery):
-    """Показати поточний статус світла."""
+    """Показати статус світла або графіки ЯСНО."""
+    if callback.data == "yasno_schedule":
+        logger.info(f"User {format_user_label(callback.from_user)} clicked: Орієнтовні графіки")
+        if not CFG.yasno_enabled:
+            await callback.answer("Графіки тимчасово недоступні", show_alert=True)
+            return
+
+        building_id = await get_subscriber_building(callback.from_user.id)
+        if not building_id:
+            await callback.message.answer(
+                "⚠️ Спершу оберіть будинок, щоб показати графіки.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🏠 Обрати будинок", callback_data="select_building")],
+                    [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+                ]),
+            )
+            await callback.answer()
+            return
+
+        back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
+        ])
+
+        if CFG.yasno_image_enabled:
+            images, error = await get_building_schedule_pngs(building_id)
+            if error:
+                await callback.message.answer(error, reply_markup=back_keyboard)
+            else:
+                for idx, (label, data) in enumerate(images):
+                    file = BufferedInputFile(data, filename=f"yasno_{building_id}_{idx}.png")
+                    caption = f"🗓 <b>Орієнтовні графіки</b>\n{label}"
+                    await callback.message.answer_photo(file, caption=caption, reply_markup=back_keyboard)
+        else:
+            text = await get_building_schedule_text(building_id)
+            await callback.message.answer(text, reply_markup=back_keyboard)
+
+        await callback.answer()
+        return
+
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Світло")
     text = await format_light_status(callback.message.chat.id, include_vote_prompt=False)
 
@@ -986,46 +1024,6 @@ async def cb_status(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "yasno_schedule")
-async def cb_yasno_schedule(callback: CallbackQuery):
-    """Показати орієнтовні графіки відключень ЯСНО."""
-    logger.info(f"User {format_user_label(callback.from_user)} clicked: Орієнтовні графіки")
-    if not CFG.yasno_enabled:
-        await callback.answer("Графіки тимчасово недоступні", show_alert=True)
-        return
-
-    building_id = await get_subscriber_building(callback.from_user.id)
-    if not building_id:
-        await callback.message.answer(
-            "⚠️ Спершу оберіть будинок, щоб показати графіки.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🏠 Обрати будинок", callback_data="select_building")],
-                [InlineKeyboardButton(text="« Меню", callback_data="menu")],
-            ]),
-        )
-        await callback.answer()
-        return
-
-    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
-    ])
-
-    if CFG.yasno_image_enabled:
-        images, error = await get_building_schedule_pngs(building_id)
-        if error:
-            await callback.message.answer(error, reply_markup=back_keyboard)
-        else:
-            for idx, (label, data) in enumerate(images):
-                file = BufferedInputFile(data, filename=f"yasno_{building_id}_{idx}.png")
-                caption = f"🗓 <b>Орієнтовні графіки</b>\n{label}"
-                await callback.message.answer_photo(file, caption=caption, reply_markup=back_keyboard)
-    else:
-        text = await get_building_schedule_text(building_id)
-        await callback.message.answer(text, reply_markup=back_keyboard)
-
     await callback.answer()
 
 
