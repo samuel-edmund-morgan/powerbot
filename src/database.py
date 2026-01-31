@@ -181,6 +181,18 @@ async def init_db():
                 notification_type TEXT DEFAULT 'power_change'
             )"""
         )
+        # Кеш стану графіків ЯСНО (для відстеження змін)
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS yasno_schedule_state (
+                building_id INTEGER NOT NULL,
+                queue_key TEXT NOT NULL,
+                day_key TEXT NOT NULL,
+                status TEXT DEFAULT NULL,
+                slots_hash TEXT DEFAULT NULL,
+                updated_at TEXT DEFAULT NULL,
+                PRIMARY KEY (building_id, queue_key, day_key)
+            )"""
+        )
         # Таблиця останнього повідомлення бота для кожного чату (для чистого чату)
         await db.execute(
             """CREATE TABLE IF NOT EXISTS last_bot_message (
@@ -220,6 +232,10 @@ async def init_db():
             pass
         try:
             await db.execute("ALTER TABLE subscribers ADD COLUMN alert_notifications INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE subscribers ADD COLUMN schedule_notifications INTEGER DEFAULT 1")
         except Exception:
             pass
         
@@ -562,14 +578,25 @@ async def set_alert_notifications(chat_id: int, enabled: bool):
         await db.commit()
 
 
+async def set_schedule_notifications(chat_id: int, enabled: bool):
+    """Увімкнути/вимкнути сповіщення про графіки ЯСНО."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE subscribers SET schedule_notifications=? WHERE chat_id=?",
+            (1 if enabled else 0, chat_id),
+        )
+        await db.commit()
+
+
 async def get_notification_settings(chat_id: int) -> dict:
     """
     Отримати налаштування сповіщень для користувача.
-    Повертає словник з ключами: light_notifications, alert_notifications, quiet_start, quiet_end
+    Повертає словник з ключами: light_notifications, alert_notifications,
+    schedule_notifications, quiet_start, quiet_end
     """
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            """SELECT light_notifications, alert_notifications, quiet_start, quiet_end 
+            """SELECT light_notifications, alert_notifications, schedule_notifications, quiet_start, quiet_end 
                FROM subscribers WHERE chat_id=?""",
             (chat_id,),
         ) as cur:
@@ -578,12 +605,14 @@ async def get_notification_settings(chat_id: int) -> dict:
                 return {
                     "light_notifications": bool(row[0]) if row[0] is not None else True,
                     "alert_notifications": bool(row[1]) if row[1] is not None else True,
-                    "quiet_start": row[2],
-                    "quiet_end": row[3],
+                    "schedule_notifications": bool(row[2]) if row[2] is not None else True,
+                    "quiet_start": row[3],
+                    "quiet_end": row[4],
                 }
             return {
                 "light_notifications": True,
                 "alert_notifications": True,
+                "schedule_notifications": True,
                 "quiet_start": None,
                 "quiet_end": None,
             }
@@ -623,6 +652,40 @@ async def get_subscribers_for_light_notification(current_hour: int, building_id:
             if not (current_hour >= quiet_start or current_hour < quiet_end):
                 result.append(chat_id)
     
+    return result
+
+
+async def get_subscribers_for_schedule_notification(
+    current_hour: int, building_id: int | None = None
+) -> list[int]:
+    """
+    Отримати список підписників для сповіщень про оновлення графіків.
+    Враховує тихі години, налаштування schedule_notifications та будинок.
+    """
+    if building_id is None:
+        building_id = NEWCASTLE_BUILDING_ID
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT chat_id, quiet_start, quiet_end, schedule_notifications
+               FROM subscribers
+               WHERE (schedule_notifications = 1 OR schedule_notifications IS NULL)
+                 AND building_id = ?""",
+            (building_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    result = []
+    for chat_id, quiet_start, quiet_end, _ in rows:
+        if quiet_start is None or quiet_end is None:
+            result.append(chat_id)
+        elif quiet_start <= quiet_end:
+            if not (quiet_start <= current_hour < quiet_end):
+                result.append(chat_id)
+        else:
+            if not (current_hour >= quiet_start or current_hour < quiet_end):
+                result.append(chat_id)
+
     return result
 
 
@@ -1414,6 +1477,45 @@ async def clear_all_notifications():
     """Видалити всі активні сповіщення (при зміні стану світла)."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM active_notifications")
+        await db.commit()
+
+
+# ============ ЯСНО: кеш стану графіків ============
+
+async def get_yasno_schedule_state(building_id: int, queue_key: str, day_key: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT status, slots_hash, updated_at
+               FROM yasno_schedule_state
+               WHERE building_id=? AND queue_key=? AND day_key=?""",
+            (building_id, queue_key, day_key),
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            return {
+                "status": row[0],
+                "slots_hash": row[1],
+                "updated_at": row[2],
+            }
+
+
+async def upsert_yasno_schedule_state(
+    building_id: int,
+    queue_key: str,
+    day_key: str,
+    status: str | None,
+    slots_hash: str | None,
+    updated_at: str | None,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO yasno_schedule_state(building_id, queue_key, day_key, status, slots_hash, updated_at)
+               VALUES(?, ?, ?, ?, ?, ?)
+               ON CONFLICT(building_id, queue_key, day_key)
+               DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
+            (building_id, queue_key, day_key, status, slots_hash, updated_at),
+        )
         await db.commit()
 
 

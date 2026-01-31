@@ -19,6 +19,7 @@ from config import CFG
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
+    set_schedule_notifications,
     get_last_event, get_subscriber_building, get_building_by_id, save_last_bot_message
 )
 from services import state_text, calculate_stats, format_duration, format_light_status
@@ -354,6 +355,7 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     
     light_status = "✅" if settings["light_notifications"] else "❌"
     alert_status = "✅" if settings["alert_notifications"] else "❌"
+    schedule_status = "✅" if settings["schedule_notifications"] else "❌"
     
     # Формуємо текст для тихих годин
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:
@@ -372,6 +374,12 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"🚨 Тривоги: {alert_status}",
                 callback_data="notif_toggle_alert"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"📅 Графіки: {schedule_status}",
+                callback_data="notif_toggle_schedule"
             ),
         ],
         [
@@ -1102,6 +1110,7 @@ async def cb_notifications_menu(callback: CallbackQuery):
         "Тут ви можете налаштувати які сповіщення отримувати:\n\n"
         f"☀️ <b>Світло:</b> {'увімкнено ✅' if settings['light_notifications'] else 'вимкнено ❌'}\n"
         f"🚨 <b>Тривоги:</b> {'увімкнено ✅' if settings['alert_notifications'] else 'вимкнено ❌'}\n"
+        f"📅 <b>Графіки:</b> {'увімкнено ✅' if settings['schedule_notifications'] else 'вимкнено ❌'}\n"
     )
     
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:
@@ -1145,6 +1154,21 @@ async def cb_toggle_alert_notifications(callback: CallbackQuery):
     await callback.answer(f"🚨 Сповіщення про тривоги {status}")
     
     # Оновлюємо меню
+    await cb_notifications_menu(callback)
+
+
+@router.callback_query(F.data == "notif_toggle_schedule")
+async def cb_toggle_schedule_notifications(callback: CallbackQuery):
+    """Переключити сповіщення про графіки ЯСНО."""
+    chat_id = callback.message.chat.id
+    settings = await get_notification_settings(chat_id)
+
+    new_value = not settings["schedule_notifications"]
+    await set_schedule_notifications(chat_id, new_value)
+
+    status = "увімкнено ✅" if new_value else "вимкнено ❌"
+    await callback.answer(f"📅 Сповіщення про графіки {status}")
+
     await cb_notifications_menu(callback)
 
 
@@ -1736,6 +1760,7 @@ async def reply_notifications(message: Message):
         "Тут ви можете налаштувати які сповіщення отримувати:\n\n"
         f"☀️ <b>Світло:</b> {'увімкнено ✅' if settings['light_notifications'] else 'вимкнено ❌'}\n"
         f"🚨 <b>Тривоги:</b> {'увімкнено ✅' if settings['alert_notifications'] else 'вимкнено ❌'}\n"
+        f"📅 <b>Графіки:</b> {'увімкнено ✅' if settings['schedule_notifications'] else 'вимкнено ❌'}\n"
     )
     
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:
