@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     subscribed_at TEXT DEFAULT NULL,         -- Дата підписки (ISO 8601)
     light_notifications INTEGER DEFAULT 1,   -- Сповіщення про світло (1/0)
     alert_notifications INTEGER DEFAULT 1,   -- Сповіщення про тривоги (1/0)
+    schedule_notifications INTEGER DEFAULT 1, -- Сповіщення про графіки (1/0)
     building_id INTEGER DEFAULT NULL         -- ID будинку
 );
 
@@ -90,6 +91,17 @@ CREATE TABLE IF NOT EXISTS active_notifications (
     message_id INTEGER NOT NULL,
     created_at TEXT NOT NULL,                -- Час створення (ISO 8601)
     notification_type TEXT DEFAULT 'power_change'  -- Тип сповіщення
+);
+
+-- Кеш стану графіків ЯСНО (для виявлення змін)
+CREATE TABLE IF NOT EXISTS yasno_schedule_state (
+    building_id INTEGER NOT NULL,
+    queue_key TEXT NOT NULL,
+    day_key TEXT NOT NULL,
+    status TEXT DEFAULT NULL,
+    slots_hash TEXT DEFAULT NULL,
+    updated_at TEXT DEFAULT NULL,
+    PRIMARY KEY (building_id, queue_key, day_key)
 );
 
 -- Останнє повідомлення бота користувачу

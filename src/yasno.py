@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -17,6 +18,7 @@ _BASE_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 _PLANNED_OUTAGES_KEY = "yasno:planned_outages"
 _PLANNED_OUTAGES_TTL = 600  # 10 хвилин
 _ADDRESS_CACHE_TTL = 6 * 3600  # 6 годин
+_LAST_CONFIG: dict[int, tuple[str | None, tuple[str, ...]]] = {}
 
 
 def _now_ts() -> float:
@@ -70,6 +72,20 @@ def _get_building_queries(building_id: int) -> tuple[str | None, list[str]]:
     if not house_queries:
         return None, []
     return street_query or None, house_queries
+
+
+def _log_config_if_changed(building_id: int, street_query: str | None, house_queries: list[str]) -> None:
+    current = (street_query, tuple(house_queries))
+    previous = _LAST_CONFIG.get(building_id)
+    if previous == current:
+        return
+    _LAST_CONFIG[building_id] = current
+    logger.info(
+        "yasno: config building=%s street_query=%s house_queries=%s",
+        building_id,
+        street_query,
+        "|".join(house_queries),
+    )
 
 
 async def get_planned_outages(force: bool = False) -> dict | None:
@@ -226,55 +242,42 @@ def _format_day(outage: dict | None) -> tuple[str, str]:
     return date_label, ", ".join(f"{fmt(s)}–{fmt(e)}" for s, e in ranges)
 
 
-async def _get_building_schedule_data(building_id: int) -> tuple[dict[str, Any] | None, str | None]:
-    if not CFG.yasno_enabled:
-        return None, "ℹ️ Графіки не ввімкнені."
-    street_query, house_queries = _get_building_queries(building_id)
-    if not street_query or not house_queries:
-        return None, "ℹ️ Графіки для цього будинку не налаштовані."
-
-    planned = await get_planned_outages()
-    if not planned:
-        return None, "⚠️ Дані про графіки від ЯСНО недоступні."
-
-    street_id = await _get_street_id(street_query)
-    if not street_id:
-        return None, "⚠️ Не вдалося отримати адресу для графіків."
-
-    queues = []
-    seen_house_ids: set[int] = set()
-    for house_query in house_queries:
-        houses = await _get_house_ids(street_id, house_query)
-        for house in houses:
-            house_id = house.get("id")
-            if not house_id or house_id in seen_house_ids:
-                continue
-            seen_house_ids.add(house_id)
-            group_info = await _get_group_info(street_id, house_id)
-            if not group_info:
-                continue
-            group_key = f"{group_info['group']}.{group_info['subgroup']}"
-            queues.append({
-                "key": group_key,
-                "label": house.get("value") or house_query,
-                "data": planned.get(group_key),
-            })
-
-    if not queues:
-        return None, "⚠️ Графіки для цього будинку недоступні."
-
-    building = get_building_by_id(building_id)
-    return {"building": building, "queues": queues}, None
+def _status_has_data(status: str | None) -> bool:
+    if not status:
+        return False
+    return status not in {"NoData"}
 
 
-async def get_building_schedule_text(building_id: int, include_building: bool = True) -> str:
-    data, error = await _get_building_schedule_data(building_id)
-    if error:
-        return error
+def _hash_outage(outage: dict | None) -> str:
+    if not outage:
+        return "none"
+    status = outage.get("status") or ""
+    slots = outage.get("slots") or []
+    norm_slots = [
+        {
+            "start": int(slot.get("start", 0)),
+            "end": int(slot.get("end", 0)),
+            "type": str(slot.get("type", "")),
+        }
+        for slot in slots
+    ]
+    payload = {"status": status, "slots": norm_slots}
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+
+def _day_key(label: str, outage: dict | None) -> str:
+    date_raw = outage.get("date") if outage else None
+    date_key = ""
+    if date_raw:
+        date_key = str(date_raw).split("T")[0]
+    return f"{label}:{date_key or 'unknown'}"
+
+
+def _format_schedule_text(data: dict[str, Any], include_building: bool = True) -> str:
     queues = data["queues"]
     lines = ["🗓 <b>Орієнтовні графіки</b>"]
-    building = data["building"]
+    building = data.get("building")
     if include_building and building:
         lines.append(f"🏠 {building['name']} ({building['address']})")
 
@@ -295,6 +298,75 @@ async def get_building_schedule_text(building_id: int, include_building: bool = 
     return "\n".join(lines)
 
 
+async def _get_building_schedule_data(
+    building_id: int,
+    *,
+    log_context: bool = False,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not CFG.yasno_enabled:
+        return None, "ℹ️ Графіки не ввімкнені."
+    street_query, house_queries = _get_building_queries(building_id)
+    if not street_query or not house_queries:
+        return None, "ℹ️ Графіки для цього будинку не налаштовані."
+    _log_config_if_changed(building_id, street_query, house_queries)
+
+    planned = await get_planned_outages()
+    if not planned:
+        return None, "⚠️ Дані про графіки від ЯСНО недоступні."
+
+    street_id = await _get_street_id(street_query)
+    if not street_id:
+        return None, "⚠️ Не вдалося отримати адресу для графіків."
+    if log_context:
+        logger.info(
+            "yasno: building=%s street_query=%s street_id=%s house_queries=%s",
+            building_id,
+            street_query,
+            street_id,
+            "|".join(house_queries),
+        )
+
+    queues = []
+    seen_house_ids: set[int] = set()
+    for house_query in house_queries:
+        houses = await _get_house_ids(street_id, house_query)
+        for house in houses:
+            house_id = house.get("id")
+            if not house_id or house_id in seen_house_ids:
+                continue
+            seen_house_ids.add(house_id)
+            group_info = await _get_group_info(street_id, house_id)
+            if not group_info:
+                continue
+            group_key = f"{group_info['group']}.{group_info['subgroup']}"
+            if log_context:
+                logger.info(
+                    "yasno: building=%s house_query=%s house_id=%s group=%s",
+                    building_id,
+                    house.get("value") or house_query,
+                    house_id,
+                    group_key,
+                )
+            queues.append({
+                "key": group_key,
+                "label": house.get("value") or house_query,
+                "data": planned.get(group_key),
+            })
+
+    if not queues:
+        return None, "⚠️ Графіки для цього будинку недоступні."
+
+    building = get_building_by_id(building_id)
+    return {"building": building, "queues": queues}, None
+
+
+async def get_building_schedule_text(building_id: int, include_building: bool = True) -> str:
+    data, error = await _get_building_schedule_data(building_id)
+    if error:
+        return error
+    return _format_schedule_text(data, include_building=include_building)
+
+
 
 async def planned_outages_loop() -> None:
     if not CFG.yasno_enabled:
@@ -304,4 +376,114 @@ async def planned_outages_loop() -> None:
             await get_planned_outages(force=True)
         except Exception:
             logger.exception("planned_outages_loop error")
+        await asyncio.sleep(_PLANNED_OUTAGES_TTL)
+
+
+async def yasno_schedule_monitor_loop(bot) -> None:
+    """Оновлює кеш графіків і надсилає сповіщення про зміни."""
+    if not CFG.yasno_enabled:
+        return
+    from database import (
+        BUILDINGS,
+        get_subscribers_for_schedule_notification,
+        get_yasno_schedule_state,
+        upsert_yasno_schedule_state,
+        get_building_by_id,
+    )
+    from services import broadcast_messages
+
+    def _status_has_data(status: str | None) -> bool:
+        return status not in (None, "", "NoData")
+
+    async def _detect_changes(building_id: int, data: dict[str, Any]) -> dict:
+        changes = {
+            "today_changed": False,
+            "tomorrow_changed": False,
+            "tomorrow_available": False,
+            "emergency": False,
+        }
+        now_iso = datetime.now().isoformat()
+        for queue in data["queues"]:
+            queue_key = queue["key"]
+            for label in ("today", "tomorrow"):
+                outage = queue["data"].get(label) if queue["data"] else None
+                day_key = _day_key(label, outage)
+                status = outage.get("status") if outage else None
+                slots_hash = _hash_outage(outage)
+                prev = await get_yasno_schedule_state(building_id, queue_key, day_key)
+                if prev:
+                    if prev["status"] != status or prev["slots_hash"] != slots_hash:
+                        if label == "today":
+                            changes["today_changed"] = True
+                        else:
+                            changes["tomorrow_changed"] = True
+                            if not _status_has_data(prev["status"]) and _status_has_data(status):
+                                changes["tomorrow_available"] = True
+                        if status == "EmergencyShutdowns" and prev["status"] != "EmergencyShutdowns":
+                            changes["emergency"] = True
+                await upsert_yasno_schedule_state(
+                    building_id,
+                    queue_key,
+                    day_key,
+                    status,
+                    slots_hash,
+                    now_iso,
+                )
+        return changes
+
+    while True:
+        try:
+            await get_planned_outages(force=True)
+            current_hour = datetime.now().hour
+
+            for building in BUILDINGS:
+                building_id = building["id"]
+                data, error = await _get_building_schedule_data(building_id, log_context=True)
+                if error or not data:
+                    continue
+
+                changes = await _detect_changes(building_id, data)
+                if not any(changes.values()):
+                    continue
+                logger.info(
+                    "yasno: schedule change building=%s today=%s tomorrow=%s emergency=%s",
+                    building_id,
+                    changes["today_changed"],
+                    changes["tomorrow_changed"],
+                    changes["emergency"],
+                )
+
+                header_lines = ["🗓 <b>Оновлення графіків</b>"]
+                b = get_building_by_id(building_id)
+                if b:
+                    header_lines.append(f"🏠 {b['name']} ({b['address']})")
+
+                if changes["emergency"]:
+                    header_lines.append("⚠️ Увага! Графіки позначені як аварійні відключення.")
+                if changes["tomorrow_changed"]:
+                    header_lines.append("📅 Зʼявились або оновились орієнтовні графіки на завтра.")
+                if changes["today_changed"]:
+                    header_lines.append("🔄 Сьогоднішні графіки були оновлені.")
+
+                schedule_text = _format_schedule_text(data, include_building=False)
+                schedule_body = "\n".join(schedule_text.splitlines()[1:]).strip()
+                if schedule_body:
+                    header_lines.append("")
+                    header_lines.append(schedule_body)
+
+                text = "\n".join(header_lines).strip()
+                subscribers = await get_subscribers_for_schedule_notification(current_hour, building_id)
+                logger.info(
+                    "yasno: schedule notify building=%s subscribers=%s",
+                    building_id,
+                    len(subscribers),
+                )
+
+                async def send_schedule(chat_id: int):
+                    await bot.send_message(chat_id, text)
+
+                await broadcast_messages(subscribers, send_schedule)
+        except Exception:
+            logger.exception("yasno_schedule_monitor_loop error")
+
         await asyncio.sleep(_PLANNED_OUTAGES_TTL)
