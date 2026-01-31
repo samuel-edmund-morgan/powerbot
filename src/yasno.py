@@ -267,7 +267,7 @@ async def _get_building_schedule_data(building_id: int) -> tuple[dict[str, Any] 
     return {"building": building, "queues": queues}, None
 
 
-async def get_building_schedule_text(building_id: int) -> str:
+async def get_building_schedule_text(building_id: int, include_building: bool = True) -> str:
     data, error = await _get_building_schedule_data(building_id)
     if error:
         return error
@@ -275,7 +275,7 @@ async def get_building_schedule_text(building_id: int) -> str:
     queues = data["queues"]
     lines = ["🗓 <b>Орієнтовні графіки</b>"]
     building = data["building"]
-    if building:
+    if include_building and building:
         lines.append(f"🏠 {building['name']} ({building['address']})")
 
     for queue in queues:

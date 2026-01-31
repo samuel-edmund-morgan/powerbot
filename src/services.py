@@ -30,7 +30,12 @@ BROADCAST_MAX_RETRIES = int(os.getenv("BROADCAST_MAX_RETRIES", "1"))
 _notification_save_lock = asyncio.Lock()
 
 
-async def format_light_status(user_id: int, include_vote_prompt: bool = False) -> str:
+async def format_light_status(
+    user_id: int,
+    include_vote_prompt: bool = False,
+    heating_stats: dict | None = None,
+    water_stats: dict | None = None,
+) -> str:
     """
     Форматувати статус світла зі шкалою для будинку користувача.
     Використовується як у хендлері, так і в сповіщеннях.
@@ -115,6 +120,24 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
         lines.append(duration_text)
     lines.append(stats_info)
 
+    if heating_stats is not None:
+        if heating_stats["total"] > 0:
+            lines.append(
+                f"\n♨️ <b>Опалення:</b> ✅ {heating_stats['has_percent']}% | "
+                f"❄️ {heating_stats['has_not_percent']}% ({heating_stats['total']} голосів)"
+            )
+        else:
+            lines.append("\n♨️ <b>Опалення:</b> ще ніхто не голосував")
+
+    if water_stats is not None:
+        if water_stats["total"] > 0:
+            lines.append(
+                f"\n💧 <b>Вода:</b> ✅ {water_stats['has_percent']}% | "
+                f"🚫 {water_stats['has_not_percent']}% ({water_stats['total']} голосів)"
+            )
+        else:
+            lines.append("\n💧 <b>Вода:</b> ще ніхто не голосував")
+
     phone = CFG.electrician_phone
     if sensors_count > 0:
         if is_up:
@@ -137,6 +160,20 @@ async def format_light_status(user_id: int, include_vote_prompt: bool = False) -
         weather_line = weather_text.strip()
         if "Погода" in weather_line and not any("Погода" in line for line in lines):
             lines.append(weather_line)
+
+    if CFG.yasno_enabled and user_building_id:
+        try:
+            from yasno import get_building_schedule_text
+
+            schedule_text = await get_building_schedule_text(
+                user_building_id,
+                include_building=False,
+            )
+            if schedule_text and "не налаштовані" not in schedule_text and "не ввімкнені" not in schedule_text:
+                lines.append("")
+                lines.append(schedule_text)
+        except Exception:
+            logging.exception("Failed to get Yasno schedule")
 
     updated = datetime.now().strftime("%H:%M:%S")
     if not any("Оновлено" in line for line in lines):
@@ -532,59 +569,9 @@ async def update_notifications_loop(bot: Bot):
             if not notifications:
                 continue
             
-            # Отримуємо поточну статистику по будинку Ньюкасл
+            # Поточна статистика голосів (зараз Ньюкасл)
             heating_stats = await get_heating_stats(NEWCASTLE_BUILDING_ID)
             water_stats = await get_water_stats(NEWCASTLE_BUILDING_ID)
-            
-            # Формуємо блок опалення
-            if heating_stats["total"] > 0:
-                heating_text = (
-                    f"\n\n♨️ <b>Опалення:</b> "
-                    f"✅ {heating_stats['has_percent']}% | ❄️ {heating_stats['has_not_percent']}% "
-                    f"({heating_stats['total']} голосів)"
-                )
-            else:
-                heating_text = "\n\n♨️ <b>Опалення:</b> ще ніхто не голосував"
-            
-            # Формуємо блок води
-            if water_stats["total"] > 0:
-                water_text = (
-                    f"\n💧 <b>Вода:</b> "
-                    f"✅ {water_stats['has_percent']}% | 🚫 {water_stats['has_not_percent']}% "
-                    f"({water_stats['total']} голосів)"
-                )
-            else:
-                water_text = "\n💧 <b>Вода:</b> ще ніхто не голосував"
-            
-            # Отримуємо поточний стан
-            current_state = await db_get("state")
-            current = current_state == "up"
-            
-            # Отримуємо тривалість
-            last_event = await get_last_event()
-            duration_text = ""
-            if last_event:
-                event_type, last_ts = last_event
-                delta = datetime.now() - last_ts
-                hours, remainder = divmod(int(delta.total_seconds()), 3600)
-                minutes = remainder // 60
-                if hours > 0:
-                    duration_text = f"\n⏱ {hours} год {minutes} хв"
-                else:
-                    duration_text = f"\n⏱ {minutes} хв"
-            
-            # Отримуємо погоду
-            weather_text = ""
-            try:
-                from weather import get_current_weather
-                temp, desc = await get_current_weather()
-                if temp is not None:
-                    weather_text = f"\n🌡 Погода: {temp}°C, {desc}"
-            except Exception:
-                pass
-            
-            # Формуємо повний текст
-            text = f"{state_text(current)}{duration_text}{weather_text}{heating_text}{water_text}"
             
             # Клавіатура для голосування
             vote_rows = [
@@ -597,16 +584,18 @@ async def update_notifications_loop(bot: Bot):
                     InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
                 ],
             ]
-            if CFG.yasno_enabled:
-                vote_rows.append(
-                    [InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")]
-                )
             vote_rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")])
             vote_keyboard = InlineKeyboardMarkup(inline_keyboard=vote_rows)
             
             # Оновлюємо всі сповіщення
             for notif in notifications:
                 try:
+                    text = await format_light_status(
+                        notif["chat_id"],
+                        include_vote_prompt=False,
+                        heating_stats=heating_stats,
+                        water_stats=water_stats,
+                    )
                     await bot.edit_message_text(
                         text=text,
                         chat_id=notif["chat_id"],
@@ -788,10 +777,6 @@ async def sensors_monitor_loop(bot: Bot):
                         InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
                     ],
                 ]
-                if CFG.yasno_enabled:
-                    vote_rows.append(
-                        [InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")]
-                    )
                 vote_rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")])
                 vote_keyboard = InlineKeyboardMarkup(inline_keyboard=vote_rows)
                 
