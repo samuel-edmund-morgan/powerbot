@@ -34,8 +34,6 @@ def _build_vote_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🚫 Немає", callback_data="vote_water_no"),
         ],
     ]
-    if CFG.yasno_enabled:
-        rows.append([InlineKeyboardButton(text="🗓 Орієнтовні графіки", callback_data="yasno_schedule")])
     rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
