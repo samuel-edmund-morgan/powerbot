@@ -49,6 +49,13 @@ else
   echo "YASNO_ENABLED=1" >> "${TEST_DIR}/.env"
 fi
 
+# Увімкнути режим одного повідомлення лише для тестового бота
+if grep -q "^SINGLE_MESSAGE_MODE=" "${TEST_DIR}/.env"; then
+  sed -i -E 's/^SINGLE_MESSAGE_MODE=.*/SINGLE_MESSAGE_MODE=1/' "${TEST_DIR}/.env"
+else
+  echo "SINGLE_MESSAGE_MODE=1" >> "${TEST_DIR}/.env"
+fi
+
 cd "${TEST_DIR}"
 docker compose down
 docker compose pull
