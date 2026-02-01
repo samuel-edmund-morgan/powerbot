@@ -13,7 +13,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 // Домен або IP сервера (HTTP)
-#define SERVER_HOST     "new-england.morgan-dev.com"
+#define SERVER_HOST     "sensors-new-england.morgan-dev.com"
 
 // Порт HTTP API (prod = 18081, test = 18082 якщо два контейнери)
 #define SERVER_PORT     18081
