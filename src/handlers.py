@@ -1550,7 +1550,14 @@ async def cmd_broadcast(message: Message):
         )
         return
     
-    from database import list_subscribers
+    from database import (
+        list_subscribers,
+        get_active_notifications,
+        delete_notification,
+        save_notification,
+        get_last_bot_message,
+        delete_last_bot_message_record,
+    )
     from services import broadcast_messages
 
     subscribers = await list_subscribers()
@@ -1558,8 +1565,33 @@ async def cmd_broadcast(message: Message):
         await message.answer("ℹ️ Немає підписників для розсилки.")
         return
 
+    existing_notifications = {
+        notif["chat_id"]: notif
+        for notif in await get_active_notifications("broadcast")
+    }
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+    )
+
     async def send_broadcast(chat_id: int):
-        await message.bot.send_message(chat_id, f"📢 {text}")
+        last_menu_id = await get_last_bot_message(chat_id)
+        if last_menu_id:
+            try:
+                await message.bot.delete_message(chat_id, last_menu_id)
+            except Exception:
+                pass
+            await delete_last_bot_message_record(chat_id)
+
+        prev = existing_notifications.get(chat_id)
+        if prev:
+            try:
+                await message.bot.delete_message(chat_id, prev["message_id"])
+            except Exception:
+                pass
+            await delete_notification(prev["id"])
+
+        msg = await message.bot.send_message(chat_id, f"📢 {text}", reply_markup=keyboard)
+        await save_notification(chat_id, msg.message_id, "broadcast")
 
     await broadcast_messages(subscribers, send_broadcast)
     await message.answer(f"✅ Розсилка завершена. Одержувачів: {len(subscribers)}")
