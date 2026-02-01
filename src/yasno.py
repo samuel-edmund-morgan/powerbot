@@ -223,7 +223,7 @@ def _format_day(outage: dict | None) -> tuple[str, str]:
     status = outage.get("status")
     if status != "ScheduleApplies":
         if status == "EmergencyShutdowns":
-            return date_label, "аварійні відключення"
+            return date_label, "екстрені відключення"
         if status == "NoShutdowns":
             return date_label, "відключень не очікується"
         if status == "NoData":
@@ -465,11 +465,12 @@ async def yasno_schedule_monitor_loop(bot) -> None:
                     header_lines.append(f"🏠 {b['name']} ({b['address']})")
 
                 if changes["emergency"]:
-                    header_lines.append("⚠️ Увага! Графіки позначені як аварійні відключення.")
-                if changes["tomorrow_changed"]:
-                    header_lines.append("📅 Зʼявились або оновились орієнтовні графіки на завтра.")
-                if changes["today_changed"]:
-                    header_lines.append("🔄 Сьогоднішні графіки були оновлені.")
+                    header_lines.append("⚠️ Увага! Графіки позначені як екстрені відключення.")
+                else:
+                    if changes["tomorrow_changed"]:
+                        header_lines.append("📅 Зʼявились або оновились орієнтовні графіки на завтра.")
+                    if changes["today_changed"]:
+                        header_lines.append("🔄 Сьогоднішні графіки були оновлені.")
 
                 schedule_text = _format_schedule_text(data, include_building=False)
                 schedule_body = "\n".join(schedule_text.splitlines()[1:]).strip()
