@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 sys.path.append("/app/src")
 
 from config import CFG
+from single_message_bot import SingleMessageBot
 from alerts import alert_text
 from services import broadcast_messages, format_light_status
 from database import (
@@ -121,7 +122,8 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    bot = Bot(token=CFG.token, default=DefaultBotProperties(parse_mode="HTML"))
+    bot_class = SingleMessageBot if CFG.single_message_mode else Bot
+    bot = bot_class(token=CFG.token, default=DefaultBotProperties(parse_mode="HTML"))
     current_hour = datetime.now().hour
 
     if args.targets == "admin":

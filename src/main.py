@@ -12,6 +12,7 @@ from handlers import router
 from services import alert_monitor_loop, sensors_monitor_loop
 from yasno import yasno_schedule_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
+from single_message_bot import SingleMessageBot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,7 +25,8 @@ async def main():
     """Точка входу в застосунок."""
     await init_db()
 
-    bot = Bot(
+    bot_class = SingleMessageBot if CFG.single_message_mode else Bot
+    bot = bot_class(
         token=CFG.token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )

@@ -1466,6 +1466,27 @@ async def get_active_notifications(notification_type: str | None = None) -> list
             ]
 
 
+async def get_active_notifications_for_chat(chat_id: int) -> list[dict]:
+    """Отримати всі активні сповіщення для конкретного чату."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, chat_id, message_id, created_at, notification_type FROM active_notifications WHERE chat_id=?",
+            (chat_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "id": r["id"],
+                    "chat_id": r["chat_id"],
+                    "message_id": r["message_id"],
+                    "created_at": r["created_at"],
+                    "notification_type": r["notification_type"],
+                }
+                for r in rows
+            ]
+
+
 async def delete_notification(notification_id: int):
     """Видалити сповіщення за ID."""
     async with aiosqlite.connect(DB_PATH) as db:

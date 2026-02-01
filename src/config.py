@@ -62,6 +62,8 @@ class Config:
     yasno_enabled: bool
     yasno_region_id: int
     yasno_dso_id: int
+    # Single-message mode
+    single_message_mode: bool
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -127,6 +129,7 @@ CFG = Config(
     yasno_enabled=parse_bool(os.getenv("YASNO_ENABLED", "0")),
     yasno_region_id=int(os.getenv("YASNO_REGION_ID", "25")),
     yasno_dso_id=int(os.getenv("YASNO_DSO_ID", "902")),
+    single_message_mode=parse_bool(os.getenv("SINGLE_MESSAGE_MODE", "0")),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу
