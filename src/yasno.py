@@ -389,8 +389,14 @@ async def yasno_schedule_monitor_loop(bot) -> None:
         get_yasno_schedule_state,
         upsert_yasno_schedule_state,
         get_building_by_id,
+        get_active_notifications,
+        delete_notification,
+        save_notification,
+        get_last_bot_message,
+        delete_last_bot_message_record,
     )
     from services import broadcast_messages
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     def _status_has_data(status: str | None) -> bool:
         return status not in (None, "", "NoData")
@@ -473,14 +479,39 @@ async def yasno_schedule_monitor_loop(bot) -> None:
 
                 text = "\n".join(header_lines).strip()
                 subscribers = await get_subscribers_for_schedule_notification(current_hour, building_id)
+                existing_notifications = {
+                    notif["chat_id"]: notif
+                    for notif in await get_active_notifications("schedule")
+                }
                 logger.info(
                     "yasno: schedule notify building=%s subscribers=%s",
                     building_id,
                     len(subscribers),
                 )
 
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+                )
+
                 async def send_schedule(chat_id: int):
-                    await bot.send_message(chat_id, text)
+                    last_menu_id = await get_last_bot_message(chat_id)
+                    if last_menu_id:
+                        try:
+                            await bot.delete_message(chat_id, last_menu_id)
+                        except Exception:
+                            pass
+                        await delete_last_bot_message_record(chat_id)
+
+                    prev = existing_notifications.get(chat_id)
+                    if prev:
+                        try:
+                            await bot.delete_message(chat_id, prev["message_id"])
+                        except Exception:
+                            pass
+                        await delete_notification(prev["id"])
+
+                    msg = await bot.send_message(chat_id, text, reply_markup=keyboard)
+                    await save_notification(chat_id, msg.message_id, "schedule")
 
                 await broadcast_messages(subscribers, send_schedule)
         except Exception:
