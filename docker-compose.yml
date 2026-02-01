@@ -9,6 +9,16 @@ services:
       - ./state.db:/data/state.db
     ports:
       - "18081:8081"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER}.rule=${TRAEFIK_RULE}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER}.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_ROUTER}.tls=true"
+      - "traefik.http.routers.${TRAEFIK_ROUTER}.tls.certresolver=${TRAEFIK_CERTRESOLVER}"
+      - "traefik.http.services.${TRAEFIK_ROUTER}.loadbalancer.server.port=8081"
+    networks:
+      - traefik
     restart: unless-stopped
 
   migrate:
@@ -21,3 +31,7 @@ services:
     volumes:
       - ./state.db:/data/state.db
     profiles: ["migrate"]
+
+networks:
+  traefik:
+    external: true
