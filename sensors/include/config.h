@@ -29,7 +29,7 @@
 #define BUILDING_ID     1
 
 // Унікальний ідентифікатор сенсора
-#define SENSOR_UUID     "esp32-newcastle-001"
+#define SENSOR_UUID     "esp32-newcastle-002"
 
 // Назва будинку (для логів)
 #define BUILDING_NAME   "Newcastle"
