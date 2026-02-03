@@ -14,6 +14,9 @@ jobs:
   deploy_test:
     if: github.event_name == 'push'
     runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,6 +85,9 @@ jobs:
   deploy_prod:
     if: github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
