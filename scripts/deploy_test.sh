@@ -94,16 +94,22 @@ docker compose up -d
 docker compose ps
 
 echo "Health check (test)..."
-for i in {1..10}; do
-  if curl -s http://127.0.0.1:18082/api/v1/health >/dev/null; then
+health_ok=0
+for i in {1..30}; do
+  if curl -sf --max-time 2 http://127.0.0.1:18082/api/v1/health >/dev/null; then
+    health_ok=1
     break
   fi
   sleep 1
 done
+if [[ "${health_ok}" != "1" ]]; then
+  echo "Health check failed (test)."
+  exit 1
+fi
 
 SENSOR_API_KEY="$(grep -m1 "^SENSOR_API_KEY=" .env | sed 's/^SENSOR_API_KEY=//')"
 if [[ -n "${SENSOR_API_KEY}" ]]; then
-  curl -s -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
+  curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
 fi
 
 # Optional: mini app health if endpoint exists.
