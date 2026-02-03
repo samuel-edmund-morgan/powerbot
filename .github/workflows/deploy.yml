@@ -80,6 +80,8 @@ jobs:
       - name: Deploy test
         env:
           DOCKERHUB_USER: semorgana
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: ./scripts/deploy_test.sh
 
   deploy_prod:
@@ -159,4 +161,6 @@ jobs:
       - name: Deploy prod
         env:
           DOCKERHUB_USER: semorgana
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: ./scripts/deploy_prod.sh
