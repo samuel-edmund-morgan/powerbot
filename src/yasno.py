@@ -468,9 +468,9 @@ async def yasno_schedule_monitor_loop(bot) -> None:
                     header_lines.append("⚠️ Увага! Графіки позначені як екстрені відключення.")
                 else:
                     if changes["tomorrow_changed"]:
-                    header_lines.append("📅 Зʼявились або оновились орієнтовні графіки відключень на завтра.")
+                        header_lines.append("📅 Зʼявились або оновились орієнтовні графіки відключень на завтра.")
                     if changes["today_changed"]:
-                    header_lines.append("🔄 Сьогоднішні графіки відключень були оновлені.")
+                        header_lines.append("🔄 Сьогоднішні графіки відключень були оновлені.")
 
                 schedule_text = _format_schedule_text(data, include_building=False)
                 schedule_body = "\n".join(schedule_text.splitlines()[1:]).strip()
