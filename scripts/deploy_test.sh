@@ -95,7 +95,7 @@ docker compose ps
 
 echo "Health check (test)..."
 health_ok=0
-for i in {1..30}; do
+for i in {1..90}; do
   if curl -sf --max-time 2 http://127.0.0.1:18082/api/v1/health >/dev/null; then
     health_ok=1
     break
