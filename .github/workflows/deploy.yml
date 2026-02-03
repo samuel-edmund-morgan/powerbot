@@ -23,6 +23,44 @@ jobs:
       - name: Set version
         run: echo "VERSION=$(date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
+      - name: Ensure git
+        run: |
+          if command -v git >/dev/null 2>&1; then
+            git --version
+            exit 0
+          fi
+          if command -v apt-get >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y git
+            else
+              apt-get update
+              apt-get install -y git
+            fi
+            git --version
+            exit 0
+          fi
+          if command -v yum >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo yum install -y git
+            else
+              yum install -y git
+            fi
+            git --version
+            exit 0
+          fi
+          if command -v apk >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apk add --no-cache git
+            else
+              apk add --no-cache git
+            fi
+            git --version
+            exit 0
+          fi
+          echo "git is required but was not found and no supported package manager is available"
+          exit 1
+
       - name: Detect migration need
         run: |
           set -e
@@ -52,6 +90,44 @@ jobs:
 
       - name: Set version
         run: echo "VERSION=$(date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
+      - name: Ensure git
+        run: |
+          if command -v git >/dev/null 2>&1; then
+            git --version
+            exit 0
+          fi
+          if command -v apt-get >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y git
+            else
+              apt-get update
+              apt-get install -y git
+            fi
+            git --version
+            exit 0
+          fi
+          if command -v yum >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo yum install -y git
+            else
+              yum install -y git
+            fi
+            git --version
+            exit 0
+          fi
+          if command -v apk >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apk add --no-cache git
+            else
+              apk add --no-cache git
+            fi
+            git --version
+            exit 0
+          fi
+          echo "git is required but was not found and no supported package manager is available"
+          exit 1
 
       - name: Detect migration need
         run: |
