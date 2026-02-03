@@ -7,10 +7,30 @@ VERSION="${VERSION:-$(date +%Y.%m.%d-%H%M)}"
 MIGRATE="${MIGRATE:-0}"
 PROD_DIR="/opt/powerbot"
 
-if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
-  echo "Logging in to Docker Hub..."
-  echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
-fi
+setup_docker_auth() {
+  if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
+    echo "Logging in to Docker Hub..."
+    echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+    return 0
+  fi
+
+  if [[ -n "${DOCKER_CONFIG:-}" && -f "${DOCKER_CONFIG}/config.json" ]]; then
+    echo "Using Docker config from ${DOCKER_CONFIG}"
+    return 0
+  fi
+
+  for candidate in "${HOME}/.docker" "/home/ghactions/.docker" "/root/.docker"; do
+    if [[ -f "${candidate}/config.json" ]]; then
+      export DOCKER_CONFIG="${candidate}"
+      echo "Using Docker config from ${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Warning: Docker Hub credentials not provided and no Docker config found. Push may fail."
+}
+
+setup_docker_auth
 
 echo "Building powerbot image ${DOCKERHUB_USER}/powerbot:${VERSION}..."
 docker build -t "${DOCKERHUB_USER}/powerbot:${VERSION}" -f "${REPO_DIR}/Dockerfile" "${REPO_DIR}"
