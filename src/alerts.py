@@ -4,7 +4,10 @@
 2. alerts.in.ua - резервне/додаткове джерело
 
 Диверсифікація запитів для уникнення rate limit та блокувань.
-Алгоритм: чергування джерел, якщо хоч одне дає тривогу - тривога.
+Алгоритм:
+- джерела опитуються з ротацією (alerts.in.ua частіше)
+- якщо хоча б одне джерело дає тривогу -> тривога
+- відбій лише тоді, коли обидва джерела підтвердили відбій
 """
 import asyncio
 import logging
@@ -37,19 +40,55 @@ _request_counter = 0
 # alerts.in.ua як основне джерело, ukrainealarm як рідший резерв
 ALERTS_IN_UA_RATIO = max(0, CFG.alerts_in_ua_ratio)
 
+# Останні відомі результати по кожному джерелу
+_last_status: dict[AlertSource, Optional[bool]] = {
+    AlertSource.UKRAINEALARM: None,
+    AlertSource.ALERTS_IN_UA: None,
+}
+
+
+def _get_enabled_sources() -> list[AlertSource]:
+    """Повернути список увімкнених джерел (за наявністю API ключів)."""
+    sources: list[AlertSource] = []
+    if CFG.alerts_in_ua_api_key:
+        sources.append(AlertSource.ALERTS_IN_UA)
+    if CFG.alerts_api_key:
+        sources.append(AlertSource.UKRAINEALARM)
+    return sources
+
 
 def _get_next_source() -> AlertSource:
     """
     Отримати наступне джерело для запиту.
     Пріоритет: alerts.in.ua (ALERTS_IN_UA_RATIO з ALERTS_IN_UA_RATIO + 1 запитів).
+    Якщо увімкнене лише одне джерело - повертаємо його.
     """
+    enabled = _get_enabled_sources()
+    if not enabled:
+        return AlertSource.ALERTS_IN_UA
+    if len(enabled) == 1:
+        return enabled[0]
+
     global _request_counter
     _request_counter += 1
-    
+
     # Кожен (ALERTS_IN_UA_RATIO + 1)-й запит до ukrainealarm, решта до alerts.in.ua
     if _request_counter % (ALERTS_IN_UA_RATIO + 1) == 0:
         return AlertSource.UKRAINEALARM
     return AlertSource.ALERTS_IN_UA
+
+
+def _record_status(source: AlertSource, status: bool) -> None:
+    """
+    Зберегти результат джерела.
+    Якщо джерело дало тривогу - скидаємо статус інших, щоб відбій
+    вимагав повторного підтвердження від обох.
+    """
+    _last_status[source] = status
+    if status is True:
+        for other in AlertSource:
+            if other != source:
+                _last_status[other] = None
 
 
 async def get_kyiv_alerts_ukrainealarm() -> Optional[bool]:
@@ -194,27 +233,47 @@ async def check_alert_status() -> Optional[bool]:
     
     Алгоритм:
     - Запитуємо по черзі то одне, то інше джерело
-    - Якщо джерело повернуло None (помилка) - пробуємо інше
-    - Результат повертаємо з першого успішного джерела
+    - Якщо хоча б одне джерело дало тривогу -> тривога
+    - Відбій лише тоді, коли обидва джерела підтвердили відбій
+    - Якщо обидва недоступні або немає підтвердження - None
     
     Returns:
         True - тривога активна
         False - відбій
         None - обидва джерела недоступні
     """
+    enabled = _get_enabled_sources()
+    if not enabled:
+        logger.debug("Немає налаштованих джерел тривог")
+        return None
+
     source = _get_next_source()
-    
-    # Пробуємо основне джерело
+
+    # Оновлюємо статус лише для джерела, яке опитали
     result = await check_alert_status_single(source)
     if result is not None:
+        _record_status(source, result)
+    elif len(enabled) > 1:
+        # Якщо основне недоступне - пробуємо інше
+        other_source = AlertSource.ALERTS_IN_UA if source == AlertSource.UKRAINEALARM else AlertSource.UKRAINEALARM
+        logger.info(f"Джерело {source.value} недоступне, пробуємо {other_source.value}")
+        other_result = await check_alert_status_single(other_source)
+        if other_result is not None:
+            _record_status(other_source, other_result)
+
+    # Якщо увімкнене лише одне джерело - довіряємо йому
+    if len(enabled) == 1:
         return result
-    
-    # Якщо основне не спрацювало - пробуємо резервне
-    other_source = AlertSource.ALERTS_IN_UA if source == AlertSource.UKRAINEALARM else AlertSource.UKRAINEALARM
-    logger.info(f"Джерело {source.value} недоступне, пробуємо {other_source.value}")
-    
-    result = await check_alert_status_single(other_source)
-    return result
+
+    # Якщо хоча б одне джерело активне - тривога
+    if any(_last_status.get(src) is True for src in enabled):
+        return True
+
+    # Відбій лише якщо обидва джерела підтвердили відбій
+    if all(_last_status.get(src) is False for src in enabled):
+        return False
+
+    return None
 
 
 def alert_text(is_active: bool) -> str:
