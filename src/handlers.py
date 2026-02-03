@@ -378,7 +378,7 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text=f"📅 Графіки: {schedule_status}",
+                text=f"📅 Графіки відключень: {schedule_status}",
                 callback_data="notif_toggle_schedule"
             ),
         ],
@@ -1110,7 +1110,7 @@ async def cb_notifications_menu(callback: CallbackQuery):
         "Тут ви можете налаштувати які сповіщення отримувати:\n\n"
         f"☀️ <b>Світло:</b> {'увімкнено ✅' if settings['light_notifications'] else 'вимкнено ❌'}\n"
         f"🚨 <b>Тривоги:</b> {'увімкнено ✅' if settings['alert_notifications'] else 'вимкнено ❌'}\n"
-        f"📅 <b>Графіки:</b> {'увімкнено ✅' if settings['schedule_notifications'] else 'вимкнено ❌'}\n"
+        f"📅 <b>Графіки відключень:</b> {'увімкнено ✅' if settings['schedule_notifications'] else 'вимкнено ❌'}\n"
     )
     
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:
@@ -1756,7 +1756,7 @@ async def reply_notifications(message: Message):
         "Тут ви можете налаштувати які сповіщення отримувати:\n\n"
         f"☀️ <b>Світло:</b> {'увімкнено ✅' if settings['light_notifications'] else 'вимкнено ❌'}\n"
         f"🚨 <b>Тривоги:</b> {'увімкнено ✅' if settings['alert_notifications'] else 'вимкнено ❌'}\n"
-        f"📅 <b>Графіки:</b> {'увімкнено ✅' if settings['schedule_notifications'] else 'вимкнено ❌'}\n"
+        f"📅 <b>Графіки відключень:</b> {'увімкнено ✅' if settings['schedule_notifications'] else 'вимкнено ❌'}\n"
     )
     
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:

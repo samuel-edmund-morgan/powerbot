@@ -48,7 +48,7 @@ async def main() -> None:
         return
 
     schedule_text = await get_building_schedule_text(args.building_id, include_building=True)
-    text = f"🧪 <b>ТЕСТ:</b> ГРАФІКИ\n\n{schedule_text}"
+    text = f"🧪 <b>ТЕСТ:</b> ГРАФІКИ ВІДКЛЮЧЕНЬ\n\n{schedule_text}"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
     )

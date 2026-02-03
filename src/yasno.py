@@ -276,7 +276,7 @@ def _day_key(label: str, outage: dict | None) -> str:
 
 def _format_schedule_text(data: dict[str, Any], include_building: bool = True) -> str:
     queues = data["queues"]
-    lines = ["🗓 <b>Орієнтовні графіки</b>"]
+    lines = ["🗓 <b>Орієнтовні графіки відключень</b>"]
     building = data.get("building")
     if include_building and building:
         lines.append(f"🏠 {building['name']} ({building['address']})")
@@ -459,7 +459,7 @@ async def yasno_schedule_monitor_loop(bot) -> None:
                     changes["emergency"],
                 )
 
-                header_lines = ["🗓 <b>Оновлення графіків</b>"]
+                header_lines = ["🗓 <b>Оновлення графіків відключень</b>"]
                 b = get_building_by_id(building_id)
                 if b:
                     header_lines.append(f"🏠 {b['name']} ({b['address']})")
@@ -468,9 +468,9 @@ async def yasno_schedule_monitor_loop(bot) -> None:
                     header_lines.append("⚠️ Увага! Графіки позначені як екстрені відключення.")
                 else:
                     if changes["tomorrow_changed"]:
-                        header_lines.append("📅 Зʼявились або оновились орієнтовні графіки на завтра.")
+                    header_lines.append("📅 Зʼявились або оновились орієнтовні графіки відключень на завтра.")
                     if changes["today_changed"]:
-                        header_lines.append("🔄 Сьогоднішні графіки були оновлені.")
+                    header_lines.append("🔄 Сьогоднішні графіки відключень були оновлені.")
 
                 schedule_text = _format_schedule_text(data, include_building=False)
                 schedule_body = "\n".join(schedule_text.splitlines()[1:]).strip()
