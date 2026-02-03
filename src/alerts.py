@@ -11,6 +11,7 @@
 """
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 from enum import Enum
@@ -39,12 +40,22 @@ class AlertStatus:
 _request_counter = 0
 # alerts.in.ua як основне джерело, ukrainealarm як рідший резерв
 ALERTS_IN_UA_RATIO = max(0, CFG.alerts_in_ua_ratio)
+# Повинен відповідати ALERT_CHECK_INTERVAL у alert_monitor_loop (services.py)
+ALERT_CHECK_INTERVAL_SEC = 11
+# Джерело вважаємо "застарілим", якщо давно не було успішної відповіді
+# (помилки/401 не оновлюють таймстемп)
+ALERT_SOURCE_STALE_SEC = max(180, (ALERTS_IN_UA_RATIO + 1) * ALERT_CHECK_INTERVAL_SEC * 3)
 
 # Останні відомі результати по кожному джерелу
 _last_status: dict[AlertSource, Optional[bool]] = {
     AlertSource.UKRAINEALARM: None,
     AlertSource.ALERTS_IN_UA: None,
 }
+_last_update_at: dict[AlertSource, Optional[float]] = {
+    AlertSource.UKRAINEALARM: None,
+    AlertSource.ALERTS_IN_UA: None,
+}
+_last_active_at: Optional[float] = None
 
 
 def _get_enabled_sources() -> list[AlertSource]:
@@ -81,14 +92,36 @@ def _get_next_source() -> AlertSource:
 def _record_status(source: AlertSource, status: bool) -> None:
     """
     Зберегти результат джерела.
-    Якщо джерело дало тривогу - скидаємо статус інших, щоб відбій
-    вимагав повторного підтвердження від обох.
     """
+    global _last_active_at
+    now = time.time()
     _last_status[source] = status
+    _last_update_at[source] = now
     if status is True:
-        for other in AlertSource:
-            if other != source:
-                _last_status[other] = None
+        _last_active_at = now
+
+
+def _is_fresh(source: AlertSource, now: float) -> bool:
+    """Перевірити, чи джерело має свіже успішне оновлення."""
+    last = _last_update_at.get(source)
+    return last is not None and (now - last) <= ALERT_SOURCE_STALE_SEC
+
+
+def _is_confirmed_clear(source: AlertSource, now: float) -> bool:
+    """
+    Джерело підтвердило відбій, якщо:
+    - є свіже оновлення
+    - останній статус = False
+    - оновлення було після останньої активної тривоги (якщо така була)
+    """
+    if not _is_fresh(source, now):
+        return False
+    if _last_status.get(source) is not False:
+        return False
+    if _last_active_at is None:
+        return True
+    last = _last_update_at.get(source)
+    return last is not None and last >= _last_active_at
 
 
 async def get_kyiv_alerts_ukrainealarm() -> Optional[bool]:
@@ -234,8 +267,9 @@ async def check_alert_status() -> Optional[bool]:
     Алгоритм:
     - Запитуємо по черзі то одне, то інше джерело
     - Якщо хоча б одне джерело дало тривогу -> тривога
-    - Відбій лише тоді, коли обидва джерела підтвердили відбій
-    - Якщо обидва недоступні або немає підтвердження - None
+    - Відбій лише тоді, коли всі ДОСТУПНІ джерела підтвердили відбій
+      (джерела без свіжих успішних відповідей вважаємо недоступними)
+    - Якщо немає свіжих даних або немає підтвердження - None
     
     Returns:
         True - тривога активна
@@ -265,12 +299,17 @@ async def check_alert_status() -> Optional[bool]:
     if len(enabled) == 1:
         return result
 
-    # Якщо хоча б одне джерело активне - тривога
-    if any(_last_status.get(src) is True for src in enabled):
-        return True
+    now = time.time()
+    fresh_sources = [src for src in enabled if _is_fresh(src, now)]
+    if not fresh_sources:
+        return None
 
-    # Відбій лише якщо обидва джерела підтвердили відбій
-    if all(_last_status.get(src) is False for src in enabled):
+    # Якщо хоча б одне свіже джерело активне - тривога
+    if any(_last_status.get(src) is True for src in fresh_sources):
+        return True
+    
+    # Відбій лише якщо всі доступні джерела підтвердили відбій
+    if all(_is_confirmed_clear(src, now) for src in fresh_sources):
         return False
 
     return None
