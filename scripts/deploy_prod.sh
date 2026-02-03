@@ -19,7 +19,14 @@ setup_docker_auth() {
     return 0
   fi
 
-  for candidate in "${HOME}/.docker" "/home/ghactions/.docker" "/root/.docker"; do
+  home_dir="${HOME:-}"
+  if [[ -n "${home_dir}" && -f "${home_dir}/.docker/config.json" ]]; then
+    export DOCKER_CONFIG="${home_dir}/.docker"
+    echo "Using Docker config from ${DOCKER_CONFIG}"
+    return 0
+  fi
+
+  for candidate in "/home/ghactions/.docker" "/root/.docker" "/opt/actions-runner/.docker"; do
     if [[ -f "${candidate}/config.json" ]]; then
       export DOCKER_CONFIG="${candidate}"
       echo "Using Docker config from ${candidate}"
