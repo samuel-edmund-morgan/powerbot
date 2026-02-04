@@ -120,6 +120,7 @@
     const payload = {
       light_notifications: elements.lightToggle.checked,
       alert_notifications: elements.alertToggle.checked,
+      schedule_notifications: elements.scheduleToggle?.checked ?? false,
       quiet_start,
       quiet_end,
     };

@@ -331,6 +331,9 @@
   const renderSettings = (settings) => {
     elements.lightToggle.checked = settings.light_notifications;
     elements.alertToggle.checked = settings.alert_notifications;
+    if (elements.scheduleToggle) {
+      elements.scheduleToggle.checked = settings.schedule_notifications;
+    }
 
     if (settings.quiet_start === null || settings.quiet_end === null) {
       elements.quietSelect.value = "off";

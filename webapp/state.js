@@ -45,6 +45,7 @@
     serviceCards: document.getElementById("serviceCards"),
     lightToggle: document.getElementById("lightToggle"),
     alertToggle: document.getElementById("alertToggle"),
+    scheduleToggle: document.getElementById("scheduleToggle"),
     quietSelect: document.getElementById("quietSelect"),
     saveSettings: document.getElementById("saveSettings"),
     donateLink: document.getElementById("donateLink"),
