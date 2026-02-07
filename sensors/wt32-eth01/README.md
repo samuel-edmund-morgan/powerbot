@@ -1,6 +1,6 @@
-# PowerBot ESP32-S3-POE-ETH Sensors
+# PowerBot WT32-ETH01 Sensors
 
-Прошивка для Waveshare ESP32-S3-POE-ETH-CAM-KIT сенсорів моніторингу електроенергії.
+Прошивка для Wireless-Tag WT32-ETH01 сенсорів моніторингу електроенергії.
 
 ## Принцип роботи
 
@@ -26,8 +26,8 @@ pip install platformio
 
 ```cpp
 // Налаштування сервера (вже налаштовано!)
-#define SERVER_HOST     "64.181.205.211"
-#define SERVER_PORT     80
+#define SERVER_HOST     "sensors-new-england.morgan-dev.com"
+#define SERVER_PORT     18081
 #define API_KEY         "e083c38d50d164ea1f9d4491147b73df1b42741675daa8e3f520800eccebd08c"
 
 // Налаштування сенсора (зміни під свій будинок)
@@ -63,22 +63,21 @@ sensors/
 └── platformio.ini      # Конфігурація PlatformIO
 ```
 
-## Waveshare ESP32-S3-POE-ETH-CAM-KIT
+## Wireless-Tag WT32-ETH01
 
 **Характеристики:**
-- CPU: ESP32-S3 240MHz Dual Core
-- Flash: 16MB
-- PSRAM: 8MB
-- Ethernet: W5500 через SPI
-- Живлення: PoE (Power over Ethernet)
+- CPU: ESP32 240MHz Dual Core
+- Flash: 4MB
+- Ethernet: LAN8720 через RMII (вбудований MAC ESP32)
+- Живлення: 5V / 3.3V
 
-**Pinout для W5500:**
+**Pinout для LAN8720 (WT32-ETH01):**
 | Сигнал | GPIO |
 |--------|------|
-| CS     | 14   |
-| SCK    | 12   |
-| MISO   | 13   |
-| MOSI   | 11   |
+| PHY Power | 16 |
+| MDC    | 23   |
+| MDIO   | 18   |
+| Clock  | GPIO0 (IN) |
 
 ## Список будинків
 
@@ -102,7 +101,7 @@ sensors/
 ## API Endpoint
 
 ```
-POST http://64.181.205.211/api/v1/heartbeat
+POST http://sensors-new-england.morgan-dev.com:18081/api/v1/heartbeat
 Content-Type: application/json
 
 {
