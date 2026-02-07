@@ -1,8 +1,8 @@
 /*
- * Конфігурація ESP32-S3-POE-ETH для PowerBot
- * 
- * Плата: Waveshare ESP32-S3-POE-ETH-CAM-KIT
- * Ethernet: W5500 через SPI
+ * Конфігурація WT32-ETH01 для PowerBot
+ *
+ * Плата: Wireless-Tag WT32-ETH01
+ * Ethernet: LAN8720 через RMII (вбудований MAC ESP32)
  */
 
 #ifndef CONFIG_H
@@ -45,31 +45,24 @@
 #define HTTP_TIMEOUT_MS         10000
 
 // ═══════════════════════════════════════════════════════════════
-// WAVESHARE ESP32-S3-POE-ETH-CAM-KIT
-// W5500 Ethernet SPI pins (з офіційної документації Waveshare)
-// https://www.waveshare.com/wiki/ESP32-S3-ETH
+// WT32-ETH01 (LAN8720, RMII)
+// Дефолтні значення з variant wt32-eth01 у Arduino-ESP32
 // ═══════════════════════════════════════════════════════════════
 
-// W5500 Chip Select
-#define ETH_PHY_CS      14    // GPIO14 - CS
-
-// W5500 Reset pin (ВАЖЛИВО!)
-#define ETH_PHY_RST     9     // GPIO9 - RST
-
-// W5500 Interrupt pin (опціонально)
-#define ETH_PHY_INT     10    // GPIO10 - INT
-
-// SPI pins (ПРАВИЛЬНА РОЗПІНОВКА!)
-#define ETH_SPI_SCK     13    // GPIO13 - SCLK
-#define ETH_SPI_MISO    12    // GPIO12 - MISO  
-#define ETH_SPI_MOSI    11    // GPIO11 - MOSI
+#define WT32_ETH_PHY_ADDR    1
+#define WT32_ETH_PHY_POWER   16
+#define WT32_ETH_PHY_MDC     23
+#define WT32_ETH_PHY_MDIO    18
+#define WT32_ETH_PHY_TYPE    ETH_PHY_LAN8720
+#define WT32_ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN
 
 // ═══════════════════════════════════════════════════════════════
 // LED ІНДИКАЦІЯ
 // ═══════════════════════════════════════════════════════════════
 
-// RGB LED на GPIO48 (або закоментуй якщо не потрібно)
-#define LED_PIN         48
+// На більшості ревізій WT32-ETH01 немає user LED.
+// Якщо у твоїй ревізії є індикатор - розкоментуй і вкажи pin.
+// #define LED_PIN      2
 
 // ═══════════════════════════════════════════════════════════════
 // СПИСОК БУДИНКІВ ЖК "НОВА АНГЛІЯ"
