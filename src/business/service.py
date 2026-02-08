@@ -134,26 +134,27 @@ class BusinessCabinetService:
     async def register_new_business(
         self,
         tg_user_id: int,
-        category_name: str,
+        service_id: int,
         place_name: str,
         description: str,
         address: str,
     ) -> dict[str, Any]:
         """Create new place and owner moderation request."""
-        category = category_name.strip()
+        if not isinstance(service_id, int) or service_id <= 0:
+            raise ValidationError("Оберіть категорію зі списку.")
+        service = await self.repository.get_service(service_id)
+        if not service:
+            raise ValidationError("Категорію не знайдено. Обери зі списку ще раз.")
         name = place_name.strip()
         desc = description.strip()
         addr = address.strip()
-        if not category:
-            raise ValidationError("Вкажи категорію.")
         if not name:
             raise ValidationError("Назва закладу не може бути порожньою.")
-        if len(category) > 80 or len(name) > 120:
-            raise ValidationError("Занадто довгі значення для категорії або назви.")
+        if len(name) > 120:
+            raise ValidationError("Назва занадто довга.")
         if len(desc) > 1200 or len(addr) > 300:
             raise ValidationError("Опис або адреса занадто довгі.")
 
-        service_id = await self.repository.get_or_create_service_id(category)
         place_id = await self.repository.create_place(
             service_id=service_id,
             name=name,
@@ -170,7 +171,8 @@ class BusinessCabinetService:
                 {
                     "owner_id": owner["id"],
                     "source": "new_business",
-                    "category_name": category,
+                    "service_id": service_id,
+                    "service_name": service["name"],
                 }
             ),
         )

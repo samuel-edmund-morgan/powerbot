@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -45,6 +47,13 @@ INTRO_TEXT = (
     "редагувати картку закладу і керувати тарифом.\n\n"
     "Оберіть дію:"
 )
+
+CB_MENU_NOOP = "bmenu:noop"
+CB_CATEGORY_PICK_PREFIX = "bcat:"
+CB_CATEGORY_PAGE_PREFIX = "bcatp:"
+
+CATEGORY_PAGE_SIZE = 10
+CATEGORY_ROW_WIDTH = 2
 
 PLAN_TITLES = {
     "free": "Free",
@@ -104,6 +113,56 @@ def build_cancel_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
         ]
     )
+
+
+def build_category_keyboard(
+    services: list[dict],
+    *,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buffer: list[InlineKeyboardButton] = []
+    for svc in services:
+        title = (svc.get("name") or "").strip() or f"ID {svc.get('id')}"
+        buffer.append(
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"{CB_CATEGORY_PICK_PREFIX}{int(svc['id'])}",
+            )
+        )
+        if len(buffer) >= CATEGORY_ROW_WIDTH:
+            rows.append(buffer)
+            buffer = []
+    if buffer:
+        rows.append(buffer)
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_CATEGORY_PAGE_PREFIX}{page - 1}",
+                )
+            )
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data=CB_MENU_NOOP,
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_CATEGORY_PAGE_PREFIX}{page + 1}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
@@ -224,6 +283,24 @@ async def send_main_menu(message: Message, user_id: int) -> None:
     await message.answer(INTRO_TEXT, reply_markup=build_main_menu(user_id))
 
 
+async def send_category_picker(message: Message, state: FSMContext, *, page: int = 0) -> None:
+    services = await cabinet_service.repository.list_services()
+    if not services:
+        await state.clear()
+        await message.answer("Немає жодної категорії для вибору. Напиши адміністратору.")
+        await send_main_menu(message, message.chat.id)
+        return
+
+    total_pages = max(1, (len(services) + CATEGORY_PAGE_SIZE - 1) // CATEGORY_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * CATEGORY_PAGE_SIZE
+    chunk = services[start : start + CATEGORY_PAGE_SIZE]
+    await message.answer(
+        "Оберіть категорію:",
+        reply_markup=build_category_keyboard(chunk, page=safe_page, total_pages=total_pages),
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -265,10 +342,7 @@ async def cb_menu_home(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_menu_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(AddBusinessStates.waiting_category)
-    await callback.message.answer(
-        "Вкажи категорію бізнесу (наприклад: Кафе та ресторани).",
-        reply_markup=build_cancel_menu(),
-    )
+    await send_category_picker(callback.message, state)
     await callback.answer()
 
 
@@ -301,26 +375,85 @@ async def cb_menu_moderation(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data == CB_MENU_NOOP)
+async def cb_noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
 @router.message(Command("new_business"))
 @router.message(F.text == BTN_ADD_BUSINESS)
 async def start_add_business(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(AddBusinessStates.waiting_category)
-    await message.answer(
-        "Вкажи категорію бізнесу (наприклад: Кафе та ресторани).",
+    await send_category_picker(message, state)
+
+
+@router.callback_query(F.data.startswith(CB_CATEGORY_PAGE_PREFIX))
+async def cb_category_page(callback: CallbackQuery, state: FSMContext) -> None:
+    if await state.get_state() != AddBusinessStates.waiting_category.state:
+        await callback.answer("Це меню вже неактуальне. Натисни /start.", show_alert=True)
+        return
+    try:
+        page = int(callback.data.removeprefix(CB_CATEGORY_PAGE_PREFIX))
+    except Exception:
+        await callback.answer("Некоректна сторінка", show_alert=True)
+        return
+
+    services = await cabinet_service.repository.list_services()
+    if not services:
+        await callback.answer("Немає категорій", show_alert=True)
+        return
+    total_pages = max(1, (len(services) + CATEGORY_PAGE_SIZE - 1) // CATEGORY_PAGE_SIZE)
+    safe_page = max(0, min(page, total_pages - 1))
+    start = safe_page * CATEGORY_PAGE_SIZE
+    chunk = services[start : start + CATEGORY_PAGE_SIZE]
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=build_category_keyboard(chunk, page=safe_page, total_pages=total_pages),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_CATEGORY_PICK_PREFIX))
+async def cb_category_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if await state.get_state() != AddBusinessStates.waiting_category.state:
+        await callback.answer("Це меню вже неактуальне. Натисни /start.", show_alert=True)
+        return
+    try:
+        service_id = int(callback.data.removeprefix(CB_CATEGORY_PICK_PREFIX))
+    except Exception:
+        await callback.answer("Некоректна категорія", show_alert=True)
+        return
+
+    service = await cabinet_service.repository.get_service(service_id)
+    if not service:
+        await callback.answer("Категорію не знайдено", show_alert=True)
+        return
+
+    await state.update_data(service_id=service_id, service_name=service["name"])
+    await state.set_state(AddBusinessStates.waiting_name)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    service_label = html.escape(service["name"])
+    await callback.message.answer(
+        f"Категорія: <b>{service_label}</b>\n"
+        "Вкажи назву закладу.",
         reply_markup=build_cancel_menu(),
     )
+    await callback.answer()
 
 
 @router.message(AddBusinessStates.waiting_category, F.text)
 async def add_business_category(message: Message, state: FSMContext) -> None:
-    category = message.text.strip()
-    if not category:
-        await message.answer("Категорія не може бути порожньою.")
-        return
-    await state.update_data(category=category)
-    await state.set_state(AddBusinessStates.waiting_name)
-    await message.answer("Вкажи назву закладу.", reply_markup=build_cancel_menu())
+    await message.answer(
+        "Категорію потрібно обрати зі списку кнопками нижче.",
+        reply_markup=build_cancel_menu(),
+    )
+    await send_category_picker(message, state)
 
 
 @router.message(AddBusinessStates.waiting_name, F.text)
@@ -351,9 +484,10 @@ async def add_business_address(message: Message, state: FSMContext) -> None:
     if address == "-":
         address = ""
     try:
+        service_id = int(data.get("service_id") or 0)
         result = await cabinet_service.register_new_business(
             tg_user_id=message.from_user.id if message.from_user else message.chat.id,
-            category_name=data.get("category", ""),
+            service_id=service_id,
             place_name=data.get("name", ""),
             description=data.get("description", ""),
             address=address,

@@ -68,6 +68,23 @@ async def execute_write_with_retry(
 class BusinessRepository:
     """Business persistence and guard queries."""
 
+    async def get_service(self, service_id: int) -> dict[str, Any] | None:
+        async with open_business_db() as db:
+            async with db.execute(
+                "SELECT id, name FROM general_services WHERE id = ?",
+                (int(service_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    async def list_services(self) -> list[dict[str, Any]]:
+        async with open_business_db() as db:
+            async with db.execute(
+                "SELECT id, name FROM general_services ORDER BY name COLLATE NOCASE",
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def get_place(self, place_id: int) -> dict[str, Any] | None:
         async with open_business_db() as db:
             async with db.execute(
