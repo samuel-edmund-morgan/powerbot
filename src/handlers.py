@@ -2257,17 +2257,9 @@ async def cb_places_category(callback: CallbackQuery):
         await callback.answer()
         return
     
-    # Медалі для топ-3 (за лайками), незалежно від бізнес-сортування.
+    # Медалі для топ-3 у поточному порядку відображення.
     medals = ["🥇", "🥈", "🥉"]
     medal_map: dict[int, str] = {}
-    top_by_likes = sorted(places, key=lambda item: -(item.get("likes_count") or 0))[:3]
-    for idx, item in enumerate(top_by_likes):
-        if (item.get("likes_count") or 0) <= 0:
-            continue
-        try:
-            medal_map[int(item["id"])] = medals[idx]
-        except Exception:
-            continue
 
     if business_enabled:
         def _tier_rank(value: str | None) -> int:
@@ -2282,6 +2274,23 @@ async def cb_places_category(callback: CallbackQuery):
                 item.get("name") or "",
             )
         )
+        # У business-режимі медалі відображають місця в рейтингу (verified-first),
+        # навіть якщо в закладу ще немає лайків.
+        for idx, item in enumerate(places[:3]):
+            try:
+                medal_map[int(item["id"])] = medals[idx]
+            except Exception:
+                continue
+    else:
+        # Legacy: медалі для топ-3 за лайками (і тільки якщо є лайки).
+        top_by_likes = sorted(places, key=lambda item: -(item.get("likes_count") or 0))[:3]
+        for idx, item in enumerate(top_by_likes):
+            if (item.get("likes_count") or 0) <= 0:
+                continue
+            try:
+                medal_map[int(item["id"])] = medals[idx]
+            except Exception:
+                continue
     
     # Показуємо кнопки з закладами
     buttons = []
