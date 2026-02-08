@@ -198,7 +198,7 @@ async def send_main_help(message: Message) -> None:
         "/start - головне меню",
         "/my_businesses - мої заклади",
         "/new_business - додати бізнес",
-        "/claim <token> - прив'язати існуючий бізнес",
+        "/claim &lt;token&gt; - прив'язати існуючий бізнес",
         "/plans - плани",
         "/cancel - скасувати поточну дію",
     ]
@@ -206,7 +206,7 @@ async def send_main_help(message: Message) -> None:
         commands.extend(
             [
                 "/moderation - черга модерації",
-                "/claim_token <place_id> [ttl_hours] - згенерувати claim token",
+                "/claim_token &lt;place_id&gt; [ttl_hours] - згенерувати claim token",
                 "/health - health check",
             ]
         )
