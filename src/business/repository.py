@@ -82,6 +82,43 @@ class BusinessRepository:
                 row = await cur.fetchone()
                 return dict(row) if row else None
 
+    async def get_places_business_meta(self, place_ids: Sequence[int]) -> dict[int, dict[str, Any]]:
+        """Batch load business metadata for places.
+
+        Keep this read-only and fast: it's used by main bot/webapp integration.
+        """
+        ids: list[int] = []
+        seen: set[int] = set()
+        for raw in place_ids:
+            try:
+                pid = int(raw)
+            except Exception:
+                continue
+            if pid in seen:
+                continue
+            seen.add(pid)
+            ids.append(pid)
+
+        if not ids:
+            return {}
+
+        # SQLite variable limit is usually 999; keep a safe margin.
+        chunk_size = 900
+        result: dict[int, dict[str, Any]] = {}
+        async with open_business_db() as db:
+            for i in range(0, len(ids), chunk_size):
+                chunk = ids[i : i + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                query = (
+                    "SELECT id, business_enabled, is_verified, verified_tier, verified_until "
+                    f"FROM places WHERE id IN ({placeholders})"
+                )
+                async with db.execute(query, chunk) as cur:
+                    rows = await cur.fetchall()
+                    for row in rows:
+                        result[int(row["id"])] = dict(row)
+        return result
+
     async def get_or_create_service_id(self, service_name: str) -> int:
         async with open_business_db() as db:
             async with db.execute(

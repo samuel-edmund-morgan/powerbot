@@ -22,6 +22,7 @@ from urllib.parse import parse_qsl
 
 from aiohttp import web
 
+from business import get_business_service, is_business_feature_enabled
 from config import CFG
 from yasno import get_planned_outages, get_building_schedule_text
 from database import (
@@ -70,7 +71,13 @@ MAPS_DIR = Path(__file__).resolve().parent / "maps"
 DONATE_URL = "https://send.monobank.ua/jar/7d56pmvjEB"
 
 
-def _filter_places_by_query(places: list[dict], query: str, limit: int = 20) -> list[dict]:
+def _filter_places_by_query(
+    places: list[dict],
+    query: str,
+    limit: int = 20,
+    *,
+    verified_first: bool = False,
+) -> list[dict]:
     tokens_raw = tokenize_query(query)
     if not tokens_raw:
         return []
@@ -95,9 +102,15 @@ def _filter_places_by_query(places: list[dict], query: str, limit: int = 20) -> 
             item["_match_score"] = score
             results.append(item)
 
+    def _tier_rank(value: str | None) -> int:
+        tier = (value or "").strip().lower()
+        return {"partner": 0, "pro": 1, "light": 2}.get(tier, 3)
+
     results.sort(
         key=lambda item: (
             -item.get("_match_score", 0),
+            (0 if item.get("is_verified") else 1) if verified_first else 0,
+            _tier_rank(item.get("verified_tier")) if verified_first else 0,
             -(item.get("likes_count") or 0),
             item.get("name") or "",
         )
@@ -639,7 +652,9 @@ async def webapp_places_handler(request: web.Request) -> web.Response:
             base_places = await get_places_by_service_with_likes(service_id_int)
         else:
             base_places = await get_all_places_with_likes()
-        places = _filter_places_by_query(base_places, query)
+        if is_business_feature_enabled():
+            base_places = await get_business_service().enrich_places_for_main_bot(base_places)
+        places = _filter_places_by_query(base_places, query, verified_first=is_business_feature_enabled())
     elif service_id is not None:
         try:
             service_id_int = int(service_id)
@@ -648,6 +663,23 @@ async def webapp_places_handler(request: web.Request) -> web.Response:
         places = await get_places_by_service_with_likes(service_id_int)
     else:
         places = await get_all_places_with_likes()
+
+    if not query:
+        if is_business_feature_enabled():
+            places = await get_business_service().enrich_places_for_main_bot(places)
+
+            def _tier_rank(value: str | None) -> int:
+                tier = (value or "").strip().lower()
+                return {"partner": 0, "pro": 1, "light": 2}.get(tier, 3)
+
+            places.sort(
+                key=lambda item: (
+                    0 if item.get("is_verified") else 1,
+                    _tier_rank(item.get("verified_tier")),
+                    -(item.get("likes_count") or 0),
+                    item.get("name") or "",
+                )
+            )
 
     payload = []
     for p in places:
