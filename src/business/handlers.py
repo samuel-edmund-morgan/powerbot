@@ -192,17 +192,31 @@ async def notify_admins_about_owner_request(
 
 
 async def send_main_help(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    is_admin = cabinet_service.is_admin(user_id)
+    commands = [
+        "/start - головне меню",
+        "/my_businesses - мої заклади",
+        "/new_business - додати бізнес",
+        "/claim <token> - прив'язати існуючий бізнес",
+        "/plans - плани",
+        "/cancel - скасувати поточну дію",
+    ]
+    if is_admin:
+        commands.extend(
+            [
+                "/moderation - черга модерації",
+                "/claim_token <place_id> [ttl_hours] - згенерувати claim token",
+                "/health - health check",
+            ]
+        )
     await message.answer(
         "👋 <b>Бізнес-кабінет</b>\n\n"
         "Тут можна подати заявку на керування закладом, пройти модерацію, "
         "редагувати картку закладу і керувати тарифом.\n\n"
         "Команди:\n"
-        "/start - головне меню\n"
-        "/my_businesses - мої заклади\n"
-        "/moderation - черга модерації (адміни)\n"
-        "/claim_token &lt;place_id&gt; [ttl_hours] - згенерувати claim token (адміни)\n"
-        "/cancel - скасувати поточну дію",
-        reply_markup=build_main_menu(message.from_user.id if message.from_user else 0),
+        + "\n".join(commands),
+        reply_markup=build_main_menu(user_id),
     )
 
 
