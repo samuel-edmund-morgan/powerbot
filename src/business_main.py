@@ -6,16 +6,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from business.handlers import router
 from config import CFG, is_business_bot_enabled
+from logging_setup import configure_logging
 from database import init_db
 
+configure_logging("businessbot")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+from business.handlers import router
+
 logger = logging.getLogger(__name__)
 
 

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -7,18 +6,16 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import CFG
+from logging_setup import configure_logging
+
+configure_logging("powerbot")
+
 from database import init_db
 from handlers import router
 from services import alert_monitor_loop, sensors_monitor_loop
 from yasno import yasno_schedule_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
 from single_message_bot import SingleMessageBot
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 
 async def main():
