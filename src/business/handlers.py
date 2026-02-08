@@ -26,7 +26,7 @@ router = Router()
 cabinet_service = BusinessCabinetService()
 
 BTN_ADD_BUSINESS = "➕ Додати бізнес"
-BTN_CLAIM_BUSINESS = "🔗 Claim бізнес"
+BTN_CLAIM_BUSINESS = "🔗 Прив'язати бізнес"
 BTN_MY_BUSINESSES = "🏢 Мої бізнеси"
 BTN_PLANS = "💳 Плани"
 BTN_MODERATION = "🛡 Модерація"
@@ -198,7 +198,7 @@ async def send_main_help(message: Message) -> None:
         "/start - головне меню",
         "/my_businesses - мої заклади",
         "/new_business - додати бізнес",
-        "/claim &lt;token&gt; - прив'язати існуючий бізнес",
+        "/claim &lt;token&gt; - прив'язати існуючий бізнес (код прив'язки)",
         "/plans - плани",
         "/cancel - скасувати поточну дію",
     ]
@@ -206,7 +206,7 @@ async def send_main_help(message: Message) -> None:
         commands.extend(
             [
                 "/moderation - черга модерації",
-                "/claim_token &lt;place_id&gt; [ttl_hours] - згенерувати claim token",
+                "/claim_token &lt;place_id&gt; [ttl_hours] - згенерувати код прив'язки",
                 "/health - health check",
             ]
         )
@@ -326,7 +326,7 @@ async def start_claim_business(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(ClaimStates.waiting_token)
     await message.answer(
-        "Введи claim token для прив'язки існуючого бізнесу.",
+        "Введи код прив'язки для прив'язки існуючого бізнесу.",
         reply_markup=build_cancel_menu(),
     )
 
@@ -349,7 +349,7 @@ async def process_claim_token(message: Message, state: FSMContext, token: str) -
     owner = result["owner"]
     place = result["place"] or {}
     await message.answer(
-        "✅ Claim token прийнято.\n\n"
+        "✅ Код прив'язки прийнято.\n\n"
         f"Заявка: <code>{owner['id']}</code>\n"
         f"Заклад: <b>{place.get('name', owner['place_id'])}</b>\n"
         "Статус: очікує модерації адміном.",
@@ -619,7 +619,7 @@ async def cmd_claim_token(message: Message) -> None:
         await message.answer(str(error))
         return
     await message.answer(
-        "🔐 Claim token згенеровано.\n\n"
+        "🔐 Код прив'язки згенеровано.\n\n"
         f"Place: <b>{result['place']['name']}</b>\n"
         f"Token: <code>{result['token']}</code>\n"
         f"Expires: {result['expires_at']}",
