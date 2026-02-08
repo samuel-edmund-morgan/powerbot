@@ -291,20 +291,29 @@
   };
 
   const renderServices = (services) => {
+    const parsePhones = (value) =>
+      (value || "")
+        .split(",")
+        .map((phone) => phone.trim())
+        .filter(Boolean);
+
     const cards = [];
     const items = [
-      { label: "Охорона", value: services.security_phone },
-      { label: "Сантехнік", value: services.plumber_phone },
-      { label: "Електрик", value: services.electrician_phone },
-      { label: "Диспетчер ліфтів", value: services.elevator_phones },
+      { label: "Адміністрація", values: ["067-107-38-08 (вайбер)", "044-300-18-77"] },
+      { label: "Бухгалтерія", values: ["044-300-12-45", "067-558-35-77 (вайбер)"] },
+      { label: "Охорона (цілодобово)", values: parsePhones(services.security_phone) },
+      { label: "Сантехнік (цілодобово)", values: parsePhones(services.plumber_phone) },
+      { label: "Електрик (цілодобово)", values: parsePhones(services.electrician_phone) },
+      { label: "ІТ відділ", values: ["067-599-88-15"] },
+      { label: "Диспетчер ліфтів (цілодобово)", values: parsePhones(services.elevator_phones) },
     ];
     items.forEach((item) => {
-      if (!item.value) return;
+      if (!item.values || item.values.length === 0) return;
       const card = document.createElement("div");
       card.className = "service-card";
       card.innerHTML = `
         <strong>${item.label}</strong>
-        <p class="muted">${item.value}</p>
+        <p class="muted">${item.values.join("<br>")}</p>
       `;
       cards.push(card);
     });

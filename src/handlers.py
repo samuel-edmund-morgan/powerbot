@@ -309,16 +309,25 @@ def get_service_keyboard() -> InlineKeyboardMarkup:
     """Клавіатура сервісної служби з телефонами."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🛡️ Охорона", callback_data="service_security"),
+            InlineKeyboardButton(text="🏢 Адміністрація", callback_data="service_administration"),
         ],
         [
-            InlineKeyboardButton(text="🔧 Сантехнік", callback_data="service_plumber"),
+            InlineKeyboardButton(text="🧾 Бухгалтерія", callback_data="service_accounting"),
         ],
         [
-            InlineKeyboardButton(text="⚡ Електрик", callback_data="service_electrician"),
+            InlineKeyboardButton(text="🛡️ Охорона (цілодобово)", callback_data="service_security"),
         ],
         [
-            InlineKeyboardButton(text="🛗 Диспетчер ліфтів", callback_data="service_elevator"),
+            InlineKeyboardButton(text="🔧 Сантехнік (цілодобово)", callback_data="service_plumber"),
+        ],
+        [
+            InlineKeyboardButton(text="⚡ Електрик (цілодобово)", callback_data="service_electrician"),
+        ],
+        [
+            InlineKeyboardButton(text="💻 ІТ відділ", callback_data="service_it"),
+        ],
+        [
+            InlineKeyboardButton(text="🛗 Диспетчер ліфтів (цілодобово)", callback_data="service_elevator"),
         ],
         [
             InlineKeyboardButton(text="🚗 Оформлення перепустки авто", callback_data="service_car_pass"),
@@ -1953,7 +1962,9 @@ async def reply_service(message: Message):
         pass
     
     await message.answer(
-        "📞 <b>Цілодобова сервісна служба</b>\n\n"
+        "📞 <b>Сервісна служба</b>\n\n"
+        "🕘 Нова Англія сервіс, працює з понеділка по п'ятницю з 9:00 - 18:00, "
+        "субота з 10:00 - 16:00.\n\n"
         "Оберіть службу для отримання контактного телефону:",
         reply_markup=get_service_keyboard()
     )
@@ -1966,9 +1977,41 @@ async def cb_service_menu(callback: CallbackQuery):
     """Показати меню сервісної служби."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Сервісна служба")
     await callback.message.edit_text(
-        "📞 <b>Цілодобова сервісна служба</b>\n\n"
+        "📞 <b>Сервісна служба</b>\n\n"
+        "🕘 Нова Англія сервіс, працює з понеділка по п'ятницю з 9:00 - 18:00, "
+        "субота з 10:00 - 16:00.\n\n"
         "Оберіть службу для отримання контактного телефону:",
         reply_markup=get_service_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "service_administration")
+async def cb_service_administration(callback: CallbackQuery):
+    """Показати контакти адміністрації."""
+    await callback.message.edit_text(
+        "🏢 <b>Адміністрація</b>\n\n"
+        "📞 Телефони:\n"
+        "• <code>067-107-38-08</code> (вайбер)\n"
+        "• <code>044-300-18-77</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "service_accounting")
+async def cb_service_accounting(callback: CallbackQuery):
+    """Показати контакти бухгалтерії."""
+    await callback.message.edit_text(
+        "🧾 <b>Бухгалтерія</b>\n\n"
+        "📞 Телефони:\n"
+        "• <code>044-300-12-45</code>\n"
+        "• <code>067-558-35-77</code> (вайбер)",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
+        ])
     )
     await callback.answer()
 
@@ -1978,7 +2021,7 @@ async def cb_service_security(callback: CallbackQuery):
     """Показати телефон охорони."""
     phone = CFG.security_phone or "не вказано"
     await callback.message.edit_text(
-        "🛡️ <b>Охорона</b>\n\n"
+        "🛡️ <b>Охорона (цілодобово)</b>\n\n"
         f"📞 Телефон: <code>{phone}</code>\n\n"
         "Працює цілодобово.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1993,7 +2036,7 @@ async def cb_service_plumber(callback: CallbackQuery):
     """Показати телефон сантехніка."""
     phone = CFG.plumber_phone or "не вказано"
     await callback.message.edit_text(
-        "🔧 <b>Черговий сантехнік</b>\n\n"
+        "🔧 <b>Сантехнік (цілодобово)</b>\n\n"
         f"📞 Телефон: <code>{phone}</code>\n\n"
         "Працює цілодобово.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2008,9 +2051,22 @@ async def cb_service_electrician(callback: CallbackQuery):
     """Показати телефон електрика."""
     phone = CFG.electrician_phone or "не вказано"
     await callback.message.edit_text(
-        "⚡ <b>Черговий електрик</b>\n\n"
+        "⚡ <b>Електрик (цілодобово)</b>\n\n"
         f"📞 Телефон: <code>{phone}</code>\n\n"
         "Працює цілодобово.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "service_it")
+async def cb_service_it(callback: CallbackQuery):
+    """Показати контакт ІТ відділу."""
+    await callback.message.edit_text(
+        "💻 <b>ІТ відділ</b>\n\n"
+        "📞 Телефон: <code>067-599-88-15</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
@@ -2025,7 +2081,7 @@ async def cb_service_elevator(callback: CallbackQuery):
     # Форматуємо телефони якщо їх кілька
     phone_lines = "".join([f"• <code>{p.strip()}</code>\n" for p in phones.split(",")]) if "," in phones else f"<code>{phones}</code>"
     await callback.message.edit_text(
-        "🛗 <b>Диспетчер ліфтів</b>\n\n"
+        "🛗 <b>Диспетчер ліфтів (цілодобово)</b>\n\n"
         f"📞 Телефони:\n{phone_lines}\n"
         "Працює цілодобово.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
