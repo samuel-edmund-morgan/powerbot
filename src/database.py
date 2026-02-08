@@ -406,6 +406,21 @@ async def init_db():
                 FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
             )"""
         )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_claim_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'active',
+                attempts_left INTEGER NOT NULL DEFAULT 5,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_by INTEGER DEFAULT NULL,
+                used_at TEXT DEFAULT NULL,
+                used_by INTEGER DEFAULT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
 
         # Індекси бізнес-режиму
         await db.execute(
@@ -434,6 +449,12 @@ async def init_db():
         )
         await db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_business_payment_event ON business_payment_events (provider, external_payment_id, event_type)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_claim_token_place_status ON business_claim_tokens (place_id, status)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_claim_token_status_expires ON business_claim_tokens (status, expires_at)"
         )
         
         await db.commit()

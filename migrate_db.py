@@ -61,6 +61,7 @@ USER_DATA_TABLES = {
     "business_subscriptions",
     "business_audit_log",
     "business_payment_events",
+    "business_claim_tokens",
 }
 
 # Дефолтні значення для нових колонок за типом
