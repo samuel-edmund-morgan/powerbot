@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 import secrets
 import string
@@ -12,6 +13,8 @@ from business.guards import is_business_feature_enabled
 from business.repository import BusinessRepository
 from config import CFG
 
+
+logger = logging.getLogger(__name__)
 
 PAID_TIERS = {"light", "pro", "partner"}
 SUPPORTED_TIERS = {"free", "light", "pro", "partner"}
@@ -56,18 +59,62 @@ class NoopBusinessService:
         return places
 
 
-class BusinessServiceStub:
-    """Safe placeholder for future main-bot integration."""
+class BusinessIntegrationService:
+    """Read-only business metadata integration for main bot/webapp."""
+
+    def __init__(self, repository: BusinessRepository | None = None) -> None:
+        self.repository = repository or BusinessRepository()
 
     async def enrich_places_for_main_bot(self, places: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return places
+        if not places:
+            return places
+
+        place_ids: list[int] = []
+        for place in places:
+            raw_id = place.get("id")
+            try:
+                place_ids.append(int(raw_id))
+            except Exception:
+                continue
+
+        if not place_ids:
+            return places
+
+        try:
+            meta_map = await self.repository.get_places_business_meta(place_ids)
+        except Exception:
+            logger.exception("Failed to load business metadata for places")
+            return places
+
+        enriched: list[dict[str, Any]] = []
+        for place in places:
+            raw_id = place.get("id")
+            try:
+                place_id = int(raw_id)
+            except Exception:
+                enriched.append(place)
+                continue
+
+            meta = meta_map.get(place_id)
+            if not meta:
+                enriched.append(place)
+                continue
+
+            merged = dict(place)
+            merged["business_enabled"] = int(meta.get("business_enabled") or 0)
+            merged["is_verified"] = int(meta.get("is_verified") or 0)
+            merged["verified_tier"] = meta.get("verified_tier")
+            merged["verified_until"] = meta.get("verified_until")
+            enriched.append(merged)
+
+        return enriched
 
 
 def get_business_service() -> BusinessService:
     """Resolve enabled service by feature flag."""
     if not is_business_feature_enabled():
         return NoopBusinessService()
-    return BusinessServiceStub()
+    return BusinessIntegrationService()
 
 
 class BusinessCabinetService:

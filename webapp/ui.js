@@ -275,8 +275,11 @@
     places.forEach((place) => {
       const card = document.createElement("div");
       card.className = "place-card";
+      const tier = (place.verified_tier || "").toString().trim();
+      const verifiedLabel = tier ? tier.toUpperCase() : "Verified";
+      const verifiedHtml = place.is_verified ? ` <span class="pill verified">✅ ${verifiedLabel}</span>` : "";
       card.innerHTML = `
-        <strong>${place.name}</strong>
+        <strong>${place.name}</strong>${verifiedHtml}
         <p class="muted">${place.description || ""}</p>
         <p class="muted">${place.address || ""}</p>
         <div class="card-actions">

@@ -2219,7 +2219,8 @@ async def cb_places_category(callback: CallbackQuery):
     """Показати заклади певної категорії."""
     from database import get_general_service, get_places_by_service_with_likes
     from business import get_business_service
-    
+    from business import is_business_feature_enabled
+
     service_id = int(callback.data.split("_")[2])
     service = await get_general_service(service_id)
     
@@ -2229,6 +2230,7 @@ async def cb_places_category(callback: CallbackQuery):
     
     places = await get_places_by_service_with_likes(service_id)
     places = await get_business_service().enrich_places_for_main_bot(places)
+    business_enabled = is_business_feature_enabled()
     admin_tag = CFG.admin_tag or "адміністратору"
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
@@ -2255,17 +2257,40 @@ async def cb_places_category(callback: CallbackQuery):
         await callback.answer()
         return
     
-    # Медалі для топ-3
+    # Медалі для топ-3 (за лайками), незалежно від бізнес-сортування.
     medals = ["🥇", "🥈", "🥉"]
+    medal_map: dict[int, str] = {}
+    top_by_likes = sorted(places, key=lambda item: -(item.get("likes_count") or 0))[:3]
+    for idx, item in enumerate(top_by_likes):
+        if (item.get("likes_count") or 0) <= 0:
+            continue
+        try:
+            medal_map[int(item["id"])] = medals[idx]
+        except Exception:
+            continue
+
+    if business_enabled:
+        def _tier_rank(value: str | None) -> int:
+            tier = (value or "").strip().lower()
+            return {"partner": 0, "pro": 1, "light": 2}.get(tier, 3)
+
+        places.sort(
+            key=lambda item: (
+                0 if item.get("is_verified") else 1,
+                _tier_rank(item.get("verified_tier")),
+                -(item.get("likes_count") or 0),
+                item.get("name") or "",
+            )
+        )
     
     # Показуємо кнопки з закладами
     buttons = []
-    for i, place in enumerate(places):
-        # Додаємо медаль для топ-3 (тільки якщо є лайки)
-        if i < 3 and place["likes_count"] > 0:
-            prefix = medals[i] + " "
-        else:
-            prefix = ""
+    for place in places:
+        place_id = int(place["id"])
+        medal_prefix = medal_map.get(place_id)
+        verified_prefix = "✅" if (business_enabled and place.get("is_verified")) else None
+        prefix_parts = [p for p in [medal_prefix, verified_prefix] if p]
+        prefix = (" ".join(prefix_parts) + " ") if prefix_parts else ""
         
         # Показуємо кількість лайків
         likes_text = f" ❤️{place['likes_count']}" if place["likes_count"] > 0 else ""
@@ -2302,6 +2327,7 @@ async def cb_places_category(callback: CallbackQuery):
 async def cb_place_detail(callback: CallbackQuery):
     """Показати інформацію про заклад з картою."""
     from database import get_place, get_general_service, has_liked_place, get_place_likes_count
+    from business import get_business_service, is_business_feature_enabled
     
     place_id = int(callback.data.split("_")[1])
     place = await get_place(place_id)
@@ -2317,19 +2343,25 @@ async def cb_place_detail(callback: CallbackQuery):
     user_liked = await has_liked_place(place_id, callback.from_user.id)
     likes_count = await get_place_likes_count(place_id)
     
-    text = f"🏢 <b>{place['name']}</b>\n\n"
+    # Add business badge only when feature flag is enabled.
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    text = f"🏢 <b>{place_enriched['name']}</b>\n\n"
+    if is_business_feature_enabled() and place_enriched.get("is_verified"):
+        tier = (place_enriched.get("verified_tier") or "").strip().upper()
+        tier_text = f" {tier}" if tier else ""
+        text += f"✅ <b>Verified{tier_text}</b>\n\n"
     
-    if place["description"]:
-        text += f"📝 {place['description']}\n\n"
+    if place_enriched["description"]:
+        text += f"📝 {place_enriched['description']}\n\n"
     
-    if place["address"]:
-        text += f"📍 <b>Адреса:</b> {place['address']}\n\n"
+    if place_enriched["address"]:
+        text += f"📍 <b>Адреса:</b> {place_enriched['address']}\n\n"
     
     text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
     text += f"💬 Побачили помилку? Хочете додати детальніший опис? Пишіть {admin_tag}"
     
     # Визначаємо карту за будинком з адреси
-    map_file = get_map_file_for_address(place["address"])
+    map_file = get_map_file_for_address(place_enriched["address"])
     
     # Кнопка лайку
     if user_liked:
@@ -2339,7 +2371,7 @@ async def cb_place_detail(callback: CallbackQuery):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [like_btn],
-        [InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{place['service_id']}")],
+        [InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{place_enriched['service_id']}")],
     ])
     
     if map_file:
