@@ -1308,10 +1308,12 @@ async def cb_moderation_approve(callback: CallbackQuery) -> None:
         "Тепер доступні редагування і керування тарифом."
     )
     try:
-        await callback.bot.send_message(
-            updated["tg_user_id"],
-            owner_msg,
+        await ui_render(
+            callback.bot,
+            chat_id=updated["tg_user_id"],
+            text=owner_msg + "\n\nОберіть дію:",
             reply_markup=build_main_menu(updated["tg_user_id"]),
+            remove_reply_keyboard=True,
         )
     except Exception:
         pass
@@ -1343,10 +1345,12 @@ async def cb_moderation_reject(callback: CallbackQuery) -> None:
 
     owner_msg = "❌ Твою заявку на керування бізнесом відхилено адміністратором."
     try:
-        await callback.bot.send_message(
-            updated["tg_user_id"],
-            owner_msg,
+        await ui_render(
+            callback.bot,
+            chat_id=updated["tg_user_id"],
+            text=owner_msg + "\n\nОберіть дію:",
             reply_markup=build_main_menu(updated["tg_user_id"]),
+            remove_reply_keyboard=True,
         )
     except Exception:
         pass
@@ -1384,10 +1388,12 @@ async def cb_moderate_owner(callback: CallbackQuery) -> None:
         return
 
     try:
-        await callback.bot.send_message(
-            updated["tg_user_id"],
-            owner_msg,
+        await ui_render(
+            callback.bot,
+            chat_id=updated["tg_user_id"],
+            text=owner_msg + "\n\nОберіть дію:",
             reply_markup=build_main_menu(updated["tg_user_id"]),
+            remove_reply_keyboard=True,
         )
     except Exception:
         pass
