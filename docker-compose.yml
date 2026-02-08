@@ -6,8 +6,9 @@ services:
     environment:
       DB_PATH: /data/state.db
     volumes:
-      - ./state.db:/data/state.db
-      - ./logs:/data/logs
+      # Mount the whole data dir so SQLite WAL/SHM live next to state.db
+      # and are shared between services (powerbot/businessbot/migrate).
+      - ./:/data
     ports:
       - "18081:8081"
     labels:
@@ -30,8 +31,7 @@ services:
       DB_PATH: /data/state.db
       APP_ENTRYPOINT: business_main.py
     volumes:
-      - ./state.db:/data/state.db
-      - ./logs:/data/logs
+      - ./:/data
     networks:
       - traefik
     restart: on-failure
@@ -45,7 +45,7 @@ services:
       TARGET_DB: /data/state.db
       SCHEMA_PATH: /app/schema.sql
     volumes:
-      - ./state.db:/data/state.db
+      - ./:/data
     profiles: ["migrate"]
 
 networks:
