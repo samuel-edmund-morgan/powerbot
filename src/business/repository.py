@@ -68,6 +68,186 @@ async def execute_write_with_retry(
 class BusinessRepository:
     """Business persistence and guard queries."""
 
+    async def list_all_place_ids(self) -> list[int]:
+        async with open_business_db() as db:
+            async with db.execute("SELECT id FROM places ORDER BY id") as cur:
+                rows = await cur.fetchall()
+                return [int(row[0]) for row in rows]
+
+    async def list_services_with_place_counts(self) -> list[dict[str, Any]]:
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT s.id, s.name, COUNT(p.id) AS place_count
+                  FROM general_services s
+                  JOIN places p ON p.service_id = s.id
+                 GROUP BY s.id, s.name
+                 ORDER BY s.name COLLATE NOCASE
+                """
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
+    async def count_places_by_service(self, service_id: int) -> int:
+        async with open_business_db() as db:
+            async with db.execute(
+                "SELECT COUNT(*) AS cnt FROM places WHERE service_id = ?",
+                (int(service_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row else 0)
+
+    async def list_places_by_service(
+        self,
+        service_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 50))
+        safe_offset = max(0, int(offset))
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT id, name, address
+                  FROM places
+                 WHERE service_id = ?
+                 ORDER BY name COLLATE NOCASE
+                 LIMIT ? OFFSET ?
+                """,
+                (int(service_id), safe_limit, safe_offset),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
+    async def list_place_ids_missing_active_claim_token(self, *, now_iso: str) -> list[int]:
+        """Return place ids that have no active (non-expired) claim token."""
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT p.id
+                  FROM places p
+                 WHERE NOT EXISTS (
+                       SELECT 1
+                         FROM business_claim_tokens t
+                        WHERE t.place_id = p.id
+                          AND t.status = 'active'
+                          AND t.expires_at > ?
+                 )
+                 ORDER BY p.id
+                """,
+                (str(now_iso),),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [int(r[0]) for r in rows]
+
+    async def get_active_claim_token_for_place(self, place_id: int, *, now_iso: str) -> dict[str, Any] | None:
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT id, place_id, token, status, attempts_left,
+                       created_at, expires_at, created_by, used_at, used_by
+                  FROM business_claim_tokens
+                 WHERE place_id = ?
+                   AND status = 'active'
+                   AND expires_at > ?
+                 ORDER BY created_at DESC
+                 LIMIT 1
+                """,
+                (int(place_id), str(now_iso)),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    async def revoke_active_claim_tokens_for_place(self, place_id: int) -> int:
+        """Revoke all active claim tokens for the given place. Returns affected rows."""
+        now = utc_now_iso()
+        async with open_business_db() as db:
+            cursor = await execute_write_with_retry(
+                db,
+                """
+                UPDATE business_claim_tokens
+                   SET status = 'revoked',
+                       used_at = ?,
+                       used_by = NULL
+                 WHERE place_id = ?
+                   AND status = 'active'
+                """,
+                (now, int(place_id)),
+            )
+            return int(cursor.rowcount or 0)
+
+    async def rotate_claim_tokens_for_places(
+        self,
+        place_ids: Sequence[int],
+        tokens: Sequence[str],
+        *,
+        created_by: int | None,
+        expires_at: str,
+        attempts_left: int = 5,
+    ) -> None:
+        """Atomically revoke active tokens and insert new ones for multiple places.
+
+        This is used by admin bulk rotation actions. The operation runs in a single
+        transaction so we never end up with "revoked but not inserted" state if
+        an error happens mid-way.
+        """
+        if not place_ids:
+            return
+        if len(place_ids) != len(tokens):
+            raise ValueError("place_ids and tokens must have the same length")
+        if attempts_left < 1:
+            raise ValueError("attempts_left must be >= 1")
+
+        created_at = utc_now_iso()
+        id_list = [int(pid) for pid in place_ids]
+        placeholders = ",".join("?" for _ in id_list)
+        update_query = (
+            "UPDATE business_claim_tokens "
+            "   SET status = 'revoked', "
+            "       used_at = ?, "
+            "       used_by = NULL "
+            f" WHERE place_id IN ({placeholders}) "
+            "   AND status = 'active'"
+        )
+        insert_query = (
+            "INSERT INTO business_claim_tokens("
+            "  place_id, token, status, attempts_left, "
+            "  created_at, expires_at, created_by, used_at, used_by"
+            ") VALUES(?, ?, 'active', ?, ?, ?, ?, NULL, NULL)"
+        )
+        values = [
+            (int(pid), str(token), int(attempts_left), created_at, str(expires_at), created_by)
+            for pid, token in zip(id_list, tokens, strict=True)
+        ]
+
+        last_error: Exception | None = None
+        for attempt in range(WRITE_RETRY_ATTEMPTS):
+            try:
+                async with open_business_db() as db:
+                    await db.execute("BEGIN")
+                    await db.execute(update_query, (created_at, *id_list))
+                    await db.executemany(insert_query, values)
+                    await db.commit()
+                return
+            except aiosqlite.OperationalError as error:
+                # If the database is locked, retry the whole transaction.
+                if "database is locked" not in str(error).lower():
+                    raise
+                last_error = error
+                try:
+                    backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                except Exception:
+                    backoff = WRITE_RETRY_BASE_DELAY_SEC
+                await asyncio.sleep(backoff)
+                continue
+            except Exception as error:
+                last_error = error
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Unexpected retry loop state")
+
     async def get_building(self, building_id: int) -> dict[str, Any] | None:
         async with open_business_db() as db:
             async with db.execute(
