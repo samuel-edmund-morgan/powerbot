@@ -39,6 +39,13 @@ CB_MENU_PLANS = "bmenu:plans"
 CB_MENU_MOD = "bmenu:moderation"
 CB_MENU_CANCEL = "bmenu:cancel"
 
+INTRO_TEXT = (
+    "👋 <b>Бізнес-кабінет</b>\n\n"
+    "Тут можна подати заявку на керування закладом, пройти модерацію, "
+    "редагувати картку закладу і керувати тарифом.\n\n"
+    "Оберіть дію:"
+)
+
 PLAN_TITLES = {
     "free": "Free",
     "light": "Light",
@@ -198,14 +205,23 @@ async def notify_admins_about_owner_request(
             continue
 
 
-async def send_main_menu(message: Message, user_id: int) -> None:
-    """Send compact main menu and ensure old reply keyboard is removed."""
-    msg = await message.answer("Оберіть дію:", reply_markup=ReplyKeyboardRemove())
+async def _remove_reply_keyboard(message: Message) -> None:
+    """Best-effort removal of legacy ReplyKeyboard without cluttering the chat."""
     try:
-        await msg.edit_reply_markup(reply_markup=build_main_menu(user_id))
+        tmp = await message.answer("…", reply_markup=ReplyKeyboardRemove())
     except Exception:
-        # Fallback: if edit is not allowed (rare), just send menu normally.
-        await message.answer("Оберіть дію:", reply_markup=build_main_menu(user_id))
+        return
+    try:
+        await tmp.delete()
+    except Exception:
+        # If we can't delete (permissions/time window), keep it minimal.
+        pass
+
+
+async def send_main_menu(message: Message, user_id: int) -> None:
+    """Send main menu using inline keyboard only (no reply keyboard)."""
+    await _remove_reply_keyboard(message)
+    await message.answer(INTRO_TEXT, reply_markup=build_main_menu(user_id))
 
 
 @router.message(CommandStart())
@@ -234,14 +250,14 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 async def cb_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.message.answer("Дію скасовано.")
-    await callback.message.answer("Оберіть дію:", reply_markup=build_main_menu(callback.from_user.id))
+    await send_main_menu(callback.message, callback.from_user.id)
     await callback.answer()
 
 
 @router.callback_query(F.data == CB_MENU_HOME)
 async def cb_menu_home(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.answer("Оберіть дію:", reply_markup=build_main_menu(callback.from_user.id))
+    await send_main_menu(callback.message, callback.from_user.id)
     await callback.answer()
 
 
