@@ -222,6 +222,23 @@ async def init_db():
             await db.execute("ALTER TABLE places ADD COLUMN keywords TEXT DEFAULT NULL")
         except Exception:
             pass
+        # Міграція: колонки бізнес-режиму для places
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN is_verified INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN verified_tier TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN verified_until TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN business_enabled INTEGER DEFAULT 0")
+        except Exception:
+            pass
         # Таблиця лайків закладів
         await db.execute(
             """CREATE TABLE IF NOT EXISTS place_likes (
@@ -332,6 +349,91 @@ async def init_db():
                 last_change TEXT,
                 FOREIGN KEY (building_id) REFERENCES buildings(id)
             )"""
+        )
+
+        # === БІЗНЕС-МОДУЛЬ: базові таблиці ===
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_owners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                tg_user_id INTEGER NOT NULL,
+                role TEXT NOT NULL DEFAULT 'owner',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                approved_at TEXT DEFAULT NULL,
+                approved_by INTEGER DEFAULT NULL,
+                UNIQUE (place_id, tg_user_id),
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL UNIQUE,
+                tier TEXT NOT NULL DEFAULT 'free',
+                status TEXT NOT NULL DEFAULT 'inactive',
+                starts_at TEXT DEFAULT NULL,
+                expires_at TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                actor_tg_user_id INTEGER DEFAULT NULL,
+                action TEXT NOT NULL,
+                payload_json TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_payment_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'telegram_stars',
+                external_payment_id TEXT DEFAULT NULL,
+                event_type TEXT NOT NULL,
+                amount_stars INTEGER DEFAULT NULL,
+                currency TEXT DEFAULT 'XTR',
+                status TEXT NOT NULL DEFAULT 'new',
+                raw_payload_json TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL,
+                processed_at TEXT DEFAULT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+
+        # Індекси бізнес-режиму
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_places_business_enabled_verified ON places (business_enabled, is_verified)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_places_verified_tier ON places (verified_tier)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_owners_tg_user ON business_owners (tg_user_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_owners_place_status ON business_owners (place_id, status)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_subscriptions_status_expires ON business_subscriptions (status, expires_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_audit_place_created ON business_audit_log (place_id, created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_payment_place_created ON business_payment_events (place_id, created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_payment_external ON business_payment_events (provider, external_payment_id)"
+        )
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_business_payment_event ON business_payment_events (provider, external_payment_id, event_type)"
         )
         
         await db.commit()
