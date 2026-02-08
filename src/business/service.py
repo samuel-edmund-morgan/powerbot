@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import json
 import secrets
+import sqlite3
 import string
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
@@ -19,6 +20,12 @@ logger = logging.getLogger(__name__)
 PAID_TIERS = {"light", "pro", "partner"}
 SUPPORTED_TIERS = {"free", "light", "pro", "partner"}
 DEFAULT_SUBSCRIPTION_DAYS = 30
+
+ADMIN_CLAIM_TOKEN_TTL_DAYS = 365
+CLAIM_TOKEN_ALPHABET = string.ascii_uppercase + string.digits
+CLAIM_TOKEN_LENGTH = 10
+CLAIM_TOKEN_GENERATION_ATTEMPTS = 12
+CLAIM_TOKEN_BULK_CHUNK_SIZE = 400  # Keep well under SQLite variable limit.
 
 
 class BusinessCabinetError(RuntimeError):
@@ -131,6 +138,21 @@ class BusinessCabinetService:
         if not self.is_admin(tg_user_id):
             raise AccessDeniedError("Ця дія доступна лише адміністратору.")
 
+    async def _generate_unique_claim_token(self) -> str:
+        token = ""
+        for _ in range(CLAIM_TOKEN_GENERATION_ATTEMPTS):
+            candidate = "".join(secrets.choice(CLAIM_TOKEN_ALPHABET) for _ in range(CLAIM_TOKEN_LENGTH))
+            existing = await self.repository.get_claim_token(candidate)
+            if not existing:
+                token = candidate
+                break
+        if not token:
+            raise RuntimeError("Не вдалося згенерувати унікальний код прив'язки.")
+        return token
+
+    def _default_claim_token_expires_at(self) -> str:
+        return (_utc_now() + timedelta(days=ADMIN_CLAIM_TOKEN_TTL_DAYS)).isoformat()
+
     async def register_new_business(
         self,
         tg_user_id: int,
@@ -200,17 +222,7 @@ class BusinessCabinetService:
 
         expires_at_dt = _utc_now() + timedelta(hours=ttl_hours)
         expires_at = expires_at_dt.isoformat()
-        alphabet = string.ascii_uppercase + string.digits
-
-        token = ""
-        for _ in range(8):
-            candidate = "".join(secrets.choice(alphabet) for _ in range(10))
-            existing = await self.repository.get_claim_token(candidate)
-            if not existing:
-                token = candidate
-                break
-        if not token:
-            raise RuntimeError("Не вдалося згенерувати унікальний claim token.")
+        token = await self._generate_unique_claim_token()
 
         await self.repository.create_claim_token(
             place_id=place_id,
@@ -235,17 +247,117 @@ class BusinessCabinetService:
             "place": place,
         }
 
+    async def get_or_create_active_claim_token_for_place(
+        self,
+        admin_tg_user_id: int,
+        place_id: int,
+    ) -> dict[str, Any]:
+        """Admin-only: return active claim token for place, create if missing/expired/used."""
+        self._require_admin(admin_tg_user_id)
+        place = await self.repository.get_place(place_id)
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+
+        now_iso = _utc_now().isoformat()
+        existing = await self.repository.get_active_claim_token_for_place(place_id, now_iso=now_iso)
+        if existing:
+            return {"place": place, "token_row": existing}
+
+        token = await self._generate_unique_claim_token()
+        expires_at = self._default_claim_token_expires_at()
+        await self.repository.rotate_claim_tokens_for_places(
+            [place_id],
+            [token],
+            created_by=admin_tg_user_id,
+            expires_at=expires_at,
+        )
+        await self.repository.write_audit_log(
+            place_id=place_id,
+            actor_tg_user_id=admin_tg_user_id,
+            action="claim_token_created_admin_ui",
+            payload_json=_to_json({"token": token, "expires_at": expires_at}),
+        )
+        created = await self.repository.get_active_claim_token_for_place(place_id, now_iso=now_iso)
+        return {"place": place, "token_row": created or {"token": token, "expires_at": expires_at}}
+
+    async def rotate_claim_token_for_place(
+        self,
+        admin_tg_user_id: int,
+        place_id: int,
+    ) -> dict[str, Any]:
+        """Admin-only: revoke existing active token(s) and create a new one."""
+        self._require_admin(admin_tg_user_id)
+        place = await self.repository.get_place(place_id)
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+
+        token = await self._generate_unique_claim_token()
+        expires_at = self._default_claim_token_expires_at()
+        await self.repository.rotate_claim_tokens_for_places(
+            [place_id],
+            [token],
+            created_by=admin_tg_user_id,
+            expires_at=expires_at,
+        )
+        await self.repository.write_audit_log(
+            place_id=place_id,
+            actor_tg_user_id=admin_tg_user_id,
+            action="claim_token_rotated_admin_ui",
+            payload_json=_to_json({"token": token, "expires_at": expires_at}),
+        )
+        return {"place": place, "token": token, "expires_at": expires_at}
+
+    async def bulk_rotate_claim_tokens_for_all_places(self, admin_tg_user_id: int) -> dict[str, Any]:
+        """Admin-only: rotate claim tokens for every place."""
+        self._require_admin(admin_tg_user_id)
+        place_ids = await self.repository.list_all_place_ids()
+        if not place_ids:
+            return {"total_places": 0, "rotated": 0}
+
+        expires_at = self._default_claim_token_expires_at()
+        rotated = 0
+
+        # Generate unique tokens within the batch. We don't pre-check DB uniqueness here:
+        # collisions are extremely unlikely; if it happens, we retry the chunk.
+        for start in range(0, len(place_ids), CLAIM_TOKEN_BULK_CHUNK_SIZE):
+            chunk_ids = place_ids[start : start + CLAIM_TOKEN_BULK_CHUNK_SIZE]
+            for attempt in range(3):
+                used: set[str] = set()
+                chunk_tokens: list[str] = []
+                for _pid in chunk_ids:
+                    while True:
+                        candidate = "".join(secrets.choice(CLAIM_TOKEN_ALPHABET) for _ in range(CLAIM_TOKEN_LENGTH))
+                        if candidate in used:
+                            continue
+                        used.add(candidate)
+                        chunk_tokens.append(candidate)
+                        break
+                try:
+                    await self.repository.rotate_claim_tokens_for_places(
+                        chunk_ids,
+                        chunk_tokens,
+                        created_by=admin_tg_user_id,
+                        expires_at=expires_at,
+                    )
+                    rotated += len(chunk_ids)
+                    break
+                except sqlite3.IntegrityError:
+                    if attempt >= 2:
+                        raise
+                    continue
+        return {"total_places": len(place_ids), "rotated": rotated}
+
     async def claim_business_by_token(self, tg_user_id: int, token_raw: str) -> dict[str, Any]:
         """Consume token and create pending owner request."""
-        token = token_raw.strip().upper()
+        token = token_raw.strip().upper().replace("-", "").replace(" ", "")
         if not token:
-            raise ValidationError("Вкажи claim token.")
+            raise ValidationError("Вкажи код прив'язки.")
 
         token_row = await self.repository.get_claim_token(token)
         if not token_row:
-            raise ValidationError("Claim token не знайдено.")
+            raise ValidationError("Код прив'язки не знайдено.")
         if token_row["status"] != "active":
-            raise ValidationError("Claim token вже неактивний.")
+            raise ValidationError("Код прив'язки вже неактивний.")
 
         expires_at_raw = token_row["expires_at"]
         if expires_at_raw:
@@ -254,11 +366,11 @@ class BusinessCabinetService:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if _utc_now() >= expires_at:
                 await self.repository.mark_claim_token_status(token_row["id"], "expired")
-                raise ValidationError("Claim token вже прострочений.")
+                raise ValidationError("Код прив'язки вже прострочений.")
 
         place = await self.repository.get_place(int(token_row["place_id"]))
         if not place:
-            raise NotFoundError("Заклад для claim token не знайдено.")
+            raise NotFoundError("Заклад для цього коду не знайдено.")
         if await self.repository.is_approved_owner(tg_user_id, int(token_row["place_id"])):
             raise ValidationError("Ти вже маєш підтверджений доступ до цього бізнесу.")
 
