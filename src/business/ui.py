@@ -114,7 +114,27 @@ async def render(
     if not chat_id:
         raise ValueError("chat_id is required")
 
+    async def _remove_legacy_reply_keyboard() -> None:
+        # Telegram has no "remove reply keyboard" call; it happens only via a message.
+        # We send a tiny message with ReplyKeyboardRemove and delete it immediately,
+        # so the chat stays clean and the actual UI message can still carry an inline keyboard.
+        try:
+            tmp = await bot.send_message(
+                chat_id=chat_id,
+                text="…",
+                reply_markup=ReplyKeyboardRemove(),
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            return
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=int(tmp.message_id))
+        except Exception:
+            pass
+
     if not CFG.single_message_mode:
+        if remove_reply_keyboard:
+            await _remove_legacy_reply_keyboard()
         msg = await bot.send_message(
             chat_id=chat_id,
             text=text,
@@ -150,30 +170,15 @@ async def render(
         if ok:
             return int(last_id)
 
-    # First UI message: optionally force-remove legacy ReplyKeyboard.
+    # First UI message: optionally force-remove legacy ReplyKeyboard (best-effort).
     if remove_reply_keyboard:
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=ReplyKeyboardRemove(),
-            disable_web_page_preview=disable_web_page_preview,
-        )
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=chat_id,
-                message_id=int(msg.message_id),
-                reply_markup=reply_markup,
-            )
-        except Exception:
-            # If this fails, user still sees the message, just without the inline keyboard.
-            logger.exception("Failed to attach inline keyboard to first UI message chat=%s", chat_id)
-    else:
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            disable_web_page_preview=disable_web_page_preview,
-        )
+        await _remove_legacy_reply_keyboard()
+    msg = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        disable_web_page_preview=disable_web_page_preview,
+    )
     await bind_ui_message_id(chat_id, int(msg.message_id))
     return int(msg.message_id)
 
