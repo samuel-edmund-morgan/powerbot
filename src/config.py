@@ -64,6 +64,9 @@ class Config:
     yasno_dso_id: int
     # Single-message mode
     single_message_mode: bool
+    # Business mode
+    business_mode: bool
+    business_bot_api_key: str
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -130,7 +133,19 @@ CFG = Config(
     yasno_region_id=int(os.getenv("YASNO_REGION_ID", "25")),
     yasno_dso_id=int(os.getenv("YASNO_DSO_ID", "902")),
     single_message_mode=parse_bool(os.getenv("SINGLE_MESSAGE_MODE", "0")),
+    business_mode=parse_bool(os.getenv("BUSINESS_MODE", "0")),
+    business_bot_api_key=os.getenv("BUSINESS_BOT_API_KEY", "").strip().strip('"').strip("'"),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу
 DB_PATH = os.getenv("DB_PATH", str(Path.cwd() / "state.db"))
+
+
+def is_business_mode_enabled() -> bool:
+    """Business mode is enabled only when flag is on."""
+    return CFG.business_mode
+
+
+def is_business_bot_enabled() -> bool:
+    """Business bot process is enabled only with flag + token."""
+    return CFG.business_mode and bool(CFG.business_bot_api_key)

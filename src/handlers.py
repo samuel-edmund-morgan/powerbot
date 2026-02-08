@@ -2218,6 +2218,7 @@ async def cb_places_menu(callback: CallbackQuery):
 async def cb_places_category(callback: CallbackQuery):
     """Показати заклади певної категорії."""
     from database import get_general_service, get_places_by_service_with_likes
+    from business import get_business_service
     
     service_id = int(callback.data.split("_")[2])
     service = await get_general_service(service_id)
@@ -2227,6 +2228,7 @@ async def cb_places_category(callback: CallbackQuery):
         return
     
     places = await get_places_by_service_with_likes(service_id)
+    places = await get_business_service().enrich_places_for_main_bot(places)
     admin_tag = CFG.admin_tag or "адміністратору"
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
