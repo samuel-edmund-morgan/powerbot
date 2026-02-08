@@ -117,6 +117,21 @@ CREATE TABLE IF NOT EXISTS business_payment_events (
     FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
 );
 
+-- Одноразові claim-токени для прив'язки існуючого бізнесу
+CREATE TABLE IF NOT EXISTS business_claim_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    token TEXT NOT NULL UNIQUE,              -- Одноразовий код claim
+    status TEXT NOT NULL DEFAULT 'active',   -- active/used/expired/revoked
+    attempts_left INTEGER NOT NULL DEFAULT 5,
+    created_at TEXT NOT NULL,                -- Час створення (ISO 8601)
+    expires_at TEXT NOT NULL,                -- Час завершення дії (ISO 8601)
+    created_by INTEGER DEFAULT NULL,         -- Telegram ID адміна, хто згенерував
+    used_at TEXT DEFAULT NULL,               -- Час використання (ISO 8601)
+    used_by INTEGER DEFAULT NULL,            -- Telegram ID користувача, хто використав
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+
 -- Укриття (спрощений список місць)
 CREATE TABLE IF NOT EXISTS shelter_places (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,6 +247,12 @@ CREATE INDEX IF NOT EXISTS idx_business_payment_external
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_business_payment_event
     ON business_payment_events (provider, external_payment_id, event_type);
+
+CREATE INDEX IF NOT EXISTS idx_business_claim_token_place_status
+    ON business_claim_tokens (place_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_business_claim_token_status_expires
+    ON business_claim_tokens (status, expires_at);
 
 -- =============================================================================
 -- Початкові дані (приклад - замініть на реальні)
