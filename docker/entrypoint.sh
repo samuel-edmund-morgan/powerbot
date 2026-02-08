@@ -4,6 +4,7 @@ set -e
 WORKDIR="/app/src"
 DB_PATH="${DB_PATH:-/data/state.db}"
 SCHEMA_PATH="/app/schema.sql"
+APP_ENTRYPOINT="${APP_ENTRYPOINT:-main.py}"
 
 if [ ! -d "$WORKDIR" ]; then
   echo "ERROR: env directory not found: $WORKDIR" >&2
@@ -24,4 +25,9 @@ if [ ! -f "$DB_PATH" ]; then
 fi
 
 cd "$WORKDIR"
-exec python main.py
+if [ ! -f "$APP_ENTRYPOINT" ]; then
+  echo "ERROR: app entrypoint not found: ${WORKDIR}/${APP_ENTRYPOINT}" >&2
+  exit 1
+fi
+
+exec python "$APP_ENTRYPOINT"

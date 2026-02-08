@@ -7,6 +7,31 @@ VERSION="${VERSION:-$(date +%Y.%m.%d-%H%M)}"
 MIGRATE="${MIGRATE:-0}"
 PROD_DIR="/opt/powerbot"
 
+strip_quotes() {
+  local value="${1:-}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  echo "$value"
+}
+
+get_env_value() {
+  local key="$1"
+  local file="$2"
+  local raw
+  raw="$(grep "^${key}=" "$file" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+  strip_quotes "$raw"
+}
+
+should_enable_business_profile() {
+  local env_file="$1"
+  local mode token
+  mode="$(get_env_value "BUSINESS_MODE" "$env_file")"
+  token="$(get_env_value "BUSINESS_BOT_API_KEY" "$env_file")"
+  [[ "$mode" == "1" && -n "$token" ]]
+}
+
 setup_docker_auth() {
   if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
     echo "Logging in to Docker Hub..."
@@ -79,7 +104,13 @@ docker compose pull
 if [[ "${MIGRATE}" == "1" ]]; then
   docker compose --profile migrate run --rm migrate
 fi
-docker compose up -d
+if should_enable_business_profile "${PROD_DIR}/.env"; then
+  echo "Business profile enabled (BUSINESS_MODE=1 and BUSINESS_BOT_API_KEY is set)."
+  docker compose --profile business up -d
+else
+  echo "Business profile disabled (missing BUSINESS_BOT_API_KEY or BUSINESS_MODE!=1)."
+  docker compose up -d
+fi
 
 docker compose ps
 
