@@ -13,7 +13,6 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    ReplyKeyboardRemove,
 )
 
 from business.service import (
@@ -22,6 +21,7 @@ from business.service import (
     NotFoundError,
     ValidationError,
 )
+from business.ui import bind_ui_message_id, render as ui_render, try_delete_user_message
 
 router = Router()
 cabinet_service = BusinessCabinetService()
@@ -51,9 +51,17 @@ INTRO_TEXT = (
 CB_MENU_NOOP = "bmenu:noop"
 CB_CATEGORY_PICK_PREFIX = "bcat:"
 CB_CATEGORY_PAGE_PREFIX = "bcatp:"
+CB_MY_PAGE_PREFIX = "bmy_p:"
+CB_MY_OPEN_PREFIX = "bmy_o:"
+CB_PLANS_PAGE_PREFIX = "bplans_p:"
+CB_MOD_PAGE_PREFIX = "bmod_p:"
+CB_MOD_APPROVE_PREFIX = "bmod_a:"
+CB_MOD_REJECT_PREFIX = "bmod_r:"
 
 CATEGORY_PAGE_SIZE = 10
 CATEGORY_ROW_WIDTH = 2
+MY_BUSINESSES_PAGE_SIZE = 8
+PLANS_PAGE_SIZE = 8
 
 PLAN_TITLES = {
     "free": "Free",
@@ -165,6 +173,107 @@ def build_category_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _truncate_label(value: str, limit: int = 34) -> str:
+    clean = (value or "").strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 1)].rstrip() + "…"
+
+
+def build_my_businesses_keyboard(
+    rows: list[dict],
+    *,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = []
+    for item in rows:
+        owner_status = str(item.get("ownership_status") or "")
+        status_icon = {"approved": "✅", "pending": "🕓", "rejected": "❌"}.get(owner_status, "•")
+        verified_icon = "✅" if item.get("is_verified") else ""
+        name = str(item.get("place_name") or f"ID {item.get('place_id')}")
+        label = _truncate_label(f"{status_icon}{verified_icon} {name}".strip(), 38)
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"{CB_MY_OPEN_PREFIX}{int(item['place_id'])}",
+                )
+            ]
+        )
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_MY_PAGE_PREFIX}{page - 1}",
+                )
+            )
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data=CB_MENU_NOOP,
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_MY_PAGE_PREFIX}{page + 1}",
+                )
+            )
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_plans_list_keyboard(
+    rows: list[dict],
+    *,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = []
+    for item in rows:
+        name = str(item.get("place_name") or f"ID {item.get('place_id')}")
+        label = _truncate_label(f"💳 {name}".strip(), 38)
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"bp_menu:{int(item['place_id'])}:plans")])
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CB_PLANS_PAGE_PREFIX}{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=CB_MENU_NOOP))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="➡️", callback_data=f"{CB_PLANS_PAGE_PREFIX}{page + 1}"))
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_moderation_queue_keyboard(owner_id: int, *, index: int, total: int) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="✅ Approve", callback_data=f"{CB_MOD_APPROVE_PREFIX}{owner_id}:{index}"),
+            InlineKeyboardButton(text="❌ Reject", callback_data=f"{CB_MOD_REJECT_PREFIX}{owner_id}:{index}"),
+        ]
+    ]
+    if total > 1:
+        nav: list[InlineKeyboardButton] = []
+        if index > 0:
+            nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CB_MOD_PAGE_PREFIX}{index - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data=CB_MENU_NOOP))
+        if index < total - 1:
+            nav.append(InlineKeyboardButton(text="➡️", callback_data=f"{CB_MOD_PAGE_PREFIX}{index + 1}"))
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -184,18 +293,32 @@ def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
                     callback_data=f"bef:{place_id}:address",
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"{CB_MY_OPEN_PREFIX}{place_id}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
         ]
     )
 
 
-def build_plan_keyboard(place_id: int, current_tier: str) -> InlineKeyboardMarkup:
+def build_plan_keyboard(
+    place_id: int,
+    current_tier: str,
+    *,
+    back_callback_data: str | None = None,
+    source: str | None = None,
+) -> InlineKeyboardMarkup:
     buttons = []
     first_row = []
     for tier in ("free", "light"):
         title = PLAN_TITLES[tier]
         if tier == current_tier:
             title = f"• {title}"
-        first_row.append(InlineKeyboardButton(text=title, callback_data=f"bp:{place_id}:{tier}"))
+        cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
+        first_row.append(InlineKeyboardButton(text=title, callback_data=cb))
     buttons.append(first_row)
 
     second_row = []
@@ -203,8 +326,12 @@ def build_plan_keyboard(place_id: int, current_tier: str) -> InlineKeyboardMarku
         title = PLAN_TITLES[tier]
         if tier == current_tier:
             title = f"• {title}"
-        second_row.append(InlineKeyboardButton(text=title, callback_data=f"bp:{place_id}:{tier}"))
+        cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
+        second_row.append(InlineKeyboardButton(text=title, callback_data=cb))
     buttons.append(second_row)
+    back_cb = back_callback_data or f"{CB_MY_OPEN_PREFIX}{place_id}"
+    buttons.append([InlineKeyboardButton(text="« Назад", callback_data=back_cb)])
+    buttons.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -220,14 +347,16 @@ def build_moderation_keyboard(owner_id: int) -> InlineKeyboardMarkup:
 
 
 def format_business_card(item: dict) -> str:
+    place_name = html.escape(str(item.get("place_name") or "—"))
+    place_address = html.escape(str(item.get("place_address") or "—"))
     owner_status = OWNERSHIP_TITLES.get(item["ownership_status"], item["ownership_status"])
     sub_status = SUBSCRIPTION_TITLES.get(item["subscription_status"], item["subscription_status"])
     tier = PLAN_TITLES.get(item["tier"], item["tier"])
     verified = "✅ Verified" if item["is_verified"] else "—"
     expires = item["subscription_expires_at"] or "—"
     return (
-        f"🏢 <b>{item['place_name']}</b> (ID: <code>{item['place_id']}</code>)\n"
-        f"📍 {item['place_address'] or '—'}\n"
+        f"🏢 <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
+        f"📍 {place_address}\n"
         f"📌 Статус власника: {owner_status}\n"
         f"💳 План: <b>{tier}</b>\n"
         f"🔁 Підписка: {sub_status}\n"
@@ -264,39 +393,45 @@ async def notify_admins_about_owner_request(
             continue
 
 
-async def _remove_reply_keyboard(message: Message) -> None:
-    """Best-effort removal of legacy ReplyKeyboard without cluttering the chat."""
-    try:
-        tmp = await message.answer("…", reply_markup=ReplyKeyboardRemove())
-    except Exception:
-        return
-    try:
-        await tmp.delete()
-    except Exception:
-        # If we can't delete (permissions/time window), keep it minimal.
-        pass
-
-
 async def send_main_menu(message: Message, user_id: int) -> None:
     """Send main menu using inline keyboard only (no reply keyboard)."""
-    await _remove_reply_keyboard(message)
-    await message.answer(INTRO_TEXT, reply_markup=build_main_menu(user_id))
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=INTRO_TEXT,
+        reply_markup=build_main_menu(user_id),
+        remove_reply_keyboard=True,
+    )
 
 
-async def send_category_picker(message: Message, state: FSMContext, *, page: int = 0) -> None:
+async def send_category_picker(
+    message: Message,
+    state: FSMContext,
+    *,
+    page: int = 0,
+    prefer_message_id: int | None = None,
+) -> None:
     services = await cabinet_service.repository.list_services()
     if not services:
         await state.clear()
-        await message.answer("Немає жодної категорії для вибору. Напиши адміністратору.")
-        await send_main_menu(message, message.chat.id)
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text="Немає жодної категорії для вибору. Напиши адміністратору.\n\n" + INTRO_TEXT,
+            reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
+        )
         return
 
     total_pages = max(1, (len(services) + CATEGORY_PAGE_SIZE - 1) // CATEGORY_PAGE_SIZE)
     safe_page = max(0, min(int(page), total_pages - 1))
     start = safe_page * CATEGORY_PAGE_SIZE
     chunk = services[start : start + CATEGORY_PAGE_SIZE]
-    await message.answer(
-        "Оберіть категорію:",
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text="Оберіть категорію:",
         reply_markup=build_category_keyboard(chunk, page=safe_page, total_pages=total_pages),
     )
 
@@ -305,6 +440,7 @@ async def send_category_picker(message: Message, state: FSMContext, *, page: int
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     user_id = message.from_user.id if message.from_user else message.chat.id
+    await try_delete_user_message(message)
     await send_main_menu(message, user_id)
 
 
@@ -319,22 +455,37 @@ async def cmd_health(message: Message) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     user_id = message.from_user.id if message.from_user else message.chat.id
-    await message.answer("Дію скасовано.")
+    await try_delete_user_message(message)
     await send_main_menu(message, user_id)
 
 
 @router.callback_query(F.data == CB_MENU_CANCEL)
 async def cb_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.answer("Дію скасовано.")
-    await send_main_menu(callback.message, callback.from_user.id)
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=INTRO_TEXT,
+            reply_markup=build_main_menu(callback.from_user.id),
+        )
     await callback.answer()
 
 
 @router.callback_query(F.data == CB_MENU_HOME)
 async def cb_menu_home(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await send_main_menu(callback.message, callback.from_user.id)
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=INTRO_TEXT,
+            reply_markup=build_main_menu(callback.from_user.id),
+        )
     await callback.answer()
 
 
@@ -342,7 +493,9 @@ async def cb_menu_home(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_menu_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(AddBusinessStates.waiting_category)
-    await send_category_picker(callback.message, state)
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await send_category_picker(callback.message, state, prefer_message_id=callback.message.message_id)
     await callback.answer()
 
 
@@ -350,28 +503,39 @@ async def cb_menu_add(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_menu_attach(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(ClaimStates.waiting_token)
-    await callback.message.answer(
-        "Введи код прив'язки для прив'язки існуючого бізнесу.",
-        reply_markup=build_cancel_menu(),
-    )
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text="Введи код прив'язки для прив'язки існуючого бізнесу.",
+            reply_markup=build_cancel_menu(),
+        )
     await callback.answer()
 
 
 @router.callback_query(F.data == CB_MENU_MINE)
 async def cb_menu_mine(callback: CallbackQuery) -> None:
-    await show_my_businesses(callback.message)
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await show_my_businesses(callback.message, prefer_message_id=callback.message.message_id)
     await callback.answer()
 
 
 @router.callback_query(F.data == CB_MENU_PLANS)
 async def cb_menu_plans(callback: CallbackQuery) -> None:
-    await show_plans_menu(callback.message)
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await show_plans_menu(callback.message, prefer_message_id=callback.message.message_id)
     await callback.answer()
 
 
 @router.callback_query(F.data == CB_MENU_MOD)
 async def cb_menu_moderation(callback: CallbackQuery) -> None:
-    await show_moderation(callback.message)
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await show_moderation(callback.message, prefer_message_id=callback.message.message_id)
     await callback.answer()
 
 
@@ -385,6 +549,7 @@ async def cb_noop(callback: CallbackQuery) -> None:
 async def start_add_business(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(AddBusinessStates.waiting_category)
+    await try_delete_user_message(message)
     await send_category_picker(message, state)
 
 
@@ -407,12 +572,15 @@ async def cb_category_page(callback: CallbackQuery, state: FSMContext) -> None:
     safe_page = max(0, min(page, total_pages - 1))
     start = safe_page * CATEGORY_PAGE_SIZE
     chunk = services[start : start + CATEGORY_PAGE_SIZE]
-    try:
-        await callback.message.edit_reply_markup(
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text="Оберіть категорію:",
             reply_markup=build_category_keyboard(chunk, page=safe_page, total_pages=total_pages),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -434,25 +602,25 @@ async def cb_category_pick(callback: CallbackQuery, state: FSMContext) -> None:
 
     await state.update_data(service_id=service_id, service_name=service["name"])
     await state.set_state(AddBusinessStates.waiting_name)
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
     service_label = html.escape(service["name"])
-    await callback.message.answer(
-        f"Категорія: <b>{service_label}</b>\n"
-        "Вкажи назву закладу.",
-        reply_markup=build_cancel_menu(),
-    )
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=(
+                f"Категорія: <b>{service_label}</b>\n"
+                "Вкажи назву закладу."
+            ),
+            reply_markup=build_cancel_menu(),
+        )
     await callback.answer()
 
 
 @router.message(AddBusinessStates.waiting_category, F.text)
 async def add_business_category(message: Message, state: FSMContext) -> None:
-    await message.answer(
-        "Категорію потрібно обрати зі списку кнопками нижче.",
-        reply_markup=build_cancel_menu(),
-    )
+    await try_delete_user_message(message)
     await send_category_picker(message, state)
 
 
@@ -460,11 +628,22 @@ async def add_business_category(message: Message, state: FSMContext) -> None:
 async def add_business_name(message: Message, state: FSMContext) -> None:
     name = message.text.strip()
     if not name:
-        await message.answer("Назва не може бути порожньою.")
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Назва не може бути порожньою.\n\nВкажи назву закладу.",
+            reply_markup=build_cancel_menu(),
+        )
         return
+    await try_delete_user_message(message)
     await state.update_data(name=name)
     await state.set_state(AddBusinessStates.waiting_description)
-    await message.answer("Вкажи опис (або надішли '-' якщо без опису).", reply_markup=build_cancel_menu())
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text="Вкажи опис (або надішли '-' якщо без опису).",
+        reply_markup=build_cancel_menu(),
+    )
 
 
 @router.message(AddBusinessStates.waiting_description, F.text)
@@ -472,9 +651,15 @@ async def add_business_description(message: Message, state: FSMContext) -> None:
     description = message.text.strip()
     if description == "-":
         description = ""
+    await try_delete_user_message(message)
     await state.update_data(description=description)
     await state.set_state(AddBusinessStates.waiting_address)
-    await message.answer("Вкажи адресу (або '-' якщо без адреси).", reply_markup=build_cancel_menu())
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text="Вкажи адресу (або '-' якщо без адреси).",
+        reply_markup=build_cancel_menu(),
+    )
 
 
 @router.message(AddBusinessStates.waiting_address, F.text)
@@ -493,16 +678,28 @@ async def add_business_address(message: Message, state: FSMContext) -> None:
             address=address,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await message.answer(str(error))
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=build_cancel_menu(),
+        )
         return
+    await try_delete_user_message(message)
     await state.clear()
     place = result["place"] or {}
     owner = result["owner"]
-    await message.answer(
-        "✅ Заявку створено.\n\n"
-        f"ID заявки: <code>{owner['id']}</code>\n"
-        f"Заклад: <b>{place.get('name', owner['place_id'])}</b>\n"
-        "Статус: очікує модерації адміном.",
+    place_name = html.escape(str(place.get("name") or owner["place_id"]))
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=(
+            "✅ Заявку створено.\n\n"
+            f"ID заявки: <code>{owner['id']}</code>\n"
+            f"Заклад: <b>{place_name}</b>\n"
+            "Статус: очікує модерації адміном.\n\n"
+            "Оберіть дію:"
+        ),
         reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
     )
     await notify_admins_about_owner_request(message, owner, place, source="new_business")
@@ -514,12 +711,16 @@ async def start_claim_business(message: Message, state: FSMContext) -> None:
     # Support both: /claim TOKEN and interactive token entry.
     if message.text and message.text.startswith("/claim "):
         token = message.text.split(maxsplit=1)[1].strip()
+        await try_delete_user_message(message)
         await process_claim_token(message, state, token)
         return
     await state.clear()
     await state.set_state(ClaimStates.waiting_token)
-    await message.answer(
-        "Введи код прив'язки для прив'язки існуючого бізнесу.",
+    await try_delete_user_message(message)
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text="Введи код прив'язки для прив'язки існуючого бізнесу.",
         reply_markup=build_cancel_menu(),
     )
 
@@ -536,16 +737,28 @@ async def process_claim_token(message: Message, state: FSMContext, token: str) -
             token_raw=token,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await message.answer(str(error))
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error) + "\n\nВведи код прив'язки для прив'язки існуючого бізнесу.",
+            reply_markup=build_cancel_menu(),
+        )
         return
+    await try_delete_user_message(message)
     await state.clear()
     owner = result["owner"]
     place = result["place"] or {}
-    await message.answer(
-        "✅ Код прив'язки прийнято.\n\n"
-        f"Заявка: <code>{owner['id']}</code>\n"
-        f"Заклад: <b>{place.get('name', owner['place_id'])}</b>\n"
-        "Статус: очікує модерації адміном.",
+    place_name = html.escape(str(place.get("name") or owner["place_id"]))
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=(
+            "✅ Код прив'язки прийнято.\n\n"
+            f"Заявка: <code>{owner['id']}</code>\n"
+            f"Заклад: <b>{place_name}</b>\n"
+            "Статус: очікує модерації адміном.\n\n"
+            "Оберіть дію:"
+        ),
         reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
     )
     await notify_admins_about_owner_request(message, owner, place, source="claim_token")
@@ -553,39 +766,96 @@ async def process_claim_token(message: Message, state: FSMContext, token: str) -
 
 @router.message(Command("my_businesses"))
 @router.message(F.text == BTN_MY_BUSINESSES)
-async def show_my_businesses(message: Message) -> None:
+async def show_my_businesses(
+    message: Message,
+    *,
+    page: int = 0,
+    prefer_message_id: int | None = None,
+) -> None:
     # In private chats chat.id is the user id; callback.message.from_user is the bot.
     user_id = message.chat.id
+    await try_delete_user_message(message)
     rows = await cabinet_service.list_user_businesses(user_id)
     if not rows:
-        await message.answer(
-            "У тебе ще немає бізнесів у кабінеті.\n"
-            f"Натисни «{BTN_ADD_BUSINESS}» або «{BTN_CLAIM_BUSINESS}».",
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text=(
+                "У тебе ще немає бізнесів у кабінеті.\n"
+                f"Натисни «{BTN_ADD_BUSINESS}» або «{BTN_CLAIM_BUSINESS}».\n\n"
+                "Оберіть дію:"
+            ),
             reply_markup=build_main_menu(user_id),
         )
         return
 
-    await message.answer("Ось твої об'єкти:")
-    for item in rows:
-        text = format_business_card(item)
-        if item["ownership_status"] == "approved":
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="✏️ Редагувати",
-                            callback_data=f"be:{item['place_id']}",
-                        ),
-                        InlineKeyboardButton(
-                            text="💳 Змінити план",
-                            callback_data=f"bp_menu:{item['place_id']}",
-                        ),
-                    ]
-                ]
-            )
-        else:
-            keyboard = None
-        await message.answer(text, reply_markup=keyboard)
+    total_pages = max(1, (len(rows) + MY_BUSINESSES_PAGE_SIZE - 1) // MY_BUSINESSES_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * MY_BUSINESSES_PAGE_SIZE
+    chunk = rows[start : start + MY_BUSINESSES_PAGE_SIZE]
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text="🏢 <b>Мої бізнеси</b>\n\nОберіть заклад:",
+        reply_markup=build_my_businesses_keyboard(chunk, page=safe_page, total_pages=total_pages),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_MY_PAGE_PREFIX))
+async def cb_my_businesses_page(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    try:
+        page = int(callback.data.removeprefix(CB_MY_PAGE_PREFIX))
+    except Exception:
+        await callback.answer("Некоректна сторінка", show_alert=True)
+        return
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await show_my_businesses(callback.message, page=page, prefer_message_id=callback.message.message_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_MY_OPEN_PREFIX))
+async def cb_my_business_open(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    try:
+        place_id = int(callback.data.removeprefix(CB_MY_OPEN_PREFIX))
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    rows = await cabinet_service.list_user_businesses(user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    if not item:
+        await callback.answer("Недостатньо прав або заклад не знайдено.", show_alert=True)
+        return
+
+    keyboard_rows: list[list[InlineKeyboardButton]] = []
+    if item.get("ownership_status") == "approved":
+        keyboard_rows.append(
+            [
+                InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"be:{place_id}"),
+                InlineKeyboardButton(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}"),
+            ]
+        )
+    keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
+    keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
+
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=format_business_card(item),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("be:"))
@@ -600,10 +870,15 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
     if not is_allowed:
         await callback.answer("Доступ лише для підтвердженого owner.", show_alert=True)
         return
-    await callback.message.answer(
-        f"Що редагуємо для place_id=<code>{place_id}</code>?",
-        reply_markup=build_edit_fields_keyboard(place_id),
-    )
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=f"Що редагуємо для place_id=<code>{place_id}</code>?",
+            reply_markup=build_edit_fields_keyboard(place_id),
+        )
     await callback.answer()
 
 
@@ -622,10 +897,21 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     field_label = {"name": "назву", "description": "опис", "address": "адресу"}.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
-    await callback.message.answer(
-        f"Надішли нову {field_label} для place_id=<code>{place_id}</code>.",
-        reply_markup=build_cancel_menu(),
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+            [InlineKeyboardButton(text="« Назад", callback_data=f"be:{place_id}")],
+        ]
     )
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=f"Надішли нову {field_label} для place_id=<code>{place_id}</code>.",
+            reply_markup=keyboard,
+        )
     await callback.answer()
 
 
@@ -642,61 +928,128 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
             value=message.text,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await message.answer(str(error))
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=build_cancel_menu(),
+        )
         return
+    await try_delete_user_message(message)
     await state.clear()
-    await message.answer(
-        "✅ Картку оновлено.\n\n"
-        f"🏢 <b>{updated_place['name']}</b>\n"
-        f"📍 {updated_place['address'] or '—'}",
-        reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
+    rows = await cabinet_service.list_user_businesses(message.chat.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    if not item:
+        await send_main_menu(message, message.chat.id)
+        return
+
+    keyboard_rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"be:{place_id}"),
+            InlineKeyboardButton(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}"),
+        ],
+        [InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)],
+        [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+    ]
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text="✅ Картку оновлено.\n\n" + format_business_card(item),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
     )
 
 
 @router.message(Command("plans"))
 @router.message(F.text == BTN_PLANS)
-async def show_plans_menu(message: Message) -> None:
+async def show_plans_menu(
+    message: Message,
+    *,
+    page: int = 0,
+    prefer_message_id: int | None = None,
+) -> None:
     user_id = message.chat.id
+    await try_delete_user_message(message)
     rows = await cabinet_service.list_user_businesses(user_id)
     approved = [row for row in rows if row["ownership_status"] == "approved"]
     if not approved:
-        await message.answer("Немає підтверджених закладів для зміни плану.")
-        return
-    for item in approved:
-        await message.answer(
-            f"💳 <b>{item['place_name']}</b> (ID: <code>{item['place_id']}</code>)\n"
-            f"Поточний тариф: <b>{PLAN_TITLES.get(item['tier'], item['tier'])}</b>",
-            reply_markup=build_plan_keyboard(item["place_id"], item["tier"]),
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text="Немає підтверджених закладів для зміни плану.\n\n" + INTRO_TEXT,
+            reply_markup=build_main_menu(user_id),
         )
+        return
+
+    total_pages = max(1, (len(approved) + PLANS_PAGE_SIZE - 1) // PLANS_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * PLANS_PAGE_SIZE
+    chunk = approved[start : start + PLANS_PAGE_SIZE]
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text="💳 <b>Плани</b>\n\nОберіть заклад:",
+        reply_markup=build_plans_list_keyboard(chunk, page=safe_page, total_pages=total_pages),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_PLANS_PAGE_PREFIX))
+async def cb_plans_page(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    try:
+        page = int(callback.data.removeprefix(CB_PLANS_PAGE_PREFIX))
+    except Exception:
+        await callback.answer("Некоректна сторінка", show_alert=True)
+        return
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await show_plans_menu(callback.message, page=page, prefer_message_id=callback.message.message_id)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bp_menu:"))
 async def cb_plan_menu(callback: CallbackQuery) -> None:
     payload = callback.data.split(":")
-    if len(payload) != 2:
+    if len(payload) not in (2, 3):
         await callback.answer("Некоректні дані", show_alert=True)
         return
     place_id = int(payload[1])
+    source = payload[2] if len(payload) == 3 else "card"
     rows = await cabinet_service.list_user_businesses(callback.from_user.id)
     item = next((row for row in rows if row["place_id"] == place_id), None)
     if not item or item["ownership_status"] != "approved":
         await callback.answer("Недостатньо прав.", show_alert=True)
         return
-    await callback.message.answer(
-        f"Обери тариф для <b>{item['place_name']}</b>:",
-        reply_markup=build_plan_keyboard(place_id, item["tier"]),
-    )
+    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+    place_name = html.escape(str(item.get("place_name") or place_id))
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=f"Обери тариф для <b>{place_name}</b>:",
+            reply_markup=build_plan_keyboard(
+                place_id,
+                item["tier"],
+                back_callback_data=back_cb,
+                source=source,
+            ),
+        )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bp:"))
 async def cb_change_plan(callback: CallbackQuery) -> None:
     payload = callback.data.split(":")
-    if len(payload) != 3:
+    if len(payload) not in (3, 4):
         await callback.answer("Некоректні дані", show_alert=True)
         return
     place_id = int(payload[1])
     tier = payload[2]
+    source = payload[3] if len(payload) == 4 else "card"
     try:
         subscription = await cabinet_service.change_subscription_tier(
             tg_user_id=callback.from_user.id,
@@ -706,40 +1059,174 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
         await callback.answer(str(error), show_alert=True)
         return
-    await callback.answer("Тариф оновлено")
-    await callback.message.answer(
-        "✅ Підписку оновлено.\n"
-        f"Place ID: <code>{place_id}</code>\n"
-        f"Tier: <b>{PLAN_TITLES.get(subscription['tier'], subscription['tier'])}</b>\n"
-        f"Status: <b>{SUBSCRIPTION_TITLES.get(subscription['status'], subscription['status'])}</b>\n"
-        f"Expires: {subscription['expires_at'] or '—'}",
+    if not callback.message:
+        await callback.answer("Тариф оновлено")
+        return
+
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    place_name = html.escape(str(item.get("place_name") if item else place_id))
+    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=f"✅ Тариф оновлено.\n\nОбери тариф для <b>{place_name}</b>:",
+        reply_markup=build_plan_keyboard(
+            place_id,
+            subscription["tier"],
+            back_callback_data=back_cb,
+            source=source,
+        ),
     )
+    await callback.answer("Тариф оновлено")
 
 
 @router.message(Command("moderation"))
 @router.message(F.text == BTN_MODERATION)
-async def show_moderation(message: Message) -> None:
+async def show_moderation(
+    message: Message,
+    *,
+    index: int = 0,
+    prefer_message_id: int | None = None,
+) -> None:
     admin_id = message.chat.id
+    await try_delete_user_message(message)
     try:
         rows = await cabinet_service.list_pending_owner_requests(admin_id)
     except AccessDeniedError as error:
-        await message.answer(str(error))
-        return
-    if not rows:
-        await message.answer("Черга модерації порожня.")
-        return
-    await message.answer(f"У черзі: <b>{len(rows)}</b> заявок.")
-    for item in rows:
-        user_label = f"@{item['username']}" if item["username"] else (item["first_name"] or "unknown")
-        await message.answer(
-            "🧾 <b>Owner request</b>\n"
-            f"Request ID: <code>{item['owner_id']}</code>\n"
-            f"Place: <b>{item['place_name']}</b> (ID: <code>{item['place_id']}</code>)\n"
-            f"Address: {item['place_address'] or '—'}\n"
-            f"User: {user_label} / <code>{item['tg_user_id']}</code>\n"
-            f"Created: {item['created_at']}",
-            reply_markup=build_moderation_keyboard(item["owner_id"]),
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text=str(error) + "\n\n" + INTRO_TEXT,
+            reply_markup=build_main_menu(admin_id),
         )
+        return
+
+    if not rows:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text="Черга модерації порожня.\n\n" + INTRO_TEXT,
+            reply_markup=build_main_menu(admin_id),
+        )
+        return
+
+    safe_index = max(0, min(int(index), len(rows) - 1))
+    item = rows[safe_index]
+
+    user_label_raw = f"@{item['username']}" if item.get("username") else (item.get("first_name") or "unknown")
+    user_label = html.escape(str(user_label_raw))
+    place_name = html.escape(str(item.get("place_name") or "—"))
+    place_address = html.escape(str(item.get("place_address") or "—"))
+
+    text = (
+        "🛡 <b>Модерація</b>\n\n"
+        f"Request ID: <code>{item['owner_id']}</code>\n"
+        f"Place: <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
+        f"Address: {place_address}\n"
+        f"User: {user_label} / <code>{item['tg_user_id']}</code>\n"
+        f"Created: {item['created_at']}"
+    )
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text=text,
+        reply_markup=build_moderation_queue_keyboard(item["owner_id"], index=safe_index, total=len(rows)),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_MOD_PAGE_PREFIX))
+async def cb_moderation_page(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    try:
+        index = int(callback.data.removeprefix(CB_MOD_PAGE_PREFIX))
+    except Exception:
+        await callback.answer("Некоректна сторінка", show_alert=True)
+        return
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await show_moderation(callback.message, index=index, prefer_message_id=callback.message.message_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_MOD_APPROVE_PREFIX))
+async def cb_moderation_approve(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_MOD_APPROVE_PREFIX)
+    parts = [p for p in raw.split(":") if p]
+    try:
+        owner_id = int(parts[0])
+        index = int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await cabinet_service.approve_owner_request(callback.from_user.id, owner_id)
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    owner_msg = (
+        "✅ Твою заявку на керування бізнесом підтверджено.\n"
+        "Тепер доступні редагування і керування тарифом."
+    )
+    try:
+        await callback.bot.send_message(
+            updated["tg_user_id"],
+            owner_msg,
+            reply_markup=build_main_menu(updated["tg_user_id"]),
+        )
+    except Exception:
+        pass
+
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await show_moderation(callback.message, index=index, prefer_message_id=callback.message.message_id)
+    await callback.answer("Готово")
+
+
+@router.callback_query(F.data.startswith(CB_MOD_REJECT_PREFIX))
+async def cb_moderation_reject(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_MOD_REJECT_PREFIX)
+    parts = [p for p in raw.split(":") if p]
+    try:
+        owner_id = int(parts[0])
+        index = int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await cabinet_service.reject_owner_request(callback.from_user.id, owner_id)
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    owner_msg = "❌ Твою заявку на керування бізнесом відхилено адміністратором."
+    try:
+        await callback.bot.send_message(
+            updated["tg_user_id"],
+            owner_msg,
+            reply_markup=build_main_menu(updated["tg_user_id"]),
+        )
+    except Exception:
+        pass
+
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await show_moderation(callback.message, index=index, prefer_message_id=callback.message.message_id)
+    await callback.answer("Готово")
 
 
 @router.callback_query(F.data.startswith("bm:"))
@@ -786,22 +1273,39 @@ async def cb_moderate_owner(callback: CallbackQuery) -> None:
 
 @router.message(Command("claim_token"))
 async def cmd_claim_token(message: Message) -> None:
+    await try_delete_user_message(message)
     text = (message.text or "").strip()
     parts = text.split()
+    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)]])
     if len(parts) < 2:
-        await message.answer("Використання: /claim_token <place_id> [ttl_hours]")
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Використання: <code>/claim_token &lt;place_id&gt; [ttl_hours]</code>",
+            reply_markup=back_keyboard,
+        )
         return
     try:
         place_id = int(parts[1])
     except ValueError:
-        await message.answer("place_id має бути числом.")
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="place_id має бути числом.",
+            reply_markup=back_keyboard,
+        )
         return
     ttl_hours = 72
     if len(parts) >= 3:
         try:
             ttl_hours = int(parts[2])
         except ValueError:
-            await message.answer("ttl_hours має бути числом.")
+            await ui_render(
+                message.bot,
+                chat_id=message.chat.id,
+                text="ttl_hours має бути числом.",
+                reply_markup=back_keyboard,
+            )
             return
     try:
         result = await cabinet_service.create_claim_token(
@@ -810,11 +1314,22 @@ async def cmd_claim_token(message: Message) -> None:
             ttl_hours=ttl_hours,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await message.answer(str(error))
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=back_keyboard,
+        )
         return
-    await message.answer(
-        "🔐 Код прив'язки згенеровано.\n\n"
-        f"Place: <b>{result['place']['name']}</b>\n"
-        f"Token: <code>{result['token']}</code>\n"
-        f"Expires: {result['expires_at']}",
+    place_name = html.escape(str(result["place"]["name"]))
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=(
+            "🔐 Код прив'язки згенеровано.\n\n"
+            f"Place: <b>{place_name}</b>\n"
+            f"Token: <code>{result['token']}</code>\n"
+            f"Expires: {result['expires_at']}"
+        ),
+        reply_markup=back_keyboard,
     )
