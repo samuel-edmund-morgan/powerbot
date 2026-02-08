@@ -10,9 +10,8 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 from business.service import (
@@ -31,6 +30,14 @@ BTN_MY_BUSINESSES = "🏢 Мої бізнеси"
 BTN_PLANS = "💳 Плани"
 BTN_MODERATION = "🛡 Модерація"
 BTN_CANCEL = "❌ Скасувати"
+
+CB_MENU_HOME = "bmenu:home"
+CB_MENU_ADD = "bmenu:add"
+CB_MENU_ATTACH = "bmenu:attach"
+CB_MENU_MINE = "bmenu:mine"
+CB_MENU_PLANS = "bmenu:plans"
+CB_MENU_MOD = "bmenu:moderation"
+CB_MENU_CANCEL = "bmenu:cancel"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -68,27 +75,27 @@ class EditPlaceStates(StatesGroup):
     waiting_value = State()
 
 
-def build_main_menu(user_id: int) -> ReplyKeyboardMarkup:
+def build_main_menu(user_id: int) -> InlineKeyboardMarkup:
     rows = [
         [
-            KeyboardButton(text=BTN_ADD_BUSINESS),
-            KeyboardButton(text=BTN_CLAIM_BUSINESS),
+            InlineKeyboardButton(text=BTN_ADD_BUSINESS, callback_data=CB_MENU_ADD),
+            InlineKeyboardButton(text=BTN_CLAIM_BUSINESS, callback_data=CB_MENU_ATTACH),
         ],
         [
-            KeyboardButton(text=BTN_MY_BUSINESSES),
-            KeyboardButton(text=BTN_PLANS),
+            InlineKeyboardButton(text=BTN_MY_BUSINESSES, callback_data=CB_MENU_MINE),
+            InlineKeyboardButton(text=BTN_PLANS, callback_data=CB_MENU_PLANS),
         ],
     ]
     if cabinet_service.is_admin(user_id):
-        rows.append([KeyboardButton(text=BTN_MODERATION)])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+        rows.append([InlineKeyboardButton(text=BTN_MODERATION, callback_data=CB_MENU_MOD)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_cancel_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
-        resize_keyboard=True,
-        one_time_keyboard=True,
+def build_cancel_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+        ]
     )
 
 
@@ -191,39 +198,21 @@ async def notify_admins_about_owner_request(
             continue
 
 
-async def send_main_help(message: Message) -> None:
-    user_id = message.from_user.id if message.from_user else 0
-    is_admin = cabinet_service.is_admin(user_id)
-    commands = [
-        "/start - головне меню",
-        "/my_businesses - мої заклади",
-        "/new_business - додати бізнес",
-        "/claim &lt;token&gt; - прив'язати існуючий бізнес (код прив'язки)",
-        "/plans - плани",
-        "/cancel - скасувати поточну дію",
-    ]
-    if is_admin:
-        commands.extend(
-            [
-                "/moderation - черга модерації",
-                "/claim_token &lt;place_id&gt; [ttl_hours] - згенерувати код прив'язки",
-                "/health - health check",
-            ]
-        )
-    await message.answer(
-        "👋 <b>Бізнес-кабінет</b>\n\n"
-        "Тут можна подати заявку на керування закладом, пройти модерацію, "
-        "редагувати картку закладу і керувати тарифом.\n\n"
-        "Команди:\n"
-        + "\n".join(commands),
-        reply_markup=build_main_menu(user_id),
-    )
+async def send_main_menu(message: Message, user_id: int) -> None:
+    """Send compact main menu and ensure old reply keyboard is removed."""
+    msg = await message.answer("Оберіть дію:", reply_markup=ReplyKeyboardRemove())
+    try:
+        await msg.edit_reply_markup(reply_markup=build_main_menu(user_id))
+    except Exception:
+        # Fallback: if edit is not allowed (rare), just send menu normally.
+        await message.answer("Оберіть дію:", reply_markup=build_main_menu(user_id))
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await send_main_help(message)
+    user_id = message.from_user.id if message.from_user else message.chat.id
+    await send_main_menu(message, user_id)
 
 
 @router.message(Command("health"))
@@ -236,10 +225,64 @@ async def cmd_health(message: Message) -> None:
 @router.message(F.text == BTN_CANCEL)
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(
-        "Дію скасовано.",
-        reply_markup=build_main_menu(message.from_user.id if message.from_user else 0),
+    user_id = message.from_user.id if message.from_user else message.chat.id
+    await message.answer("Дію скасовано.")
+    await send_main_menu(message, user_id)
+
+
+@router.callback_query(F.data == CB_MENU_CANCEL)
+async def cb_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.message.answer("Дію скасовано.")
+    await callback.message.answer("Оберіть дію:", reply_markup=build_main_menu(callback.from_user.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data == CB_MENU_HOME)
+async def cb_menu_home(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.message.answer("Оберіть дію:", reply_markup=build_main_menu(callback.from_user.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data == CB_MENU_ADD)
+async def cb_menu_add(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(AddBusinessStates.waiting_category)
+    await callback.message.answer(
+        "Вкажи категорію бізнесу (наприклад: Кафе та ресторани).",
+        reply_markup=build_cancel_menu(),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == CB_MENU_ATTACH)
+async def cb_menu_attach(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(ClaimStates.waiting_token)
+    await callback.message.answer(
+        "Введи код прив'язки для прив'язки існуючого бізнесу.",
+        reply_markup=build_cancel_menu(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == CB_MENU_MINE)
+async def cb_menu_mine(callback: CallbackQuery) -> None:
+    await show_my_businesses(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == CB_MENU_PLANS)
+async def cb_menu_plans(callback: CallbackQuery) -> None:
+    await show_plans_menu(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == CB_MENU_MOD)
+async def cb_menu_moderation(callback: CallbackQuery) -> None:
+    await show_moderation(callback.message)
+    await callback.answer()
 
 
 @router.message(Command("new_business"))
@@ -261,7 +304,7 @@ async def add_business_category(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(category=category)
     await state.set_state(AddBusinessStates.waiting_name)
-    await message.answer("Вкажи назву закладу.")
+    await message.answer("Вкажи назву закладу.", reply_markup=build_cancel_menu())
 
 
 @router.message(AddBusinessStates.waiting_name, F.text)
@@ -272,7 +315,7 @@ async def add_business_name(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(name=name)
     await state.set_state(AddBusinessStates.waiting_description)
-    await message.answer("Вкажи опис (або надішли '-' якщо без опису).")
+    await message.answer("Вкажи опис (або надішли '-' якщо без опису).", reply_markup=build_cancel_menu())
 
 
 @router.message(AddBusinessStates.waiting_description, F.text)
@@ -282,7 +325,7 @@ async def add_business_description(message: Message, state: FSMContext) -> None:
         description = ""
     await state.update_data(description=description)
     await state.set_state(AddBusinessStates.waiting_address)
-    await message.answer("Вкажи адресу (або '-' якщо без адреси).")
+    await message.answer("Вкажи адресу (або '-' якщо без адреси).", reply_markup=build_cancel_menu())
 
 
 @router.message(AddBusinessStates.waiting_address, F.text)
@@ -310,7 +353,7 @@ async def add_business_address(message: Message, state: FSMContext) -> None:
         f"ID заявки: <code>{owner['id']}</code>\n"
         f"Заклад: <b>{place.get('name', owner['place_id'])}</b>\n"
         "Статус: очікує модерації адміном.",
-        reply_markup=build_main_menu(message.from_user.id if message.from_user else 0),
+        reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
     )
     await notify_admins_about_owner_request(message, owner, place, source="new_business")
 
@@ -353,7 +396,7 @@ async def process_claim_token(message: Message, state: FSMContext, token: str) -
         f"Заявка: <code>{owner['id']}</code>\n"
         f"Заклад: <b>{place.get('name', owner['place_id'])}</b>\n"
         "Статус: очікує модерації адміном.",
-        reply_markup=build_main_menu(message.from_user.id if message.from_user else 0),
+        reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
     )
     await notify_admins_about_owner_request(message, owner, place, source="claim_token")
 
@@ -361,12 +404,13 @@ async def process_claim_token(message: Message, state: FSMContext, token: str) -
 @router.message(Command("my_businesses"))
 @router.message(F.text == BTN_MY_BUSINESSES)
 async def show_my_businesses(message: Message) -> None:
-    user_id = message.from_user.id if message.from_user else message.chat.id
+    # In private chats chat.id is the user id; callback.message.from_user is the bot.
+    user_id = message.chat.id
     rows = await cabinet_service.list_user_businesses(user_id)
     if not rows:
         await message.answer(
             "У тебе ще немає бізнесів у кабінеті.\n"
-            "Натисни «➕ Додати бізнес» або «🔗 Claim бізнес».",
+            f"Натисни «{BTN_ADD_BUSINESS}» або «{BTN_CLAIM_BUSINESS}».",
             reply_markup=build_main_menu(user_id),
         )
         return
@@ -455,14 +499,14 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
         "✅ Картку оновлено.\n\n"
         f"🏢 <b>{updated_place['name']}</b>\n"
         f"📍 {updated_place['address'] or '—'}",
-        reply_markup=build_main_menu(message.from_user.id if message.from_user else 0),
+        reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
     )
 
 
 @router.message(Command("plans"))
 @router.message(F.text == BTN_PLANS)
 async def show_plans_menu(message: Message) -> None:
-    user_id = message.from_user.id if message.from_user else message.chat.id
+    user_id = message.chat.id
     rows = await cabinet_service.list_user_businesses(user_id)
     approved = [row for row in rows if row["ownership_status"] == "approved"]
     if not approved:
@@ -525,7 +569,7 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
 @router.message(Command("moderation"))
 @router.message(F.text == BTN_MODERATION)
 async def show_moderation(message: Message) -> None:
-    admin_id = message.from_user.id if message.from_user else message.chat.id
+    admin_id = message.chat.id
     try:
         rows = await cabinet_service.list_pending_owner_requests(admin_id)
     except AccessDeniedError as error:
