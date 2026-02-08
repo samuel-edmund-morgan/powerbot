@@ -1,5 +1,7 @@
 from datetime import datetime
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import aiosqlite
 
@@ -42,6 +44,21 @@ SHELTER_PLACES = [
 
 # ID будинку Ньюкасл - для існуючих користувачів
 NEWCASTLE_BUILDING_ID = 1
+SQLITE_BUSY_TIMEOUT_MS = 5000
+
+
+async def apply_sqlite_pragmas(db: aiosqlite.Connection) -> None:
+    """Apply SQLite settings for concurrent access from multiple bot processes."""
+    await db.execute("PRAGMA journal_mode=WAL;")
+    await db.execute("PRAGMA synchronous=NORMAL;")
+    await db.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS};")
+
+
+@asynccontextmanager
+async def open_db() -> AsyncIterator[aiosqlite.Connection]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await apply_sqlite_pragmas(db)
+        yield db
 
 
 def get_building_display_name(building: dict) -> str:
@@ -86,7 +103,7 @@ def tokenize_query(query: str) -> list[str]:
 
 async def init_db():
     """Ініціалізація бази даних: створення таблиць."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             """CREATE TABLE IF NOT EXISTS subscribers (
                 chat_id INTEGER PRIMARY KEY,
@@ -325,7 +342,7 @@ async def init_db():
 
 async def db_set(k: str, v: str):
     """Зберегти значення за ключем."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "INSERT INTO kv(k,v) VALUES(?,?) "
             "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
@@ -336,7 +353,7 @@ async def db_set(k: str, v: str):
 
 async def db_get(k: str) -> str | None:
     """Отримати значення за ключем."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute("SELECT v FROM kv WHERE k=?", (k,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
@@ -352,7 +369,7 @@ async def add_subscriber(
     Якщо підписник вже існує — оновлює інформацію.
     """
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             """INSERT INTO subscribers(chat_id, username, first_name, subscribed_at) 
                VALUES(?, ?, ?, ?)
@@ -369,7 +386,7 @@ async def add_subscriber(
 
 async def get_subscriber_building(chat_id: int) -> int | None:
     """Отримати ID будинку, на який підписаний користувач."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT building_id FROM subscribers WHERE chat_id=?", (chat_id,)
         ) as cur:
@@ -379,7 +396,7 @@ async def get_subscriber_building(chat_id: int) -> int | None:
 
 async def set_subscriber_building(chat_id: int, building_id: int) -> bool:
     """Встановити будинок для підписника. Повертає True якщо успішно."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         result = await db.execute(
             "UPDATE subscribers SET building_id = ? WHERE chat_id = ?",
             (building_id, chat_id)
@@ -390,7 +407,7 @@ async def set_subscriber_building(chat_id: int, building_id: int) -> bool:
 
 async def get_building_info(building_id: int) -> dict | None:
     """Отримати інформацію про будинок з БД."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, name, address, has_sensor, sensor_count FROM buildings WHERE id=?",
             (building_id,)
@@ -409,7 +426,7 @@ async def get_building_info(building_id: int) -> dict | None:
 
 async def get_all_buildings() -> list[dict]:
     """Отримати список всіх будинків."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, name, address, has_sensor, sensor_count FROM buildings ORDER BY id"
         ) as cur:
@@ -432,7 +449,7 @@ async def get_subscribers_by_building(building_id: int = None) -> list[int] | di
     Якщо building_id вказано - повертає list[chat_id] для цього будинку.
     Якщо building_id=None - повертає dict{building_id: count} статистику по всіх будинках.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         if building_id is not None:
             async with db.execute(
                 "SELECT chat_id FROM subscribers WHERE building_id = ?",
@@ -451,7 +468,7 @@ async def get_subscribers_by_building(building_id: int = None) -> list[int] | di
 
 async def remove_subscriber(chat_id: int):
     """Видалити підписника."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute("DELETE FROM subscribers WHERE chat_id=?", (chat_id,))
         await db.commit()
 
@@ -462,7 +479,7 @@ async def list_subscribers_full() -> list[dict]:
     Повертає список словників з полями:
     chat_id, username, first_name, subscribed_at, quiet_start, quiet_end
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT chat_id, username, first_name, subscribed_at, quiet_start, quiet_end FROM subscribers ORDER BY subscribed_at DESC"
         ) as cur:
@@ -482,7 +499,7 @@ async def list_subscribers_full() -> list[dict]:
 
 async def list_subscribers() -> list[int]:
     """Отримати список всіх підписників."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute("SELECT chat_id FROM subscribers") as cur:
             rows = await cur.fetchall()
             return [r[0] for r in rows]
@@ -490,7 +507,7 @@ async def list_subscribers() -> list[int]:
 
 async def count_subscribers() -> int:
     """Підрахувати кількість підписників."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute("SELECT COUNT(*) FROM subscribers") as cur:
             row = await cur.fetchone()
             return row[0] if row else 0
@@ -503,7 +520,7 @@ async def set_quiet_hours(chat_id: int, start_hour: int | None, end_hour: int | 
     Встановити тихі години для користувача.
     start_hour, end_hour: години (0-23), або None для вимкнення.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "UPDATE subscribers SET quiet_start=?, quiet_end=? WHERE chat_id=?",
             (start_hour, end_hour, chat_id),
@@ -516,7 +533,7 @@ async def get_quiet_hours(chat_id: int) -> tuple[int | None, int | None]:
     Отримати тихі години для користувача.
     Повертає (start_hour, end_hour) або (None, None).
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT quiet_start, quiet_end FROM subscribers WHERE chat_id=?",
             (chat_id,),
@@ -532,7 +549,7 @@ async def get_subscribers_for_notification(current_hour: int) -> list[int]:
     Отримати список підписників, яким можна надсилати сповіщення зараз.
     Враховує тихі години кожного користувача.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT chat_id, quiet_start, quiet_end FROM subscribers"
         ) as cur:
@@ -560,7 +577,7 @@ async def get_subscribers_for_notification(current_hour: int) -> list[int]:
 
 async def set_light_notifications(chat_id: int, enabled: bool):
     """Увімкнути/вимкнути сповіщення про світло."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "UPDATE subscribers SET light_notifications=? WHERE chat_id=?",
             (1 if enabled else 0, chat_id),
@@ -570,7 +587,7 @@ async def set_light_notifications(chat_id: int, enabled: bool):
 
 async def set_alert_notifications(chat_id: int, enabled: bool):
     """Увімкнути/вимкнути сповіщення про тривоги."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "UPDATE subscribers SET alert_notifications=? WHERE chat_id=?",
             (1 if enabled else 0, chat_id),
@@ -580,7 +597,7 @@ async def set_alert_notifications(chat_id: int, enabled: bool):
 
 async def set_schedule_notifications(chat_id: int, enabled: bool):
     """Увімкнути/вимкнути сповіщення про графіки ЯСНО."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "UPDATE subscribers SET schedule_notifications=? WHERE chat_id=?",
             (1 if enabled else 0, chat_id),
@@ -594,7 +611,7 @@ async def get_notification_settings(chat_id: int) -> dict:
     Повертає словник з ключами: light_notifications, alert_notifications,
     schedule_notifications, quiet_start, quiet_end
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT light_notifications, alert_notifications, schedule_notifications, quiet_start, quiet_end 
                FROM subscribers WHERE chat_id=?""",
@@ -631,7 +648,7 @@ async def get_subscribers_for_light_notification(current_hour: int, building_id:
     if building_id is None:
         building_id = NEWCASTLE_BUILDING_ID
     
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT chat_id, quiet_start, quiet_end, light_notifications 
                FROM subscribers 
@@ -665,7 +682,7 @@ async def get_subscribers_for_schedule_notification(
     if building_id is None:
         building_id = NEWCASTLE_BUILDING_ID
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT chat_id, quiet_start, quiet_end, schedule_notifications
                FROM subscribers
@@ -694,7 +711,7 @@ async def get_subscribers_for_alert_notification(current_hour: int) -> list[int]
     Отримати список підписників для сповіщень про тривоги.
     Враховує тихі години та налаштування alert_notifications.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT chat_id, quiet_start, quiet_end, alert_notifications 
                FROM subscribers WHERE alert_notifications = 1 OR alert_notifications IS NULL"""
@@ -724,7 +741,7 @@ async def add_event(event_type: str) -> datetime:
     Повертає timestamp події.
     """
     now = datetime.now()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "INSERT INTO events (event_type, timestamp) VALUES (?, ?)",
             (event_type, now.isoformat()),
@@ -739,7 +756,7 @@ async def get_last_event(event_type: str | None = None) -> tuple[str, datetime] 
     event_type: 'up', 'down' або None (будь-яка)
     Повертає (event_type, timestamp) або None.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         if event_type:
             query = "SELECT event_type, timestamp FROM events WHERE event_type=? ORDER BY id DESC LIMIT 1"
             params = (event_type,)
@@ -755,7 +772,7 @@ async def get_last_event(event_type: str | None = None) -> tuple[str, datetime] 
 
 async def get_last_event_before(before: datetime) -> tuple[str, datetime] | None:
     """Отримати останню подію до вказаного часу."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT event_type, timestamp FROM events WHERE timestamp < ? ORDER BY id DESC LIMIT 1",
             (before.isoformat(),),
@@ -768,7 +785,7 @@ async def get_last_event_before(before: datetime) -> tuple[str, datetime] | None
 
 async def get_events_since(since: datetime) -> list[tuple[str, datetime]]:
     """Отримати всі події після вказаного часу."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT event_type, timestamp FROM events WHERE timestamp >= ? ORDER BY timestamp",
             (since.isoformat(),),
@@ -779,7 +796,7 @@ async def get_events_since(since: datetime) -> list[tuple[str, datetime]]:
 
 async def get_all_events() -> list[tuple[str, datetime]]:
     """Отримати всі події."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT event_type, timestamp FROM events ORDER BY timestamp"
         ) as cur:
@@ -789,7 +806,7 @@ async def get_all_events() -> list[tuple[str, datetime]]:
 
 async def get_last_events(limit: int = 2) -> list[tuple[str, datetime]]:
     """Отримати останні N подій (за замовчуванням 2)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT event_type, timestamp FROM events ORDER BY id DESC LIMIT ?",
             (limit,),
@@ -802,7 +819,7 @@ async def get_last_events(limit: int = 2) -> list[tuple[str, datetime]]:
 
 async def add_general_service(name: str) -> int:
     """Додати категорію послуг. Повертає ID."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "INSERT INTO general_services(name) VALUES(?)",
             (name,)
@@ -813,7 +830,7 @@ async def add_general_service(name: str) -> int:
 
 async def edit_general_service(service_id: int, name: str) -> bool:
     """Редагувати назву категорії. Повертає True якщо успішно."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "UPDATE general_services SET name=? WHERE id=?",
             (name, service_id)
@@ -824,7 +841,7 @@ async def edit_general_service(service_id: int, name: str) -> bool:
 
 async def delete_general_service(service_id: int) -> bool:
     """Видалити категорію. Повертає True якщо успішно."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         # Спочатку видаляємо всі заклади цієї категорії
         await db.execute("DELETE FROM places WHERE service_id=?", (service_id,))
         cursor = await db.execute(
@@ -837,7 +854,7 @@ async def delete_general_service(service_id: int) -> bool:
 
 async def get_all_general_services() -> list[dict]:
     """Отримати всі категорії послуг."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """
             SELECT s.id, s.name
@@ -854,7 +871,7 @@ async def get_all_general_services() -> list[dict]:
 
 async def get_general_service(service_id: int) -> dict | None:
     """Отримати категорію за ID."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, name FROM general_services WHERE id=?",
             (service_id,)
@@ -870,7 +887,7 @@ async def get_general_service(service_id: int) -> dict | None:
 async def add_place(service_id: int, name: str, description: str, address: str, keywords: str = None) -> int:
     """Додати заклад. Повертає ID."""
     merged_keywords = build_keywords(name, description, keywords)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "INSERT INTO places(service_id, name, description, address, keywords) VALUES(?, ?, ?, ?, ?)",
             (service_id, name, description, address, merged_keywords)
@@ -882,7 +899,7 @@ async def add_place(service_id: int, name: str, description: str, address: str, 
 async def edit_place(place_id: int, service_id: int, name: str, description: str, address: str, keywords: str = None) -> bool:
     """Редагувати заклад. Повертає True якщо успішно."""
     merged_keywords = build_keywords(name, description, keywords)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "UPDATE places SET service_id=?, name=?, description=?, address=?, keywords=? WHERE id=?",
             (service_id, name, description, address, merged_keywords, place_id)
@@ -893,7 +910,7 @@ async def edit_place(place_id: int, service_id: int, name: str, description: str
 
 async def refresh_places_keywords() -> None:
     """Перебудувати keywords для всіх закладів (name + description + keywords)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute("SELECT id, name, description, keywords FROM places") as cur:
             rows = await cur.fetchall()
         for row in rows:
@@ -905,7 +922,7 @@ async def refresh_places_keywords() -> None:
 
 async def update_place_keywords(place_id: int, keywords: str) -> bool:
     """Оновити тільки ключові слова закладу."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "UPDATE places SET keywords=? WHERE id=?",
             (keywords, place_id)
@@ -916,7 +933,7 @@ async def update_place_keywords(place_id: int, keywords: str) -> bool:
 
 async def delete_place(place_id: int) -> bool:
     """Видалити заклад. Повертає True якщо успішно."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "DELETE FROM places WHERE id=?",
             (place_id,)
@@ -927,7 +944,7 @@ async def delete_place(place_id: int) -> bool:
 
 async def get_places_by_service(service_id: int) -> list[dict]:
     """Отримати всі заклади певної категорії."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, service_id, name, description, address, keywords FROM places WHERE service_id=? ORDER BY name",
             (service_id,)
@@ -941,7 +958,7 @@ async def get_places_by_service(service_id: int) -> list[dict]:
 
 async def get_all_places() -> list[dict]:
     """Отримати всі заклади."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords, s.name as service_name
                FROM places p
@@ -957,7 +974,7 @@ async def get_all_places() -> list[dict]:
 
 async def get_all_places_with_likes() -> list[dict]:
     """Отримати всі заклади з кількістю лайків."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
                       s.name as service_name,
@@ -1031,7 +1048,7 @@ async def search_places(query: str) -> list[dict]:
     score_params = params.copy()
     all_params = params + score_params
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(sql, all_params) as cur:
             rows = await cur.fetchall()
             return [
@@ -1086,7 +1103,7 @@ async def search_places_by_service(query: str, service_id: int) -> list[dict]:
     score_params = params.copy()
     all_params = [service_id] + params + score_params
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(sql, all_params) as cur:
             rows = await cur.fetchall()
             return [
@@ -1100,7 +1117,7 @@ async def search_places_by_service(query: str, service_id: int) -> list[dict]:
 
 async def get_place(place_id: int) -> dict | None:
     """Отримати заклад за ID."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, service_id, name, description, address, keywords FROM places WHERE id=?",
             (place_id,)
@@ -1116,7 +1133,7 @@ async def get_place(place_id: int) -> dict | None:
 async def like_place(place_id: int, chat_id: int) -> bool:
     """Поставити лайк закладу. Повертає True якщо лайк додано, False якщо вже був."""
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         try:
             await db.execute(
                 "INSERT INTO place_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
@@ -1130,7 +1147,7 @@ async def like_place(place_id: int, chat_id: int) -> bool:
 
 async def unlike_place(place_id: int, chat_id: int) -> bool:
     """Забрати лайк із закладу. Повертає True якщо лайк видалено."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "DELETE FROM place_likes WHERE place_id=? AND chat_id=?",
             (place_id, chat_id)
@@ -1141,7 +1158,7 @@ async def unlike_place(place_id: int, chat_id: int) -> bool:
 
 async def has_liked_place(place_id: int, chat_id: int) -> bool:
     """Перевірити чи користувач вже лайкнув заклад."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT 1 FROM place_likes WHERE place_id=? AND chat_id=?",
             (place_id, chat_id)
@@ -1151,7 +1168,7 @@ async def has_liked_place(place_id: int, chat_id: int) -> bool:
 
 async def get_place_likes_count(place_id: int) -> int:
     """Отримати кількість лайків закладу."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM place_likes WHERE place_id=?",
             (place_id,)
@@ -1162,7 +1179,7 @@ async def get_place_likes_count(place_id: int) -> int:
 
 async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
     """Отримати заклади категорії з кількістю лайків, відсортовані за лайками."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
                       COALESCE(l.likes_count, 0) as likes_count
@@ -1188,7 +1205,7 @@ async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
 
 async def get_all_shelter_places() -> list[dict]:
     """Отримати всі укриття."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, name, description, address, keywords FROM shelter_places ORDER BY name"
         ) as cur:
@@ -1201,7 +1218,7 @@ async def get_all_shelter_places() -> list[dict]:
 
 async def get_shelter_place(place_id: int) -> dict | None:
     """Отримати укриття за ID."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT id, name, description, address, keywords FROM shelter_places WHERE id=?",
             (place_id,)
@@ -1214,7 +1231,7 @@ async def get_shelter_place(place_id: int) -> dict | None:
 
 async def get_shelter_places_with_likes() -> list[dict]:
     """Отримати укриття з кількістю лайків."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT sp.id, sp.name, sp.description, sp.address, sp.keywords,
                       COALESCE(l.likes_count, 0) as likes_count
@@ -1236,7 +1253,7 @@ async def get_shelter_places_with_likes() -> list[dict]:
 async def like_shelter(place_id: int, chat_id: int) -> bool:
     """Поставити лайк укриттю. Повертає True якщо лайк додано, False якщо вже був."""
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         try:
             await db.execute(
                 "INSERT INTO shelter_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
@@ -1250,7 +1267,7 @@ async def like_shelter(place_id: int, chat_id: int) -> bool:
 
 async def unlike_shelter(place_id: int, chat_id: int) -> bool:
     """Забрати лайк із укриття. Повертає True якщо лайк видалено."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         cursor = await db.execute(
             "DELETE FROM shelter_likes WHERE place_id=? AND chat_id=?",
             (place_id, chat_id)
@@ -1261,7 +1278,7 @@ async def unlike_shelter(place_id: int, chat_id: int) -> bool:
 
 async def has_liked_shelter(place_id: int, chat_id: int) -> bool:
     """Перевірити чи користувач вже лайкнув укриття."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT 1 FROM shelter_likes WHERE place_id=? AND chat_id=?",
             (place_id, chat_id)
@@ -1271,7 +1288,7 @@ async def has_liked_shelter(place_id: int, chat_id: int) -> bool:
 
 async def get_shelter_likes_count(place_id: int) -> int:
     """Отримати кількість лайків укриття."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM shelter_likes WHERE place_id=?",
             (place_id,)
@@ -1296,7 +1313,7 @@ async def vote_heating(chat_id: int, has_heating: bool, building_id: int | None 
         return
     
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             """INSERT INTO heating_votes(chat_id, has_heating, voted_at, building_id) VALUES(?, ?, ?, ?)
                ON CONFLICT(chat_id) DO UPDATE SET has_heating=excluded.has_heating, voted_at=excluded.voted_at, building_id=excluded.building_id""",
@@ -1319,7 +1336,7 @@ async def vote_water(chat_id: int, has_water: bool, building_id: int | None = No
         return
     
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             """INSERT INTO water_votes(chat_id, has_water, voted_at, building_id) VALUES(?, ?, ?, ?)
                ON CONFLICT(chat_id) DO UPDATE SET has_water=excluded.has_water, voted_at=excluded.voted_at, building_id=excluded.building_id""",
@@ -1335,7 +1352,7 @@ async def get_heating_stats(building_id: int | None = None) -> dict:
     Args:
         building_id: ID будинку для фільтрації (якщо None - всі голоси)
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         if building_id is not None:
             query = "SELECT has_heating, COUNT(*) FROM heating_votes WHERE building_id = ? GROUP BY has_heating"
             params = (building_id,)
@@ -1369,7 +1386,7 @@ async def get_water_stats(building_id: int | None = None) -> dict:
     Args:
         building_id: ID будинку для фільтрації (якщо None - всі голоси)
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         if building_id is not None:
             query = "SELECT has_water, COUNT(*) FROM water_votes WHERE building_id = ? GROUP BY has_water"
             params = (building_id,)
@@ -1400,7 +1417,7 @@ async def get_user_vote(chat_id: int, vote_type: str) -> bool | None:
     """Отримати голос користувача (heating або water). Повертає None якщо не голосував."""
     table = "heating_votes" if vote_type == "heating" else "water_votes"
     column = "has_heating" if vote_type == "heating" else "has_water"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(f"SELECT {column} FROM {table} WHERE chat_id=?", (chat_id,)) as cur:
             row = await cur.fetchone()
             if row:
@@ -1415,7 +1432,7 @@ async def reset_votes(building_id: int | None = None):
     Args:
         building_id: ID будинку для скидання (якщо None - скидаємо всі голоси)
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         if building_id is not None:
             await db.execute("DELETE FROM heating_votes WHERE building_id = ?", (building_id,))
             await db.execute("DELETE FROM water_votes WHERE building_id = ?", (building_id,))
@@ -1430,7 +1447,7 @@ async def reset_votes(building_id: int | None = None):
 async def save_notification(chat_id: int, message_id: int, notification_type: str = "power_change"):
     """Зберегти сповіщення для подальшого оновлення (одне на чат і тип)."""
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "DELETE FROM active_notifications WHERE chat_id=? AND notification_type=?",
             (chat_id, notification_type)
@@ -1444,7 +1461,7 @@ async def save_notification(chat_id: int, message_id: int, notification_type: st
 
 async def get_active_notifications(notification_type: str | None = None) -> list[dict]:
     """Отримати активні сповіщення для оновлення."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         if notification_type:
             query = "SELECT id, chat_id, message_id, created_at, notification_type FROM active_notifications WHERE notification_type=?"
@@ -1468,7 +1485,7 @@ async def get_active_notifications(notification_type: str | None = None) -> list
 
 async def get_active_notifications_for_chat(chat_id: int) -> list[dict]:
     """Отримати всі активні сповіщення для конкретного чату."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT id, chat_id, message_id, created_at, notification_type FROM active_notifications WHERE chat_id=?",
@@ -1489,14 +1506,14 @@ async def get_active_notifications_for_chat(chat_id: int) -> list[dict]:
 
 async def delete_notification(notification_id: int):
     """Видалити сповіщення за ID."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute("DELETE FROM active_notifications WHERE id=?", (notification_id,))
         await db.commit()
 
 
 async def clear_all_notifications():
     """Видалити всі активні сповіщення (при зміні стану світла)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute("DELETE FROM active_notifications")
         await db.commit()
 
@@ -1504,7 +1521,7 @@ async def clear_all_notifications():
 # ============ ЯСНО: кеш стану графіків ============
 
 async def get_yasno_schedule_state(building_id: int, queue_key: str, day_key: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             """SELECT status, slots_hash, updated_at
                FROM yasno_schedule_state
@@ -1529,7 +1546,7 @@ async def upsert_yasno_schedule_state(
     slots_hash: str | None,
     updated_at: str | None,
 ) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             """INSERT INTO yasno_schedule_state(building_id, queue_key, day_key, status, slots_hash, updated_at)
                VALUES(?, ?, ?, ?, ?, ?)
@@ -1544,7 +1561,7 @@ async def upsert_yasno_schedule_state(
 
 async def save_last_bot_message(chat_id: int, message_id: int):
     """Зберегти останнє повідомлення бота для чату."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute(
             "INSERT INTO last_bot_message(chat_id, message_id) VALUES(?, ?) "
             "ON CONFLICT(chat_id) DO UPDATE SET message_id=excluded.message_id",
@@ -1555,7 +1572,7 @@ async def save_last_bot_message(chat_id: int, message_id: int):
 
 async def get_last_bot_message(chat_id: int) -> int | None:
     """Отримати ID останнього повідомлення бота для чату."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute("SELECT message_id FROM last_bot_message WHERE chat_id=?", (chat_id,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
@@ -1563,7 +1580,7 @@ async def get_last_bot_message(chat_id: int) -> int | None:
 
 async def delete_last_bot_message_record(chat_id: int):
     """Видалити запис про останнє повідомлення."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute("DELETE FROM last_bot_message WHERE chat_id=?", (chat_id,))
         await db.commit()
 
@@ -1575,7 +1592,7 @@ async def register_sensor(uuid: str, building_id: int, name: str | None = None) 
     Реєстрація нового сенсора або оновлення існуючого.
     Повертає True якщо сенсор новий, False якщо оновлений.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         now = datetime.now().isoformat()
         
         # Перевіряємо чи сенсор вже існує
@@ -1605,7 +1622,7 @@ async def update_sensor_heartbeat(uuid: str) -> bool:
     Оновити час останнього heartbeat сенсора.
     Повертає True якщо сенсор знайдено, False якщо ні.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         now = datetime.now().isoformat()
         cursor = await db.execute(
             "UPDATE sensors SET last_heartbeat=? WHERE uuid=? AND is_active=1",
@@ -1617,7 +1634,7 @@ async def update_sensor_heartbeat(uuid: str) -> bool:
 
 async def get_sensor_by_uuid(uuid: str) -> dict | None:
     """Отримати сенсор за UUID."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT uuid, building_id, name, last_heartbeat, created_at, is_active FROM sensors WHERE uuid=?",
@@ -1638,7 +1655,7 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
 
 async def get_sensors_by_building(building_id: int) -> list[dict]:
     """Отримати всі активні сенсори будинку."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT uuid, building_id, name, last_heartbeat, created_at FROM sensors WHERE building_id=? AND is_active=1",
@@ -1659,7 +1676,7 @@ async def get_sensors_by_building(building_id: int) -> list[dict]:
 
 async def get_all_active_sensors() -> list[dict]:
     """Отримати всі активні сенсори."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT uuid, building_id, name, last_heartbeat, created_at FROM sensors WHERE is_active=1"
@@ -1679,14 +1696,14 @@ async def get_all_active_sensors() -> list[dict]:
 
 async def deactivate_sensor(uuid: str):
     """Деактивувати сенсор."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         await db.execute("UPDATE sensors SET is_active=0 WHERE uuid=?", (uuid,))
         await db.commit()
 
 
 async def get_sensors_count_by_building(building_id: int) -> int:
     """Отримати кількість активних сенсорів будинку."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM sensors WHERE building_id=? AND is_active=1",
             (building_id,)
@@ -1699,7 +1716,7 @@ async def get_sensors_count_by_building(building_id: int) -> int:
 
 async def get_building_power_state(building_id: int) -> dict | None:
     """Отримати стан електропостачання будинку."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT building_id, is_up, last_change FROM building_power_state WHERE building_id=?",
@@ -1720,7 +1737,7 @@ async def set_building_power_state(building_id: int, is_up: bool) -> bool:
     Встановити стан електропостачання будинку.
     Повертає True якщо стан змінився, False якщо залишився тим самим.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         now = datetime.now().isoformat()
         
         # Отримуємо поточний стан
@@ -1754,7 +1771,7 @@ async def set_building_power_state(building_id: int, is_up: bool) -> bool:
 
 async def get_all_buildings_power_state() -> dict[int, dict]:
     """Отримати стан електропостачання всіх будинків."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT building_id, is_up, last_change FROM building_power_state") as cur:
             rows = await cur.fetchall()
