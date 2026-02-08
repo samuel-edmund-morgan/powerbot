@@ -68,8 +68,20 @@ docker compose restart
 docker compose pull
 docker compose up -d
 
-# логи (з фільтром)
-docker compose logs -f powerbot | rg "INFO:handlers:User"
+# логи контейнера (з фільтром)
+docker compose logs -f powerbot | grep -E "INFO:handlers:User|INFO:aiohttp.access"
+
+# persistent лог-файл (не зникає після recreate контейнера)
+tail -f /opt/powerbot/logs/powerbot.log
+
+# test persistent лог-файли
+tail -f /opt/powerbot-test/logs/powerbot.log
+tail -f /opt/powerbot-test/logs/businessbot.log
+
+# з локального Mac через SSH
+ssh workspace-docker "tail -f /opt/powerbot/logs/powerbot.log"
+ssh workspace-docker "tail -f /opt/powerbot-test/logs/powerbot.log"
+ssh workspace-docker "tail -f /opt/powerbot-test/logs/businessbot.log"
 
 # статус
 docker compose ps
@@ -82,6 +94,12 @@ docker compose --profile migrate run --rm migrate
 ```bash
 sqlite3 state.db ".backup 'state.db.$(date +%F_%H-%M-%S).bak'"
 ```
+
+Автобекап через `/usr/local/bin/powerbot-backup.sh` архівує:
+- `/opt/powerbot` (включно з `/opt/powerbot/logs`)
+- `/opt/powerbot-test` (включно з `/opt/powerbot-test/logs`)
+- `/opt/traefik`
+- консистентні копії `state.db` через `sqlite3 .backup`
 
 ## 3) Шпаргалка (команди)
 
