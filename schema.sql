@@ -56,7 +56,65 @@ CREATE TABLE IF NOT EXISTS places (
     description TEXT,                        -- Опис
     address TEXT,                            -- Адреса
     keywords TEXT DEFAULT NULL,              -- Ключові слова для пошуку
+    is_verified INTEGER DEFAULT 0,           -- Verified-статус для бізнес-режиму
+    verified_tier TEXT DEFAULT NULL,         -- Рівень підписки (light/pro/partner)
+    verified_until TEXT DEFAULT NULL,        -- Дата завершення Verified (ISO 8601)
+    business_enabled INTEGER DEFAULT 0,      -- Дозвіл на бізнес-функції (1/0)
     FOREIGN KEY (service_id) REFERENCES general_services(id) ON DELETE CASCADE
+);
+
+-- Власники бізнес-карток (зв'язок place <-> Telegram user)
+CREATE TABLE IF NOT EXISTS business_owners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    tg_user_id INTEGER NOT NULL,             -- Telegram ID користувача
+    role TEXT NOT NULL DEFAULT 'owner',      -- Роль: owner/manager
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending/approved/rejected
+    created_at TEXT NOT NULL,                -- Час створення (ISO 8601)
+    approved_at TEXT DEFAULT NULL,           -- Час підтвердження (ISO 8601)
+    approved_by INTEGER DEFAULT NULL,        -- Telegram ID адміністратора
+    UNIQUE (place_id, tg_user_id),
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+
+-- Поточний стан підписки бізнесу
+CREATE TABLE IF NOT EXISTS business_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL UNIQUE,        -- Одна активна картка підписки на заклад
+    tier TEXT NOT NULL DEFAULT 'free',       -- free/light/pro/partner
+    status TEXT NOT NULL DEFAULT 'inactive', -- inactive/active/past_due/canceled
+    starts_at TEXT DEFAULT NULL,             -- Початок дії (ISO 8601)
+    expires_at TEXT DEFAULT NULL,            -- Кінець дії (ISO 8601)
+    created_at TEXT NOT NULL,                -- Час створення (ISO 8601)
+    updated_at TEXT NOT NULL,                -- Час останнього оновлення (ISO 8601)
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+
+-- Аудит чутливих бізнес-змін
+CREATE TABLE IF NOT EXISTS business_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    actor_tg_user_id INTEGER DEFAULT NULL,   -- Хто виконав дію
+    action TEXT NOT NULL,                    -- Тип дії
+    payload_json TEXT DEFAULT NULL,          -- JSON з деталями
+    created_at TEXT NOT NULL,                -- Час події (ISO 8601)
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+
+-- Події оплати/білінгу (підготовка до Telegram Stars)
+CREATE TABLE IF NOT EXISTS business_payment_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    provider TEXT NOT NULL DEFAULT 'telegram_stars',
+    external_payment_id TEXT DEFAULT NULL,   -- ID транзакції провайдера
+    event_type TEXT NOT NULL,                -- payment_succeeded/refund/etc
+    amount_stars INTEGER DEFAULT NULL,       -- Сума в Stars
+    currency TEXT DEFAULT 'XTR',             -- Внутрішнє позначення валюти
+    status TEXT NOT NULL DEFAULT 'new',      -- new/processed/failed
+    raw_payload_json TEXT DEFAULT NULL,      -- Сирі дані події
+    created_at TEXT NOT NULL,                -- Час створення (ISO 8601)
+    processed_at TEXT DEFAULT NULL,          -- Час обробки (ISO 8601)
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
 );
 
 -- Укриття (спрощений список місць)
@@ -146,6 +204,34 @@ CREATE TABLE IF NOT EXISTS building_power_state (
     last_change TEXT,                        -- Час останньої зміни (ISO 8601)
     FOREIGN KEY (building_id) REFERENCES buildings(id)
 );
+
+-- Індекси бізнес-режиму
+CREATE INDEX IF NOT EXISTS idx_places_business_enabled_verified
+    ON places (business_enabled, is_verified);
+
+CREATE INDEX IF NOT EXISTS idx_places_verified_tier
+    ON places (verified_tier);
+
+CREATE INDEX IF NOT EXISTS idx_business_owners_tg_user
+    ON business_owners (tg_user_id);
+
+CREATE INDEX IF NOT EXISTS idx_business_owners_place_status
+    ON business_owners (place_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_business_subscriptions_status_expires
+    ON business_subscriptions (status, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_business_audit_place_created
+    ON business_audit_log (place_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_business_payment_place_created
+    ON business_payment_events (place_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_business_payment_external
+    ON business_payment_events (provider, external_payment_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_payment_event
+    ON business_payment_events (provider, external_payment_id, event_type);
 
 -- =============================================================================
 -- Початкові дані (приклад - замініть на реальні)

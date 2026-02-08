@@ -17,9 +17,10 @@ migrate_db.py - Безпечна міграція схеми SQLite для Power
 1. Порівнює схеми еталонної та цільової БД
 2. Додає нові таблиці
 3. Додає нові колонки до існуючих таблиць
-4. НЕ видаляє існуючі колонки/таблиці (безпечний режим)
-5. Заповнює нові колонки дефолтними значеннями
-6. Додає статичні дані без видалення існуючих записів (INSERT OR IGNORE)
+4. Додає нові індекси
+5. НЕ видаляє існуючі колонки/таблиці/індекси (безпечний режим)
+6. Заповнює нові колонки дефолтними значеннями
+7. Додає статичні дані без видалення існуючих записів (INSERT OR IGNORE)
    Пропускає kv/sensors/building_power_state, щоб не затирати прод-дані
 
 ВАЖЛИВО:
@@ -56,6 +57,10 @@ USER_DATA_TABLES = {
     "kv",
     "sensors",
     "building_power_state",
+    "business_owners",
+    "business_subscriptions",
+    "business_audit_log",
+    "business_payment_events",
 }
 
 # Дефолтні значення для нових колонок за типом
@@ -144,6 +149,36 @@ class DatabaseMigrator:
         result = cursor.fetchone()
         conn.close()
         return result[0] if result else ""
+
+    def get_index_info(self, db_path: Path) -> Dict[str, str]:
+        """Отримує інформацію про користувацькі індекси (без autoindex)."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT name, sql
+            FROM sqlite_master
+            WHERE type='index'
+              AND sql IS NOT NULL
+              AND name NOT LIKE 'sqlite_autoindex_%'
+            ORDER BY name
+            """
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return {name: sql for name, sql in rows if name and sql}
+
+    def get_create_index_statement(self, db_path: Path, index_name: str) -> str:
+        """Отримує CREATE statement для індексу."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+            (index_name,)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else ""
     
     def compare_schemas(self) -> Dict[str, Any]:
         """Порівнює схеми еталонної та цільової баз даних."""
@@ -153,6 +188,7 @@ class DatabaseMigrator:
         comparison = {
             "new_tables": [],
             "new_columns": {},
+            "new_indexes": [],
             "modified_columns": {},
         }
         
@@ -174,6 +210,13 @@ class DatabaseMigrator:
                 
                 if new_cols:
                     comparison["new_columns"][table] = new_cols
+
+        # Знаходимо нові індекси
+        source_indexes = self.get_index_info(self.source_db)
+        target_indexes = self.get_index_info(self.target_db)
+        for index_name in source_indexes:
+            if index_name not in target_indexes:
+                comparison["new_indexes"].append(index_name)
         
         return comparison
     
@@ -237,6 +280,32 @@ class DatabaseMigrator:
             except sqlite3.OperationalError as e:
                 if "duplicate column name" in str(e).lower():
                     log_warning(f"Колонка {col_name} вже існує в {table_name}")
+                else:
+                    raise
+            finally:
+                conn.close()
+
+    def add_index(self, index_name: str):
+        """Додає новий індекс з еталонної БД у цільову."""
+        create_sql = self.get_create_index_statement(self.source_db, index_name)
+        if not create_sql:
+            log_warning(f"Не знайдено SQL для індексу {index_name}")
+            return
+
+        if self.verbose:
+            print(f"    SQL: {create_sql}")
+
+        self.changes.append(f"Додано індекс: {index_name}")
+
+        if not self.dry_run:
+            conn = sqlite3.connect(self.target_db)
+            cursor = conn.cursor()
+            try:
+                cursor.execute(create_sql)
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                if "already exists" in str(e).lower():
+                    log_warning(f"Індекс {index_name} вже існує")
                 else:
                     raise
             finally:
@@ -311,7 +380,11 @@ class DatabaseMigrator:
         print(f"{Colors.BLUE}2. Порівняння схем баз даних{Colors.NC}")
         comparison = self.compare_schemas()
         
-        if not comparison["new_tables"] and not comparison["new_columns"]:
+        if (
+            not comparison["new_tables"]
+            and not comparison["new_columns"]
+            and not comparison["new_indexes"]
+        ):
             log_info("Схеми ідентичні, міграція не потрібна")
             return True
         
@@ -332,9 +405,17 @@ class DatabaseMigrator:
                     log_action(f"Додаю колонку: {table}.{col['name']}")
                     self.add_column(table, col)
         
+        # Нові індекси
+        if comparison["new_indexes"]:
+            print("")
+            print(f"{Colors.BLUE}5. Додавання нових індексів{Colors.NC}")
+            for index_name in comparison["new_indexes"]:
+                log_action(f"Додаю індекс: {index_name}")
+                self.add_index(index_name)
+
         # Міграція статичних даних (places, general_services, buildings)
         print("")
-        print(f"{Colors.BLUE}5. Міграція статичних даних{Colors.NC}")
+        print(f"{Colors.BLUE}6. Міграція статичних даних{Colors.NC}")
         static_tables = ["general_services", "places", "buildings", "shelter_places"]
         source_info = self.get_table_info(self.source_db)
         for table in static_tables:
