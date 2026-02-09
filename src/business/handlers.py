@@ -580,6 +580,9 @@ async def send_main_menu(message: Message, user_id: int) -> None:
         text=INTRO_TEXT,
         reply_markup=build_main_menu(user_id),
         remove_reply_keyboard=True,
+        # /start or other command-based entry should always show something "new"
+        # at the bottom of the chat, otherwise edits can be invisible.
+        force_new_message=True,
     )
 
 
