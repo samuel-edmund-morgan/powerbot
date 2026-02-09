@@ -124,15 +124,16 @@ void onEthEvent(WiFiEvent_t event) {
 
 void setupEthernet() {
     Serial.println("🔌 Ініціалізація LAN8720...");
-    Serial.printf("   PHY_ADDR=%d, POWER=%d\n", WT32_ETH_PHY_ADDR, WT32_ETH_PHY_POWER);
-    Serial.printf("   MDC=%d, MDIO=%d\n", WT32_ETH_PHY_MDC, WT32_ETH_PHY_MDIO);
+    Serial.printf("   PHY_ADDR=%d, POWER=%d\n", PB_ETH_PHY_ADDR, PB_ETH_PHY_POWER);
+    Serial.printf("   MDC=%d, MDIO=%d\n", PB_ETH_PHY_MDC, PB_ETH_PHY_MDIO);
+    Serial.printf("   CLK_MODE=%d (0=GPIO0_IN,1=GPIO0_OUT,2=GPIO16_OUT,3=GPIO17_OUT)\n", static_cast<int>(PB_ETH_CLK_MODE));
 
-    if (!ETH.begin(WT32_ETH_PHY_ADDR,
-                   WT32_ETH_PHY_POWER,
-                   WT32_ETH_PHY_MDC,
-                   WT32_ETH_PHY_MDIO,
-                   WT32_ETH_PHY_TYPE,
-                   WT32_ETH_CLK_MODE)) {
+    if (!ETH.begin(PB_ETH_PHY_ADDR,
+                   PB_ETH_PHY_POWER,
+                   PB_ETH_PHY_MDC,
+                   PB_ETH_PHY_MDIO,
+                   PB_ETH_PHY_TYPE,
+                   PB_ETH_CLK_MODE)) {
         Serial.println("❌ Помилка запуску Ethernet!");
         return;
     }
