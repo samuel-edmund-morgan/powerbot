@@ -1,6 +1,6 @@
-# PowerBot WT32-ETH01 Sensors
+# PowerBot ESP32 Ethernet Sensors (WT32-ETH01 / ESP32-ETH01)
 
-Прошивка для Wireless-Tag WT32-ETH01 сенсорів моніторингу електроенергії.
+Прошивка для ESP32 + LAN8720 сенсорів моніторингу електроенергії (WT32-ETH01 та сумісні ESP32-ETH01 плати).
 
 ## Принцип роботи
 
@@ -41,14 +41,17 @@ pip install platformio
 ```bash
 cd /home/powerbot/powerbot/sensors
 
-# Збірка
-pio run
+# Збірка (WT32-ETH01)
+pio run -e wt32-eth01
 
-# Прошивка
-pio run --target upload
+# Прошивка (WT32-ETH01)
+pio run -e wt32-eth01 --target upload
+
+# Прошивка (ESP32-ETH01)
+pio run -e esp32-eth01 --target upload
 
 # Монітор серійного порту
-pio device monitor
+pio device monitor -e wt32-eth01
 ```
 
 ## Структура проєкту
@@ -63,7 +66,9 @@ sensors/
 └── platformio.ini      # Конфігурація PlatformIO
 ```
 
-## Wireless-Tag WT32-ETH01
+## Плати
+
+### Wireless-Tag WT32-ETH01
 
 **Характеристики:**
 - CPU: ESP32 240MHz Dual Core
@@ -78,6 +83,11 @@ sensors/
 | MDC    | 23   |
 | MDIO   | 18   |
 | Clock  | GPIO0 (IN) |
+
+### ESP32-ETH01 (поширені клони)
+
+На багатьох ESP32-ETH01 плата **не подає зовнішній 50MHz clock** на GPIO0, тому потрібен режим
+`ETH_CLOCK_GPIO0_OUT` (ESP32 генерує 50MHz для PHY). Це вже налаштовано в `env:esp32-eth01` у `platformio.ini`.
 
 ## Список будинків
 
