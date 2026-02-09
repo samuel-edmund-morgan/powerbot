@@ -49,6 +49,10 @@
 // За замовчуванням виставлено під WT32-ETH01 (external 50MHz clock -> GPIO0).
 // Для багатьох ESP32-ETH01 клонів потрібен clock OUT від ESP32 (GPIO0_OUT або GPIO17_OUT).
 // Це задається через build_flags у `platformio.ini` (див. env:esp32-eth01).
+//
+// ВАЖЛИВО: в Arduino-ESP32 `ETH.begin(..., power, ...)` у сучасних версіях
+// передає `power` як `reset_gpio_num` у ESP-IDF (тобто це скоріше RESET pin, а не PWR_EN).
+// На деяких платах є окремий PWR_EN для PHY (його потрібно просто виставити в HIGH перед ETH.begin()).
 // ═══════════════════════════════════════════════════════════════
 
 #ifndef PB_ETH_PHY_ADDR
@@ -73,6 +77,22 @@
 
 #ifndef PB_ETH_CLK_MODE
 #define PB_ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN
+#endif
+
+// Опційний power enable pin для PHY (якщо на платі він є).
+// За замовчуванням вимкнено (-1).
+#ifndef PB_ETH_POWER_ENABLE_PIN
+#define PB_ETH_POWER_ENABLE_PIN  -1
+#endif
+
+// Рівень, який вмикає живлення PHY на PB_ETH_POWER_ENABLE_PIN (1 = HIGH, 0 = LOW)
+#ifndef PB_ETH_POWER_ENABLE_LEVEL
+#define PB_ETH_POWER_ENABLE_LEVEL  1
+#endif
+
+// Затримка після увімкнення PHY power enable (мс)
+#ifndef PB_ETH_POWER_UP_DELAY_MS
+#define PB_ETH_POWER_UP_DELAY_MS  150
 #endif
 
 // ═══════════════════════════════════════════════════════════════

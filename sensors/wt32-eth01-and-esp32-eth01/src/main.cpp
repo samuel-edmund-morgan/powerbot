@@ -129,9 +129,19 @@ void onEthEvent(WiFiEvent_t event) {
 
 void setupEthernet() {
     Serial.println("🔌 Ініціалізація LAN8720...");
-    Serial.printf("   PHY_ADDR=%d, POWER=%d\n", PB_ETH_PHY_ADDR, PB_ETH_PHY_POWER);
+    Serial.printf("   PHY_ADDR=%d, RESET=%d\n", PB_ETH_PHY_ADDR, PB_ETH_PHY_POWER);
     Serial.printf("   MDC=%d, MDIO=%d\n", PB_ETH_PHY_MDC, PB_ETH_PHY_MDIO);
     Serial.printf("   CLK_MODE=%d (0=GPIO0_IN,1=GPIO0_OUT,2=GPIO16_OUT,3=GPIO17_OUT)\n", static_cast<int>(PB_ETH_CLK_MODE));
+    Serial.printf("   PWR_EN=%d (level=%d, delay=%dms)\n",
+                  PB_ETH_POWER_ENABLE_PIN,
+                  PB_ETH_POWER_ENABLE_LEVEL,
+                  PB_ETH_POWER_UP_DELAY_MS);
+
+    if (PB_ETH_POWER_ENABLE_PIN >= 0) {
+        pinMode(PB_ETH_POWER_ENABLE_PIN, OUTPUT);
+        digitalWrite(PB_ETH_POWER_ENABLE_PIN, PB_ETH_POWER_ENABLE_LEVEL ? HIGH : LOW);
+        delay(PB_ETH_POWER_UP_DELAY_MS);
+    }
 
     if (!ETH.begin(PB_ETH_PHY_ADDR,
                    PB_ETH_PHY_POWER,
