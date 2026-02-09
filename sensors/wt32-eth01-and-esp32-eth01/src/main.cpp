@@ -1,8 +1,7 @@
 /*
- * PowerBot WT32-ETH01 Heartbeat Sensor
+ * PowerBot ESP32 Ethernet Heartbeat Sensor
  *
- * Плата: Wireless-Tag WT32-ETH01
- * Ethernet: LAN8720 через RMII
+ * Плати: WT32-ETH01 / ESP32-ETH01 (LAN8720, RMII)
  */
 
 #include <Arduino.h>
@@ -13,6 +12,11 @@
 
 // Ethernet/TCP клієнт
 WiFiClient ethClient;
+
+// Для коректного логування в різних env (див. platformio.ini)
+#ifndef PB_BOARD_NAME
+#define PB_BOARD_NAME "ESP32 Ethernet"
+#endif
 
 // Стан підключення
 bool eth_connected = false;
@@ -32,8 +36,9 @@ void setup() {
 
     Serial.println();
     Serial.println("================================================");
-    Serial.println("  PowerBot WT32-ETH01 Heartbeat Sensor");
-    Serial.println("  Плата: Wireless-Tag WT32-ETH01");
+    Serial.println("  PowerBot ESP32 Ethernet Heartbeat Sensor");
+    Serial.print("  Board:    ");
+    Serial.println(PB_BOARD_NAME);
     Serial.printf("  Building: %s (ID: %d)\n", BUILDING_NAME, BUILDING_ID);
     Serial.printf("  Sensor:   %s\n", SENSOR_UUID);
     Serial.printf("  Server:   %s:%d\n", SERVER_HOST, SERVER_PORT);
