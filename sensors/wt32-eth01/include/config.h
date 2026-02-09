@@ -1,7 +1,6 @@
 /*
- * Конфігурація WT32-ETH01 для PowerBot
+ * Конфігурація ESP32 Ethernet (WT32-ETH01 / ESP32-ETH01) для PowerBot
  *
- * Плата: Wireless-Tag WT32-ETH01
  * Ethernet: LAN8720 через RMII (вбудований MAC ESP32)
  */
 
@@ -45,16 +44,36 @@
 #define HTTP_TIMEOUT_MS         10000
 
 // ═══════════════════════════════════════════════════════════════
-// WT32-ETH01 (LAN8720, RMII)
-// Дефолтні значення з variant wt32-eth01 у Arduino-ESP32
+// Ethernet PHY (LAN8720, RMII)
+//
+// За замовчуванням виставлено під WT32-ETH01 (external 50MHz clock -> GPIO0).
+// Для багатьох ESP32-ETH01 клонів потрібен clock OUT від ESP32 (GPIO0_OUT або GPIO17_OUT).
+// Це задається через build_flags у `platformio.ini` (див. env:esp32-eth01).
 // ═══════════════════════════════════════════════════════════════
 
-#define WT32_ETH_PHY_ADDR    1
-#define WT32_ETH_PHY_POWER   16
-#define WT32_ETH_PHY_MDC     23
-#define WT32_ETH_PHY_MDIO    18
-#define WT32_ETH_PHY_TYPE    ETH_PHY_LAN8720
-#define WT32_ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN
+#ifndef PB_ETH_PHY_ADDR
+#define PB_ETH_PHY_ADDR    1
+#endif
+
+#ifndef PB_ETH_PHY_POWER
+#define PB_ETH_PHY_POWER   16
+#endif
+
+#ifndef PB_ETH_PHY_MDC
+#define PB_ETH_PHY_MDC     23
+#endif
+
+#ifndef PB_ETH_PHY_MDIO
+#define PB_ETH_PHY_MDIO    18
+#endif
+
+#ifndef PB_ETH_PHY_TYPE
+#define PB_ETH_PHY_TYPE    ETH_PHY_LAN8720
+#endif
+
+#ifndef PB_ETH_CLK_MODE
+#define PB_ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN
+#endif
 
 // ═══════════════════════════════════════════════════════════════
 // LED ІНДИКАЦІЯ
