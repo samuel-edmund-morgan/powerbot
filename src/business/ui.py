@@ -106,6 +106,7 @@ async def render(
     prefer_message_id: int | None = None,
     disable_web_page_preview: bool = True,
     remove_reply_keyboard: bool = False,
+    force_new_message: bool = False,
 ) -> int:
     """Render (send or edit) the business bot UI message.
 
@@ -142,6 +143,29 @@ async def render(
             disable_web_page_preview=disable_web_page_preview,
         )
         return int(msg.message_id)
+
+    if force_new_message:
+        # When users send commands, the bound UI message might be far above due to
+        # other bot messages (e.g., moderation notifications). Editing that message
+        # can look like "nothing happened". In this mode we send a fresh UI message,
+        # delete the old one (best-effort), and bind the new id.
+        last_id = await get_ui_message_id(chat_id)
+        if remove_reply_keyboard:
+            await _remove_legacy_reply_keyboard()
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+        new_id = int(msg.message_id)
+        await bind_ui_message_id(chat_id, new_id)
+        if last_id and int(last_id) != new_id:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=int(last_id))
+            except Exception:
+                pass
+        return new_id
 
     # Prefer editing the message we just received a callback for.
     if prefer_message_id:
