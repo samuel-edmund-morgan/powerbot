@@ -1,3 +1,7 @@
+import asyncio
+import json
+import logging
+import sqlite3
 from datetime import datetime
 import re
 from collections.abc import AsyncIterator
@@ -123,6 +127,27 @@ async def init_db():
         )
         await db.execute(
             "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)"
+        )
+        # Черга адмін-задач (control-plane): виконується основним ботом у data-plane.
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS admin_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                created_by INTEGER DEFAULT NULL,
+                started_at TEXT DEFAULT NULL,
+                finished_at TEXT DEFAULT NULL,
+                updated_at TEXT DEFAULT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                progress_current INTEGER DEFAULT 0,
+                progress_total INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT NULL
+            )"""
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_admin_jobs_status_created ON admin_jobs (status, created_at)"
         )
         # Таблиця історії подій (up/down)
         await db.execute(
@@ -642,6 +667,266 @@ async def db_get(k: str) -> str | None:
         async with db.execute("SELECT v FROM kv WHERE k=?", (k,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
+
+
+# ============ Admin Jobs Queue (control-plane) ============
+
+_ADMIN_JOB_STATUSES = {"pending", "running", "done", "failed", "canceled"}
+
+
+def _is_sqlite_locked_error(exc: BaseException) -> bool:
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database table is locked" in msg
+
+
+async def _with_sqlite_retry(fn, *, retries: int = 3, base_delay: float = 0.05):
+    attempt = 0
+    while True:
+        try:
+            return await fn()
+        except Exception as exc:
+            if not _is_sqlite_locked_error(exc) or attempt >= retries:
+                raise
+            await asyncio.sleep(base_delay * (2**attempt))
+            attempt += 1
+
+
+async def create_admin_job(kind: str, payload: dict, *, created_by: int | None = None) -> int:
+    """Enqueue a new admin job to be executed by the main bot worker."""
+    if not kind:
+        raise ValueError("kind is required")
+
+    created_at = datetime.now().isoformat()
+    payload_json = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))
+
+    async def _op() -> int:
+        async with open_db() as db:
+            cur = await db.execute(
+                """
+                INSERT INTO admin_jobs (kind, payload_json, status, created_at, created_by)
+                VALUES (?, ?, 'pending', ?, ?)
+                """,
+                (str(kind), payload_json, created_at, created_by),
+            )
+            await db.commit()
+            return int(cur.lastrowid)
+
+    return await _with_sqlite_retry(_op)
+
+
+async def get_admin_job(job_id: int) -> dict | None:
+    if not job_id:
+        return None
+
+    async def _op() -> dict | None:
+        async with open_db() as db:
+            async with db.execute(
+                """
+                SELECT id, kind, payload_json, status, created_at, created_by,
+                       started_at, finished_at, updated_at, attempts,
+                       progress_current, progress_total, last_error
+                FROM admin_jobs
+                WHERE id = ?
+                """,
+                (int(job_id),),
+            ) as cur:
+                row = await cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "kind": row[1],
+            "payload": json.loads(row[2]) if row[2] else {},
+            "status": row[3],
+            "created_at": row[4],
+            "created_by": row[5],
+            "started_at": row[6],
+            "finished_at": row[7],
+            "updated_at": row[8],
+            "attempts": row[9],
+            "progress_current": row[10],
+            "progress_total": row[11],
+            "last_error": row[12],
+        }
+
+    return await _with_sqlite_retry(_op)
+
+
+async def list_admin_jobs(limit: int = 20, offset: int = 0) -> list[dict]:
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+
+    async def _op() -> list[dict]:
+        async with open_db() as db:
+            async with db.execute(
+                """
+                SELECT id, kind, status, created_at, created_by,
+                       started_at, finished_at, updated_at, attempts,
+                       progress_current, progress_total, last_error
+                FROM admin_jobs
+                ORDER BY id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ) as cur:
+                rows = await cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "kind": r[1],
+                "status": r[2],
+                "created_at": r[3],
+                "created_by": r[4],
+                "started_at": r[5],
+                "finished_at": r[6],
+                "updated_at": r[7],
+                "attempts": r[8],
+                "progress_current": r[9],
+                "progress_total": r[10],
+                "last_error": r[11],
+            }
+            for r in rows
+        ]
+
+    return await _with_sqlite_retry(_op)
+
+
+async def claim_next_admin_job() -> dict | None:
+    """Atomically claim the next pending job and mark it running."""
+    now = datetime.now().isoformat()
+
+    async def _op() -> dict | None:
+        async with open_db() as db:
+            # Make claim atomic and avoid races if we ever scale.
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(
+                """
+                SELECT id, kind, payload_json, created_by, attempts,
+                       progress_current, progress_total
+                FROM admin_jobs
+                WHERE status = 'pending'
+                ORDER BY id ASC
+                LIMIT 1
+                """
+            ) as cur:
+                row = await cur.fetchone()
+            if not row:
+                await db.execute("COMMIT")
+                return None
+
+            job_id = int(row[0])
+            await db.execute(
+                """
+                UPDATE admin_jobs
+                SET status='running',
+                    started_at=COALESCE(started_at, ?),
+                    updated_at=?,
+                    attempts=attempts+1
+                WHERE id=? AND status='pending'
+                """,
+                (now, now, job_id),
+            )
+            async with db.execute("SELECT changes()") as cur2:
+                changes_row = await cur2.fetchone()
+            changed = int(changes_row[0]) if changes_row else 0
+            if changed != 1:
+                await db.execute("ROLLBACK")
+                return None
+
+            await db.execute("COMMIT")
+
+        payload = json.loads(row[2]) if row[2] else {}
+        return {
+            "id": job_id,
+            "kind": row[1],
+            "payload": payload,
+            "created_by": row[3],
+            "attempts": int(row[4]) + 1,
+            "progress_current": row[5],
+            "progress_total": row[6],
+        }
+
+    return await _with_sqlite_retry(_op)
+
+
+async def update_admin_job_progress(job_id: int, *, current: int | None = None, total: int | None = None) -> None:
+    if not job_id:
+        return
+    now = datetime.now().isoformat()
+
+    current_sql = "progress_current=COALESCE(?, progress_current)" if current is not None else "progress_current=progress_current"
+    total_sql = "progress_total=COALESCE(?, progress_total)" if total is not None else "progress_total=progress_total"
+
+    params: list = []
+    if current is not None:
+        params.append(int(current))
+    if total is not None:
+        params.append(int(total))
+    params.extend([now, int(job_id)])
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                f"""
+                UPDATE admin_jobs
+                SET {current_sql},
+                    {total_sql},
+                    updated_at=?
+                WHERE id=?
+                """,
+                tuple(params),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
+
+
+async def finish_admin_job(
+    job_id: int,
+    *,
+    status: str,
+    error: str | None = None,
+    progress_current: int | None = None,
+    progress_total: int | None = None,
+) -> None:
+    """Mark job done/failed/canceled and persist error/progress."""
+    if not job_id:
+        return
+    if status not in _ADMIN_JOB_STATUSES:
+        raise ValueError(f"Invalid admin job status: {status}")
+    if status in {"pending", "running"}:
+        raise ValueError("finish_admin_job() requires a terminal status")
+
+    now = datetime.now().isoformat()
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                """
+                UPDATE admin_jobs
+                SET status=?,
+                    finished_at=?,
+                    updated_at=?,
+                    progress_current=COALESCE(?, progress_current),
+                    progress_total=COALESCE(?, progress_total),
+                    last_error=?
+                WHERE id=?
+                """,
+                (
+                    status,
+                    now,
+                    now,
+                    progress_current,
+                    progress_total,
+                    error,
+                    int(job_id),
+                ),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def add_subscriber(

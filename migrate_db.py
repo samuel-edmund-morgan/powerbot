@@ -65,6 +65,7 @@ USER_DATA_TABLES = {
     "business_audit_log",
     "business_payment_events",
     "business_claim_tokens",
+    "admin_jobs",
 }
 
 # Дефолтні значення для нових колонок за типом

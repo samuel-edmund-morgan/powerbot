@@ -16,6 +16,7 @@ from services import alert_monitor_loop, sensors_monitor_loop
 from yasno import yasno_schedule_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
 from single_message_bot import SingleMessageBot
+from admin_jobs_worker import admin_jobs_worker_loop
 
 
 async def main():
@@ -44,6 +45,9 @@ async def main():
     # Оновлення графіків ЯСНО + сповіщення про зміни
     if CFG.yasno_enabled:
         asyncio.create_task(yasno_schedule_monitor_loop(bot))
+
+    # Admin jobs (control-plane queue): broadcast/light_notify toggles, etc.
+    asyncio.create_task(admin_jobs_worker_loop(bot))
     
     try:
         await dp.start_polling(bot)

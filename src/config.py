@@ -64,6 +64,9 @@ class Config:
     yasno_dso_id: int
     # Single-message mode
     single_message_mode: bool
+    # Separate admin bot (control plane)
+    admin_bot_api_key: str
+    admin_bot_single_message_mode: bool
     # Business mode
     business_mode: bool
     business_bot_api_key: str
@@ -133,6 +136,8 @@ CFG = Config(
     yasno_region_id=int(os.getenv("YASNO_REGION_ID", "25")),
     yasno_dso_id=int(os.getenv("YASNO_DSO_ID", "902")),
     single_message_mode=parse_bool(os.getenv("SINGLE_MESSAGE_MODE", "0")),
+    admin_bot_api_key=os.getenv("ADMIN_BOT_API_KEY", "").strip().strip('"').strip("'"),
+    admin_bot_single_message_mode=parse_bool(os.getenv("ADMIN_BOT_SINGLE_MESSAGE_MODE", "1")),
     business_mode=parse_bool(os.getenv("BUSINESS_MODE", "0")),
     business_bot_api_key=os.getenv("BUSINESS_BOT_API_KEY", "").strip().strip('"').strip("'"),
 )
@@ -149,3 +154,8 @@ def is_business_mode_enabled() -> bool:
 def is_business_bot_enabled() -> bool:
     """Business bot process is enabled only with flag + token."""
     return CFG.business_mode and bool(CFG.business_bot_api_key)
+
+
+def is_admin_bot_enabled() -> bool:
+    """Admin bot process is enabled only with non-empty token."""
+    return bool(CFG.admin_bot_api_key)

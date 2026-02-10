@@ -32,6 +32,13 @@ should_enable_business_profile() {
   [[ "$mode" == "1" && -n "$token" ]]
 }
 
+should_enable_admin_profile() {
+  local env_file="$1"
+  local token
+  token="$(get_env_value "ADMIN_BOT_API_KEY" "$env_file")"
+  [[ -n "$token" ]]
+}
+
 setup_docker_auth() {
   if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
     echo "Logging in to Docker Hub..."
@@ -104,13 +111,21 @@ docker compose pull
 if [[ "${MIGRATE}" == "1" ]]; then
   docker compose --profile migrate run --rm migrate
 fi
+
+profiles=()
 if should_enable_business_profile "${PROD_DIR}/.env"; then
   echo "Business profile enabled (BUSINESS_MODE=1 and BUSINESS_BOT_API_KEY is set)."
-  docker compose --profile business up -d
+  profiles+=(--profile business)
 else
   echo "Business profile disabled (missing BUSINESS_BOT_API_KEY or BUSINESS_MODE!=1)."
-  docker compose up -d
 fi
+if should_enable_admin_profile "${PROD_DIR}/.env"; then
+  echo "Admin profile enabled (ADMIN_BOT_API_KEY is set)."
+  profiles+=(--profile admin)
+else
+  echo "Admin profile disabled (missing ADMIN_BOT_API_KEY)."
+fi
+docker compose "${profiles[@]}" up -d
 
 docker compose ps
 

@@ -37,6 +37,20 @@ services:
     restart: on-failure
     profiles: ["business"]
 
+  adminbot:
+    image: semorgana/powerbot:latest
+    env_file:
+      - ./.env
+    environment:
+      DB_PATH: /data/state.db
+      APP_ENTRYPOINT: admin_main.py
+    volumes:
+      - ./:/data
+    networks:
+      - traefik
+    restart: on-failure
+    profiles: ["admin"]
+
   migrate:
     image: semorgana/powerbot-migrate:latest
     env_file:
