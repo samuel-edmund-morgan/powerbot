@@ -44,7 +44,17 @@ SHELTER_PLACES = [
 
 # ID будинку Ньюкасл - для існуючих користувачів
 NEWCASTLE_BUILDING_ID = 1
+DEFAULT_SECTION_OTHER_BUILDINGS = 1
+DEFAULT_SECTION_NEWCASTLE = 2
+VALID_SECTION_IDS = {1, 2, 3}
 SQLITE_BUSY_TIMEOUT_MS = 5000
+
+
+def default_section_for_building(building_id: int | None) -> int | None:
+    """Default section for legacy users/sensors when section_id is missing."""
+    if building_id is None:
+        return None
+    return DEFAULT_SECTION_NEWCASTLE if building_id == NEWCASTLE_BUILDING_ID else DEFAULT_SECTION_OTHER_BUILDINGS
 
 
 async def apply_sqlite_pragmas(db: aiosqlite.Connection) -> None:
@@ -119,7 +129,9 @@ async def init_db():
             """CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_type TEXT NOT NULL,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                building_id INTEGER DEFAULT NULL,
+                section_id INTEGER DEFAULT NULL
             )"""
         )
         # Міграція: додати колонки quiet_start/quiet_end якщо їх немає
@@ -317,6 +329,28 @@ async def init_db():
             )
         except Exception:
             pass
+
+        # Міграція: додати колонку section_id до subscribers
+        # Для ІСНУЮЧИХ користувачів: Ньюкасл -> 2 секція, решта -> 1 секція.
+        try:
+            await db.execute("ALTER TABLE subscribers ADD COLUMN section_id INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                """
+                UPDATE subscribers
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                   AND building_id IS NOT NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_NEWCASTLE, DEFAULT_SECTION_OTHER_BUILDINGS),
+            )
+        except Exception:
+            pass
         
         # Міграція: додати колонку building_id до таблиць голосування
         try:
@@ -327,19 +361,104 @@ async def init_db():
             await db.execute("ALTER TABLE water_votes ADD COLUMN building_id INTEGER DEFAULT NULL")
         except Exception:
             pass
+
+        # Міграція: додати section_id до таблиць голосування
+        try:
+            await db.execute("ALTER TABLE heating_votes ADD COLUMN section_id INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE water_votes ADD COLUMN section_id INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                """
+                UPDATE heating_votes
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                   AND building_id IS NOT NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_NEWCASTLE, DEFAULT_SECTION_OTHER_BUILDINGS),
+            )
+            await db.execute(
+                """
+                UPDATE water_votes
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                   AND building_id IS NOT NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_NEWCASTLE, DEFAULT_SECTION_OTHER_BUILDINGS),
+            )
+        except Exception:
+            pass
+
+        # Міграція: додати building_id/section_id до подій (legacy події прив'язуємо до Ньюкасл секція 2)
+        try:
+            await db.execute("ALTER TABLE events ADD COLUMN building_id INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE events ADD COLUMN section_id INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                """
+                UPDATE events
+                   SET building_id = ?, section_id = ?
+                 WHERE building_id IS NULL
+                   AND section_id IS NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_NEWCASTLE),
+            )
+        except Exception:
+            pass
         
         # === НОВА ТАБЛИЦЯ: Сенсори ESP32 ===
         await db.execute(
             """CREATE TABLE IF NOT EXISTS sensors (
                 uuid TEXT PRIMARY KEY,
                 building_id INTEGER NOT NULL,
+                section_id INTEGER DEFAULT NULL,
                 name TEXT,
+                comment TEXT DEFAULT NULL,
                 last_heartbeat TEXT,
                 created_at TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 FOREIGN KEY (building_id) REFERENCES buildings(id)
             )"""
         )
+
+        # Міграція: додати section_id/comment до sensors (для старих БД)
+        try:
+            await db.execute("ALTER TABLE sensors ADD COLUMN section_id INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE sensors ADD COLUMN comment TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                """
+                UPDATE sensors
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_NEWCASTLE, DEFAULT_SECTION_OTHER_BUILDINGS),
+            )
+        except Exception:
+            pass
         
         # Таблиця для стану будинків (світло є/немає)
         await db.execute(
@@ -349,6 +468,49 @@ async def init_db():
                 last_change TEXT,
                 FOREIGN KEY (building_id) REFERENCES buildings(id)
             )"""
+        )
+
+        # Таблиця для стану секцій (building_id + section_id)
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS building_section_power_state (
+                building_id INTEGER NOT NULL,
+                section_id INTEGER NOT NULL,
+                is_up INTEGER DEFAULT 1,
+                last_change TEXT,
+                PRIMARY KEY (building_id, section_id),
+                FOREIGN KEY (building_id) REFERENCES buildings(id)
+            )"""
+        )
+
+        # ЯСНО: v2 кеш для секцій
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS yasno_schedule_state_v2 (
+                building_id INTEGER NOT NULL,
+                section_id INTEGER NOT NULL,
+                queue_key TEXT NOT NULL,
+                day_key TEXT NOT NULL,
+                status TEXT DEFAULT NULL,
+                slots_hash TEXT DEFAULT NULL,
+                updated_at TEXT DEFAULT NULL,
+                PRIMARY KEY (building_id, section_id, queue_key, day_key)
+            )"""
+        )
+
+        # Індекси для секцій (корисно при масових розсилках/статистиці)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_building_section ON subscribers (building_id, section_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sensors_building_section_active ON sensors (building_id, section_id, is_active)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_building_section_timestamp ON events (building_id, section_id, timestamp)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_heating_votes_building_section ON heating_votes (building_id, section_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_water_votes_building_section ON water_votes (building_id, section_id)"
         )
 
         # === БІЗНЕС-МОДУЛЬ: базові таблиці ===
@@ -526,6 +688,40 @@ async def set_subscriber_building(chat_id: int, building_id: int) -> bool:
         )
         await db.commit()
         return result.rowcount > 0
+
+
+async def get_subscriber_section(chat_id: int) -> int | None:
+    """Отримати номер секції, яку обрав користувач."""
+    async with open_db() as db:
+        async with db.execute(
+            "SELECT section_id FROM subscribers WHERE chat_id=?", (chat_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def set_subscriber_section(chat_id: int, section_id: int | None) -> bool:
+    """Встановити секцію для підписника. Повертає True якщо успішно."""
+    async with open_db() as db:
+        result = await db.execute(
+            "UPDATE subscribers SET section_id = ? WHERE chat_id = ?",
+            (section_id, chat_id),
+        )
+        await db.commit()
+        return result.rowcount > 0
+
+
+async def get_subscriber_building_and_section(chat_id: int) -> tuple[int | None, int | None]:
+    """Отримати (building_id, section_id) для користувача одним запитом."""
+    async with open_db() as db:
+        async with db.execute(
+            "SELECT building_id, section_id FROM subscribers WHERE chat_id=?",
+            (chat_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None, None
+            return row[0], row[1]
 
 
 async def get_building_info(building_id: int) -> dict | None:
@@ -758,7 +954,11 @@ async def get_notification_settings(chat_id: int) -> dict:
             }
 
 
-async def get_subscribers_for_light_notification(current_hour: int, building_id: int | None = None) -> list[int]:
+async def get_subscribers_for_light_notification(
+    current_hour: int,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> list[int]:
     """
     Отримати список підписників для сповіщень про світло.
     Враховує тихі години, налаштування light_notifications та будинок.
@@ -766,19 +966,32 @@ async def get_subscribers_for_light_notification(current_hour: int, building_id:
     Args:
         current_hour: поточна година для перевірки тихих годин
         building_id: ID будинку для фільтрації (якщо None - повертає для Ньюкасла)
+        section_id: номер секції для фільтрації (якщо None - всі секції будинку)
     """
     # Якщо building_id не вказано - використовуємо Ньюкасл (поточна реалізація)
     if building_id is None:
         building_id = NEWCASTLE_BUILDING_ID
     
     async with open_db() as db:
-        async with db.execute(
-            """SELECT chat_id, quiet_start, quiet_end, light_notifications 
-               FROM subscribers 
-               WHERE (light_notifications = 1 OR light_notifications IS NULL)
-               AND building_id = ?""",
-            (building_id,)
-        ) as cur:
+        if section_id is None:
+            query = (
+                """SELECT chat_id, quiet_start, quiet_end, light_notifications
+                   FROM subscribers
+                   WHERE (light_notifications = 1 OR light_notifications IS NULL)
+                     AND building_id = ?"""
+            )
+            params = (building_id,)
+        else:
+            query = (
+                """SELECT chat_id, quiet_start, quiet_end, light_notifications
+                   FROM subscribers
+                   WHERE (light_notifications = 1 OR light_notifications IS NULL)
+                     AND building_id = ?
+                     AND section_id = ?"""
+            )
+            params = (building_id, section_id)
+
+        async with db.execute(query, params) as cur:
             rows = await cur.fetchall()
     
     result = []
@@ -796,7 +1009,9 @@ async def get_subscribers_for_light_notification(current_hour: int, building_id:
 
 
 async def get_subscribers_for_schedule_notification(
-    current_hour: int, building_id: int | None = None
+    current_hour: int,
+    building_id: int | None = None,
+    section_id: int | None = None,
 ) -> list[int]:
     """
     Отримати список підписників для сповіщень про оновлення графіків.
@@ -806,13 +1021,25 @@ async def get_subscribers_for_schedule_notification(
         building_id = NEWCASTLE_BUILDING_ID
 
     async with open_db() as db:
-        async with db.execute(
-            """SELECT chat_id, quiet_start, quiet_end, schedule_notifications
-               FROM subscribers
-               WHERE (schedule_notifications = 1 OR schedule_notifications IS NULL)
-                 AND building_id = ?""",
-            (building_id,),
-        ) as cur:
+        if section_id is None:
+            query = (
+                """SELECT chat_id, quiet_start, quiet_end, schedule_notifications
+                   FROM subscribers
+                   WHERE (schedule_notifications = 1 OR schedule_notifications IS NULL)
+                     AND building_id = ?"""
+            )
+            params = (building_id,)
+        else:
+            query = (
+                """SELECT chat_id, quiet_start, quiet_end, schedule_notifications
+                   FROM subscribers
+                   WHERE (schedule_notifications = 1 OR schedule_notifications IS NULL)
+                     AND building_id = ?
+                     AND section_id = ?"""
+            )
+            params = (building_id, section_id)
+
+        async with db.execute(query, params) as cur:
             rows = await cur.fetchall()
 
     result = []
@@ -857,7 +1084,11 @@ async def get_subscribers_for_alert_notification(current_hour: int) -> list[int]
 
 # ============ Історія подій ============
 
-async def add_event(event_type: str) -> datetime:
+async def add_event(
+    event_type: str,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> datetime:
     """
     Додати подію до історії.
     event_type: 'up' або 'down'
@@ -866,74 +1097,135 @@ async def add_event(event_type: str) -> datetime:
     now = datetime.now()
     async with open_db() as db:
         await db.execute(
-            "INSERT INTO events (event_type, timestamp) VALUES (?, ?)",
-            (event_type, now.isoformat()),
+            "INSERT INTO events (event_type, timestamp, building_id, section_id) VALUES (?, ?, ?, ?)",
+            (event_type, now.isoformat(), building_id, section_id),
         )
         await db.commit()
     return now
 
 
-async def get_last_event(event_type: str | None = None) -> tuple[str, datetime] | None:
+async def get_last_event(
+    event_type: str | None = None,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> tuple[str, datetime] | None:
     """
     Отримати останню подію.
     event_type: 'up', 'down' або None (будь-яка)
     Повертає (event_type, timestamp) або None.
     """
     async with open_db() as db:
+        clauses: list[str] = []
+        params: list[object] = []
         if event_type:
-            query = "SELECT event_type, timestamp FROM events WHERE event_type=? ORDER BY id DESC LIMIT 1"
-            params = (event_type,)
-        else:
-            query = "SELECT event_type, timestamp FROM events ORDER BY id DESC LIMIT 1"
-            params = ()
-        async with db.execute(query, params) as cur:
+            clauses.append("event_type=?")
+            params.append(event_type)
+        if building_id is not None and section_id is not None:
+            clauses.append("building_id=? AND section_id=?")
+            params.extend([building_id, section_id])
+        elif building_id is not None:
+            clauses.append("building_id=?")
+            params.append(building_id)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT event_type, timestamp FROM events {where} ORDER BY id DESC LIMIT 1"
+
+        async with db.execute(query, tuple(params)) as cur:
             row = await cur.fetchone()
             if row:
                 return row[0], datetime.fromisoformat(row[1])
             return None
 
 
-async def get_last_event_before(before: datetime) -> tuple[str, datetime] | None:
+async def get_last_event_before(
+    before: datetime,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> tuple[str, datetime] | None:
     """Отримати останню подію до вказаного часу."""
     async with open_db() as db:
-        async with db.execute(
-            "SELECT event_type, timestamp FROM events WHERE timestamp < ? ORDER BY id DESC LIMIT 1",
-            (before.isoformat(),),
-        ) as cur:
+        clauses = ["timestamp < ?"]
+        params: list[object] = [before.isoformat()]
+        if building_id is not None and section_id is not None:
+            clauses.append("building_id=? AND section_id=?")
+            params.extend([building_id, section_id])
+        elif building_id is not None:
+            clauses.append("building_id=?")
+            params.append(building_id)
+
+        query = f"SELECT event_type, timestamp FROM events WHERE {' AND '.join(clauses)} ORDER BY id DESC LIMIT 1"
+        async with db.execute(query, tuple(params)) as cur:
             row = await cur.fetchone()
             if row:
                 return row[0], datetime.fromisoformat(row[1])
             return None
 
 
-async def get_events_since(since: datetime) -> list[tuple[str, datetime]]:
+async def get_events_since(
+    since: datetime,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> list[tuple[str, datetime]]:
     """Отримати всі події після вказаного часу."""
     async with open_db() as db:
-        async with db.execute(
-            "SELECT event_type, timestamp FROM events WHERE timestamp >= ? ORDER BY timestamp",
-            (since.isoformat(),),
-        ) as cur:
+        clauses = ["timestamp >= ?"]
+        params: list[object] = [since.isoformat()]
+        if building_id is not None and section_id is not None:
+            clauses.append("building_id=? AND section_id=?")
+            params.extend([building_id, section_id])
+        elif building_id is not None:
+            clauses.append("building_id=?")
+            params.append(building_id)
+
+        query = f"SELECT event_type, timestamp FROM events WHERE {' AND '.join(clauses)} ORDER BY timestamp"
+        async with db.execute(query, tuple(params)) as cur:
             rows = await cur.fetchall()
             return [(r[0], datetime.fromisoformat(r[1])) for r in rows]
 
 
-async def get_all_events() -> list[tuple[str, datetime]]:
+async def get_all_events(
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> list[tuple[str, datetime]]:
     """Отримати всі події."""
     async with open_db() as db:
-        async with db.execute(
-            "SELECT event_type, timestamp FROM events ORDER BY timestamp"
-        ) as cur:
+        clauses: list[str] = []
+        params: list[object] = []
+        if building_id is not None and section_id is not None:
+            clauses.append("building_id=? AND section_id=?")
+            params.extend([building_id, section_id])
+        elif building_id is not None:
+            clauses.append("building_id=?")
+            params.append(building_id)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT event_type, timestamp FROM events {where} ORDER BY timestamp"
+        async with db.execute(query, tuple(params)) as cur:
             rows = await cur.fetchall()
             return [(r[0], datetime.fromisoformat(r[1])) for r in rows]
 
 
-async def get_last_events(limit: int = 2) -> list[tuple[str, datetime]]:
+async def get_last_events(
+    limit: int = 2,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> list[tuple[str, datetime]]:
     """Отримати останні N подій (за замовчуванням 2)."""
     async with open_db() as db:
-        async with db.execute(
-            "SELECT event_type, timestamp FROM events ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ) as cur:
+        clauses: list[str] = []
+        params: list[object] = []
+        if building_id is not None and section_id is not None:
+            clauses.append("building_id=? AND section_id=?")
+            params.extend([building_id, section_id])
+        elif building_id is not None:
+            clauses.append("building_id=?")
+            params.append(building_id)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT event_type, timestamp FROM events {where} ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+
+        async with db.execute(query, tuple(params)) as cur:
             rows = await cur.fetchall()
             return [(r[0], datetime.fromisoformat(r[1])) for r in rows]
 
@@ -1422,53 +1714,85 @@ async def get_shelter_likes_count(place_id: int) -> int:
 
 # ============ Функції для голосування за опалення/воду ============
 
-async def vote_heating(chat_id: int, has_heating: bool, building_id: int | None = None):
+async def vote_heating(
+    chat_id: int,
+    has_heating: bool,
+    building_id: int | None = None,
+    section_id: int | None = None,
+):
     """
     Проголосувати за стан опалення.
     Голос прив'язується до будинку користувача.
     """
-    # Якщо building_id не вказано - отримуємо з профілю користувача
-    if building_id is None:
-        building_id = await get_subscriber_building(chat_id)
+    # Якщо building_id/section_id не вказано - отримуємо з профілю користувача
+    if building_id is None or section_id is None:
+        b, s = await get_subscriber_building_and_section(chat_id)
+        building_id = building_id if building_id is not None else b
+        section_id = section_id if section_id is not None else s
     
     if building_id is None:
         # Користувач не обрав будинок - не можемо зберегти голос
+        return
+    if section_id is None:
+        section_id = default_section_for_building(building_id)
+    if section_id not in VALID_SECTION_IDS:
         return
     
     now = datetime.now().isoformat()
     async with open_db() as db:
         await db.execute(
-            """INSERT INTO heating_votes(chat_id, has_heating, voted_at, building_id) VALUES(?, ?, ?, ?)
-               ON CONFLICT(chat_id) DO UPDATE SET has_heating=excluded.has_heating, voted_at=excluded.voted_at, building_id=excluded.building_id""",
-            (chat_id, 1 if has_heating else 0, now, building_id)
+            """INSERT INTO heating_votes(chat_id, has_heating, voted_at, building_id, section_id)
+               VALUES(?, ?, ?, ?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET
+                   has_heating=excluded.has_heating,
+                   voted_at=excluded.voted_at,
+                   building_id=excluded.building_id,
+                   section_id=excluded.section_id""",
+            (chat_id, 1 if has_heating else 0, now, building_id, section_id)
         )
         await db.commit()
 
 
-async def vote_water(chat_id: int, has_water: bool, building_id: int | None = None):
+async def vote_water(
+    chat_id: int,
+    has_water: bool,
+    building_id: int | None = None,
+    section_id: int | None = None,
+):
     """
     Проголосувати за стан води.
     Голос прив'язується до будинку користувача.
     """
-    # Якщо building_id не вказано - отримуємо з профілю користувача
-    if building_id is None:
-        building_id = await get_subscriber_building(chat_id)
+    # Якщо building_id/section_id не вказано - отримуємо з профілю користувача
+    if building_id is None or section_id is None:
+        b, s = await get_subscriber_building_and_section(chat_id)
+        building_id = building_id if building_id is not None else b
+        section_id = section_id if section_id is not None else s
     
     if building_id is None:
         # Користувач не обрав будинок - не можемо зберегти голос
+        return
+    if section_id is None:
+        section_id = default_section_for_building(building_id)
+    if section_id not in VALID_SECTION_IDS:
         return
     
     now = datetime.now().isoformat()
     async with open_db() as db:
         await db.execute(
-            """INSERT INTO water_votes(chat_id, has_water, voted_at, building_id) VALUES(?, ?, ?, ?)
-               ON CONFLICT(chat_id) DO UPDATE SET has_water=excluded.has_water, voted_at=excluded.voted_at, building_id=excluded.building_id""",
-            (chat_id, 1 if has_water else 0, now, building_id)
+            """INSERT INTO water_votes(chat_id, has_water, voted_at, building_id, section_id)
+               VALUES(?, ?, ?, ?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET
+                   has_water=excluded.has_water,
+                   voted_at=excluded.voted_at,
+                   building_id=excluded.building_id,
+                   section_id=excluded.section_id""",
+            (chat_id, 1 if has_water else 0, now, building_id, section_id)
         )
         await db.commit()
 
 
-async def get_heating_stats(building_id: int | None = None) -> dict:
+async def get_heating_stats(building_id: int | None = None, section_id: int | None = None) -> dict:
     """
     Отримати статистику голосування за опалення.
     
@@ -1476,7 +1800,14 @@ async def get_heating_stats(building_id: int | None = None) -> dict:
         building_id: ID будинку для фільтрації (якщо None - всі голоси)
     """
     async with open_db() as db:
-        if building_id is not None:
+        if building_id is not None and section_id is not None:
+            query = (
+                "SELECT has_heating, COUNT(*) FROM heating_votes "
+                "WHERE building_id = ? AND section_id = ? "
+                "GROUP BY has_heating"
+            )
+            params = (building_id, section_id)
+        elif building_id is not None:
             query = "SELECT has_heating, COUNT(*) FROM heating_votes WHERE building_id = ? GROUP BY has_heating"
             params = (building_id,)
         else:
@@ -1502,7 +1833,7 @@ async def get_heating_stats(building_id: int | None = None) -> dict:
             }
 
 
-async def get_water_stats(building_id: int | None = None) -> dict:
+async def get_water_stats(building_id: int | None = None, section_id: int | None = None) -> dict:
     """
     Отримати статистику голосування за воду.
     
@@ -1510,7 +1841,14 @@ async def get_water_stats(building_id: int | None = None) -> dict:
         building_id: ID будинку для фільтрації (якщо None - всі голоси)
     """
     async with open_db() as db:
-        if building_id is not None:
+        if building_id is not None and section_id is not None:
+            query = (
+                "SELECT has_water, COUNT(*) FROM water_votes "
+                "WHERE building_id = ? AND section_id = ? "
+                "GROUP BY has_water"
+            )
+            params = (building_id, section_id)
+        elif building_id is not None:
             query = "SELECT has_water, COUNT(*) FROM water_votes WHERE building_id = ? GROUP BY has_water"
             params = (building_id,)
         else:
@@ -1536,19 +1874,35 @@ async def get_water_stats(building_id: int | None = None) -> dict:
             }
 
 
-async def get_user_vote(chat_id: int, vote_type: str) -> bool | None:
-    """Отримати голос користувача (heating або water). Повертає None якщо не голосував."""
+async def get_user_vote(
+    chat_id: int,
+    vote_type: str,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> bool | None:
+    """Отримати голос користувача (heating або water) для його building+section."""
     table = "heating_votes" if vote_type == "heating" else "water_votes"
     column = "has_heating" if vote_type == "heating" else "has_water"
+
+    if building_id is None or section_id is None:
+        b, s = await get_subscriber_building_and_section(chat_id)
+        building_id = building_id if building_id is not None else b
+        section_id = section_id if section_id is not None else s
+    if building_id is None or section_id is None:
+        return None
+
     async with open_db() as db:
-        async with db.execute(f"SELECT {column} FROM {table} WHERE chat_id=?", (chat_id,)) as cur:
+        async with db.execute(
+            f"SELECT {column} FROM {table} WHERE chat_id=? AND building_id=? AND section_id=?",
+            (chat_id, building_id, section_id),
+        ) as cur:
             row = await cur.fetchone()
             if row:
                 return row[0] == 1
             return None
 
 
-async def reset_votes(building_id: int | None = None):
+async def reset_votes(building_id: int | None = None, section_id: int | None = None):
     """
     Скинути голоси (викликається при зміні стану світла).
     
@@ -1556,7 +1910,16 @@ async def reset_votes(building_id: int | None = None):
         building_id: ID будинку для скидання (якщо None - скидаємо всі голоси)
     """
     async with open_db() as db:
-        if building_id is not None:
+        if building_id is not None and section_id is not None:
+            await db.execute(
+                "DELETE FROM heating_votes WHERE building_id = ? AND section_id = ?",
+                (building_id, section_id),
+            )
+            await db.execute(
+                "DELETE FROM water_votes WHERE building_id = ? AND section_id = ?",
+                (building_id, section_id),
+            )
+        elif building_id is not None:
             await db.execute("DELETE FROM heating_votes WHERE building_id = ?", (building_id,))
             await db.execute("DELETE FROM water_votes WHERE building_id = ?", (building_id,))
         else:
@@ -1643,14 +2006,29 @@ async def clear_all_notifications():
 
 # ============ ЯСНО: кеш стану графіків ============
 
-async def get_yasno_schedule_state(building_id: int, queue_key: str, day_key: str) -> dict | None:
+async def get_yasno_schedule_state(
+    building_id: int,
+    queue_key: str,
+    day_key: str,
+    section_id: int | None = None,
+) -> dict | None:
     async with open_db() as db:
-        async with db.execute(
-            """SELECT status, slots_hash, updated_at
-               FROM yasno_schedule_state
-               WHERE building_id=? AND queue_key=? AND day_key=?""",
-            (building_id, queue_key, day_key),
-        ) as cur:
+        if section_id is None:
+            query = (
+                """SELECT status, slots_hash, updated_at
+                   FROM yasno_schedule_state
+                   WHERE building_id=? AND queue_key=? AND day_key=?"""
+            )
+            params = (building_id, queue_key, day_key)
+        else:
+            query = (
+                """SELECT status, slots_hash, updated_at
+                   FROM yasno_schedule_state_v2
+                   WHERE building_id=? AND section_id=? AND queue_key=? AND day_key=?"""
+            )
+            params = (building_id, section_id, queue_key, day_key)
+
+        async with db.execute(query, params) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
@@ -1663,6 +2041,7 @@ async def get_yasno_schedule_state(building_id: int, queue_key: str, day_key: st
 
 async def upsert_yasno_schedule_state(
     building_id: int,
+    section_id: int | None,
     queue_key: str,
     day_key: str,
     status: str | None,
@@ -1670,13 +2049,22 @@ async def upsert_yasno_schedule_state(
     updated_at: str | None,
 ) -> None:
     async with open_db() as db:
-        await db.execute(
-            """INSERT INTO yasno_schedule_state(building_id, queue_key, day_key, status, slots_hash, updated_at)
-               VALUES(?, ?, ?, ?, ?, ?)
-               ON CONFLICT(building_id, queue_key, day_key)
-               DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
-            (building_id, queue_key, day_key, status, slots_hash, updated_at),
-        )
+        if section_id is None:
+            await db.execute(
+                """INSERT INTO yasno_schedule_state(building_id, queue_key, day_key, status, slots_hash, updated_at)
+                   VALUES(?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(building_id, queue_key, day_key)
+                   DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
+                (building_id, queue_key, day_key, status, slots_hash, updated_at),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO yasno_schedule_state_v2(building_id, section_id, queue_key, day_key, status, slots_hash, updated_at)
+                   VALUES(?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(building_id, section_id, queue_key, day_key)
+                   DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
+                (building_id, section_id, queue_key, day_key, status, slots_hash, updated_at),
+            )
         await db.commit()
 
 
@@ -1709,6 +2097,40 @@ async def delete_last_bot_message_record(chat_id: int):
 
 
 # ============ Сенсори ESP32 ============
+
+async def upsert_sensor_heartbeat(
+    uuid: str,
+    building_id: int,
+    section_id: int | None,
+    name: str | None = None,
+    comment: str | None = None,
+) -> bool:
+    """
+    Upsert сенсора + оновити last_heartbeat.
+    Повертає True якщо сенсор був створений, False якщо оновлений.
+    """
+    async with open_db() as db:
+        now = datetime.now().isoformat()
+        async with db.execute("SELECT 1 FROM sensors WHERE uuid=?", (uuid,)) as cur:
+            existed = await cur.fetchone() is not None
+
+        await db.execute(
+            """
+            INSERT INTO sensors(uuid, building_id, section_id, name, comment, last_heartbeat, created_at, is_active)
+            VALUES(?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(uuid) DO UPDATE SET
+                building_id=excluded.building_id,
+                section_id=excluded.section_id,
+                name=COALESCE(excluded.name, sensors.name),
+                comment=COALESCE(excluded.comment, sensors.comment),
+                last_heartbeat=excluded.last_heartbeat,
+                is_active=1
+            """,
+            (uuid, building_id, section_id, name, comment, now, now),
+        )
+        await db.commit()
+        return not existed
+
 
 async def register_sensor(uuid: str, building_id: int, name: str | None = None) -> bool:
     """
@@ -1760,7 +2182,7 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT uuid, building_id, name, last_heartbeat, created_at, is_active FROM sensors WHERE uuid=?",
+            "SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at, is_active FROM sensors WHERE uuid=?",
             (uuid,)
         ) as cur:
             row = await cur.fetchone()
@@ -1768,7 +2190,9 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
                 return {
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
+                    "section_id": row["section_id"],
                     "name": row["name"],
+                    "comment": row["comment"],
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                     "is_active": bool(row["is_active"]),
@@ -1781,7 +2205,7 @@ async def get_sensors_by_building(building_id: int) -> list[dict]:
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT uuid, building_id, name, last_heartbeat, created_at FROM sensors WHERE building_id=? AND is_active=1",
+            "SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at FROM sensors WHERE building_id=? AND is_active=1",
             (building_id,)
         ) as cur:
             rows = await cur.fetchall()
@@ -1789,7 +2213,38 @@ async def get_sensors_by_building(building_id: int) -> list[dict]:
                 {
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
+                    "section_id": row["section_id"],
                     "name": row["name"],
+                    "comment": row["comment"],
+                    "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
+                    "created_at": datetime.fromisoformat(row["created_at"]),
+                }
+                for row in rows
+            ]
+
+
+async def get_sensors_by_building_section(building_id: int, section_id: int) -> list[dict]:
+    """Отримати всі активні сенсори конкретної секції."""
+    async with open_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at
+              FROM sensors
+             WHERE building_id=?
+               AND section_id=?
+               AND is_active=1
+            """,
+            (building_id, section_id),
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "uuid": row["uuid"],
+                    "building_id": row["building_id"],
+                    "section_id": row["section_id"],
+                    "name": row["name"],
+                    "comment": row["comment"],
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                 }
@@ -1802,14 +2257,16 @@ async def get_all_active_sensors() -> list[dict]:
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT uuid, building_id, name, last_heartbeat, created_at FROM sensors WHERE is_active=1"
+            "SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at FROM sensors WHERE is_active=1"
         ) as cur:
             rows = await cur.fetchall()
             return [
                 {
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
+                    "section_id": row["section_id"],
                     "name": row["name"],
+                    "comment": row["comment"],
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                 }
@@ -1900,6 +2357,92 @@ async def get_all_buildings_power_state() -> dict[int, dict]:
             rows = await cur.fetchall()
             return {
                 row["building_id"]: {
+                    "is_up": bool(row["is_up"]),
+                    "last_change": datetime.fromisoformat(row["last_change"]) if row["last_change"] else None,
+                }
+                for row in rows
+            }
+
+
+# ============ Стан електропостачання секцій ============
+
+async def get_building_section_power_state(building_id: int, section_id: int) -> dict | None:
+    """Отримати стан електропостачання конкретної секції."""
+    async with open_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT building_id, section_id, is_up, last_change
+              FROM building_section_power_state
+             WHERE building_id=? AND section_id=?
+            """,
+            (building_id, section_id),
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            return {
+                "building_id": row["building_id"],
+                "section_id": row["section_id"],
+                "is_up": bool(row["is_up"]),
+                "last_change": datetime.fromisoformat(row["last_change"]) if row["last_change"] else None,
+            }
+
+
+async def set_building_section_power_state(building_id: int, section_id: int, is_up: bool) -> bool:
+    """
+    Встановити стан електропостачання секції.
+    Повертає True якщо стан змінився (або створено новий запис).
+    """
+    async with open_db() as db:
+        now = datetime.now().isoformat()
+        async with db.execute(
+            """
+            SELECT is_up
+              FROM building_section_power_state
+             WHERE building_id=? AND section_id=?
+            """,
+            (building_id, section_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row is None:
+            await db.execute(
+                """
+                INSERT INTO building_section_power_state(building_id, section_id, is_up, last_change)
+                VALUES(?, ?, ?, ?)
+                """,
+                (building_id, section_id, 1 if is_up else 0, now),
+            )
+            await db.commit()
+            return True
+
+        current_is_up = bool(row[0])
+        if current_is_up == is_up:
+            return False
+
+        await db.execute(
+            """
+            UPDATE building_section_power_state
+               SET is_up=?, last_change=?
+             WHERE building_id=? AND section_id=?
+            """,
+            (1 if is_up else 0, now, building_id, section_id),
+        )
+        await db.commit()
+        return True
+
+
+async def get_all_building_sections_power_state() -> dict[tuple[int, int], dict]:
+    """Отримати стан електропостачання всіх секцій."""
+    async with open_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT building_id, section_id, is_up, last_change FROM building_section_power_state"
+        ) as cur:
+            rows = await cur.fetchall()
+            return {
+                (row["building_id"], row["section_id"]): {
                     "is_up": bool(row["is_up"]),
                     "last_change": datetime.fromisoformat(row["last_change"]) if row["last_change"] else None,
                 }

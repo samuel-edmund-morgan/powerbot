@@ -13,12 +13,16 @@ from database import (
     delete_notification, get_heating_stats, get_water_stats,
     get_last_bot_message, delete_last_bot_message_record,
     get_subscribers_for_light_notification, get_subscribers_for_alert_notification,
-    NEWCASTLE_BUILDING_ID, get_all_active_sensors, get_building_power_state,
-    set_building_power_state, get_sensors_by_building, get_building_by_id,
-    get_sensors_count_by_building,
+    NEWCASTLE_BUILDING_ID, get_all_active_sensors,
+    get_sensors_by_building, get_building_by_id,
     get_last_events, remove_subscriber,
-    get_subscriber_building,
     get_last_event_before,
+    get_subscriber_building_and_section,
+    default_section_for_building,
+    VALID_SECTION_IDS,
+    get_all_building_sections_power_state,
+    get_building_section_power_state,
+    set_building_section_power_state,
 )
 
 # Налаштування масових розсилок (можна перевизначити через env)
@@ -43,24 +47,45 @@ async def format_light_status(
     from weather import get_weather_line
 
     perf_start = asyncio.get_running_loop().time()
-    user_building_id = await get_subscriber_building(user_id)
+    user_building_id, user_section_id = await get_subscriber_building_and_section(user_id)
     perf_after_building = asyncio.get_running_loop().time()
     user_building = get_building_by_id(user_building_id) if user_building_id else None
 
     sensors = await get_sensors_by_building(user_building_id) if user_building_id else []
     perf_after_sensors = asyncio.get_running_loop().time()
-    sensors_count = len(sensors)
+    building_sensors_total = len(sensors)
 
-    sensors_online = 0
+    building_sensors_online = 0
+    section_sensors_total = 0
+    section_sensors_online = 0
     now = datetime.now()
     timeout = timedelta(seconds=CFG.sensor_timeout)
     for s in sensors:
+        sensor_section = s.get("section_id")
+        if sensor_section is None:
+            sensor_section = default_section_for_building(user_building_id)
+
         if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
-            sensors_online += 1
+            building_sensors_online += 1
+            if user_section_id is not None and sensor_section == user_section_id:
+                section_sensors_online += 1
+        if user_section_id is not None and sensor_section == user_section_id:
+            section_sensors_total += 1
 
-    is_up = sensors_online > 0
+    building_is_up = building_sensors_online > 0
+    section_is_up: bool | None
+    if user_section_id is None:
+        section_is_up = None
+    elif section_sensors_total == 0:
+        section_is_up = None
+    else:
+        section_is_up = section_sensors_online > 0
 
-    last_event = await get_last_event()
+    last_event = (
+        await get_last_event(building_id=user_building_id, section_id=user_section_id)
+        if user_building_id and user_section_id
+        else None
+    )
     perf_after_last_event = asyncio.get_running_loop().time()
     last_change_text = ""
     if last_event:
@@ -72,7 +97,11 @@ async def format_light_status(
             last_change_text = f"🕐 Вимкнули: {time_str}"
 
     duration_text = ""
-    last_events = await get_last_events(2)
+    last_events = (
+        await get_last_events(2, building_id=user_building_id, section_id=user_section_id)
+        if user_building_id and user_section_id
+        else []
+    )
     perf_after_last_events = asyncio.get_running_loop().time()
     if len(last_events) >= 2:
         last_type, last_time = last_events[0]
@@ -84,7 +113,11 @@ async def format_light_status(
         else:
             duration_text = f"⏱ Було без світла: {duration_formatted}"
 
-    stats = await calculate_stats(period_days=1)
+    stats = await calculate_stats(
+        period_days=1,
+        building_id=user_building_id,
+        section_id=user_section_id,
+    )
     perf_after_stats = asyncio.get_running_loop().time()
     today_uptime = format_duration(stats["total_uptime"])
     today_downtime = format_duration(stats["total_downtime"])
@@ -96,18 +129,37 @@ async def format_light_status(
         lines.append("⚠️ Ви ще не обрали свій будинок.")
         lines.append("Натисніть «🏠 Обрати будинок» щоб отримувати точну інформацію.")
         return "\n".join(lines)
+    if user_section_id not in VALID_SECTION_IDS:
+        lines.append(f"🏠 <b>{user_building['name']} ({user_building['address']})</b>")
+        lines.append("⚠️ Ви ще не обрали свою секцію.")
+        lines.append("Натисніть «🏠 Обрати будинок» і оберіть секцію.")
+        return "\n".join(lines)
 
     display_name = f"{user_building['name']} ({user_building['address']})"
 
-    if sensors_count > 0:
-        percent = round(sensors_online / sensors_count * 100)
-        status_text = "✅ Світло є" if is_up else "❌ Світла немає"
+    # Оновлюємо заголовок (після валідації building/section)
+    lines[0] = (
+        f"☀️ <b>Стан електропостачання в {user_building['name']} секція {user_section_id}</b>\n"
+    )
+
+    if building_sensors_total > 0:
+        percent = round(building_sensors_online / building_sensors_total * 100)
+        status_text = "✅ Світло є" if section_is_up else "❌ Світла немає"
         bar_length = 10
         filled = round(percent / 100 * bar_length)
         bar = "🟩" * filled + "🟥" * (bar_length - filled)
         lines.append(f"🏠 <b>{display_name}</b>")
         lines.append(f"{bar} <b>{percent}%</b>")
-        lines.append(f"{status_text} (сенсорів: {sensors_online}/{sensors_count})")
+        if section_sensors_total > 0:
+            lines.append(
+                f"{status_text} (секція: {section_sensors_online}/{section_sensors_total}, "
+                f"будинок: {building_sensors_online}/{building_sensors_total})"
+            )
+        else:
+            lines.append(
+                f"⚠️ Немає сенсора в цій секції "
+                f"(будинок: {building_sensors_online}/{building_sensors_total})"
+            )
     else:
         bar = "⬜" * 10
         lines.append(f"🏠 <b>{display_name}</b>")
@@ -139,8 +191,8 @@ async def format_light_status(
             lines.append("\n💧 <b>Вода:</b> ще ніхто не голосував")
 
     phone = CFG.electrician_phone
-    if sensors_count > 0:
-        if is_up:
+    if building_sensors_total > 0 and section_is_up is not None:
+        if section_is_up:
             lines.append(
                 "\n💡 Якщо у вашій квартирі відсутнє світло — "
                 "ймовірно, вибило автомат у вашій квартирі або секції."
@@ -161,12 +213,13 @@ async def format_light_status(
         if "Погода" in weather_line and not any("Погода" in line for line in lines):
             lines.append(weather_line)
 
-    if CFG.yasno_enabled and user_building_id:
+    if CFG.yasno_enabled and user_building_id and user_section_id:
         try:
             from yasno import get_building_schedule_text
 
             schedule_text = await get_building_schedule_text(
                 user_building_id,
+                section_id=user_section_id,
                 include_building=False,
             )
             if schedule_text and "не налаштовані" not in schedule_text and "не ввімкнені" not in schedule_text:
@@ -303,37 +356,41 @@ async def broadcast_messages(
 
 # ============ Нова система моніторингу через ESP32 сенсори ============
 
-async def check_sensors_timeout() -> dict[int, bool]:
+async def check_sensors_timeout() -> dict[tuple[int, int], bool]:
     """
     Перевіряє таймаути всіх сенсорів.
     
-    Повертає словник {building_id: is_up}
-    де is_up = True якщо хоча б один сенсор будинку "живий"
+    Повертає словник {(building_id, section_id): is_up}
+    де is_up = True якщо хоча б один сенсор секції "живий"
     """
     sensors = await get_all_active_sensors()
     now = datetime.now()
     timeout = timedelta(seconds=CFG.sensor_timeout)
     
-    # Групуємо сенсори по будинках
-    buildings_sensors: dict[int, list[dict]] = {}
+    # Групуємо сенсори по (будинок, секція)
+    sections_sensors: dict[tuple[int, int], list[dict]] = {}
     for sensor in sensors:
         bid = sensor["building_id"]
-        if bid not in buildings_sensors:
-            buildings_sensors[bid] = []
-        buildings_sensors[bid].append(sensor)
+        sid = sensor.get("section_id")
+        if sid is None:
+            sid = default_section_for_building(bid)
+        if sid is None:
+            continue
+        key = (bid, int(sid))
+        sections_sensors.setdefault(key, []).append(sensor)
     
-    # Визначаємо стан кожного будинку
+    # Визначаємо стан кожної секції
     result = {}
-    for building_id, building_sensors in buildings_sensors.items():
-        # Будинок UP якщо хоча б один сенсор "живий"
+    for (building_id, section_id), section_sensors in sections_sensors.items():
+        # Секція UP якщо хоча б один сенсор "живий"
         is_up = False
-        for sensor in building_sensors:
+        for sensor in section_sensors:
             if sensor["last_heartbeat"]:
                 time_since_heartbeat = now - sensor["last_heartbeat"]
                 if time_since_heartbeat < timeout:
                     is_up = True
                     break
-        result[building_id] = is_up
+        result[(building_id, section_id)] = is_up
     
     return result
 
@@ -456,7 +513,12 @@ def format_duration(seconds: float) -> str:
         return f"{minutes}хв"
 
 
-async def calculate_stats(period_days: int | None = None) -> dict:
+async def calculate_stats(
+    period_days: int | None = None,
+    *,
+    building_id: int | None = None,
+    section_id: int | None = None,
+) -> dict:
     """
     Обчислити статистику відключень.
     period_days: кількість днів для аналізу (None = весь час)
@@ -478,10 +540,10 @@ async def calculate_stats(period_days: int | None = None) -> dict:
             since = datetime(now.year, now.month, now.day)
         else:
             since = now - timedelta(days=period_days)
-        events = await get_events_since(since)
+        events = await get_events_since(since, building_id=building_id, section_id=section_id)
     else:
         from database import get_all_events
-        events = await get_all_events()
+        events = await get_all_events(building_id=building_id, section_id=section_id)
         since = events[0][1] if events else now
 
     total_downtime = 0.0
@@ -490,13 +552,13 @@ async def calculate_stats(period_days: int | None = None) -> dict:
 
     # Визначаємо стан на початку періоду
     start_state = None  # "up" або "down"
-    prev = await get_last_event_before(since)
+    prev = await get_last_event_before(since, building_id=building_id, section_id=section_id)
     if prev:
         start_state = prev[0]
     elif events:
         start_state = "up" if events[0][0] == "down" else "down"
     else:
-        last = await get_last_event()
+        last = await get_last_event(building_id=building_id, section_id=section_id)
         if last:
             start_state = last[0]
 
@@ -568,10 +630,20 @@ async def update_notifications_loop(bot: Bot):
             notifications = await get_active_notifications("power_change")
             if not notifications:
                 continue
-            
-            # Поточна статистика голосів (зараз Ньюкасл)
-            heating_stats = await get_heating_stats(NEWCASTLE_BUILDING_ID)
-            water_stats = await get_water_stats(NEWCASTLE_BUILDING_ID)
+
+            # Поточна статистика голосів по секціях (групуємо, щоб не робити N однакових запитів)
+            grouped: dict[tuple[int, int], list[dict]] = {}
+            for notif in notifications:
+                building_id, section_id = await get_subscriber_building_and_section(notif["chat_id"])
+                if building_id is None or section_id not in VALID_SECTION_IDS:
+                    continue
+                grouped.setdefault((building_id, section_id), []).append(notif)
+
+            stats_cache: dict[tuple[int, int], tuple[dict, dict]] = {}
+            for (building_id, section_id) in grouped:
+                heating_stats = await get_heating_stats(building_id, section_id)
+                water_stats = await get_water_stats(building_id, section_id)
+                stats_cache[(building_id, section_id)] = (heating_stats, water_stats)
             
             # Клавіатура для голосування
             vote_rows = [
@@ -588,28 +660,30 @@ async def update_notifications_loop(bot: Bot):
             vote_keyboard = InlineKeyboardMarkup(inline_keyboard=vote_rows)
             
             # Оновлюємо всі сповіщення
-            for notif in notifications:
-                try:
-                    text = await format_light_status(
-                        notif["chat_id"],
-                        include_vote_prompt=False,
-                        heating_stats=heating_stats,
-                        water_stats=water_stats,
-                    )
-                    await bot.edit_message_text(
-                        text=text,
-                        chat_id=notif["chat_id"],
-                        message_id=notif["message_id"],
-                        reply_markup=vote_keyboard
-                    )
-                except Exception as e:
-                    # Якщо не вдалось оновити (наприклад, повідомлення видалено)
-                    if "message is not modified" not in str(e).lower():
-                        logging.debug("Failed to update notification %s: %s", notif["id"], e)
-                        await delete_notification(notif["id"])
-                
-                # Невелика затримка між оновленнями для уникнення rate limit
-                await asyncio.sleep(0.05)
+            for (building_id, section_id), notifs in grouped.items():
+                heating_stats, water_stats = stats_cache[(building_id, section_id)]
+                for notif in notifs:
+                    try:
+                        text = await format_light_status(
+                            notif["chat_id"],
+                            include_vote_prompt=False,
+                            heating_stats=heating_stats,
+                            water_stats=water_stats,
+                        )
+                        await bot.edit_message_text(
+                            text=text,
+                            chat_id=notif["chat_id"],
+                            message_id=notif["message_id"],
+                            reply_markup=vote_keyboard
+                        )
+                    except Exception as e:
+                        # Якщо не вдалось оновити (наприклад, повідомлення видалено)
+                        if "message is not modified" not in str(e).lower():
+                            logging.debug("Failed to update notification %s: %s", notif["id"], e)
+                            await delete_notification(notif["id"])
+                    
+                    # Невелика затримка між оновленнями для уникнення rate limit
+                    await asyncio.sleep(0.05)
         
         except Exception:
             logging.exception("update_notifications_loop error")
@@ -704,14 +778,13 @@ async def sensors_monitor_loop(bot: Bot):
     """
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     
-    # Зберігаємо попередні стани будинків
-    previous_states: dict[int, bool] = {}
+    # Зберігаємо попередні стани секцій
+    previous_states: dict[tuple[int, int], bool] = {}
     
     # Ініціалізуємо стани з БД
-    from database import get_all_buildings_power_state
-    initial_states = await get_all_buildings_power_state()
-    for building_id, state in initial_states.items():
-        previous_states[building_id] = state["is_up"]
+    initial_states = await get_all_building_sections_power_state()
+    for (building_id, section_id), state in initial_states.items():
+        previous_states[(building_id, section_id)] = state["is_up"]
     
     # Інтервал перевірки (секунди)
     CHECK_INTERVAL = 10
@@ -721,25 +794,33 @@ async def sensors_monitor_loop(bot: Bot):
             # Перевіряємо таймаути всіх сенсорів
             current_states = await check_sensors_timeout()
             
-            for building_id, is_up in current_states.items():
+            for (building_id, section_id), is_up in current_states.items():
                 # Отримуємо попередній стан
-                prev_is_up = previous_states.get(building_id)
+                prev_is_up = previous_states.get((building_id, section_id))
                 
                 # Якщо стан не змінився - пропускаємо
                 if prev_is_up == is_up:
                     continue
-                
-                # Отримуємо попередній стан та час ПЕРЕД оновленням
-                old_power_state = await get_building_power_state(building_id)
-                old_last_change = old_power_state["last_change"] if old_power_state else None
+
+                # Перший раз бачимо цю секцію після міграції/рестарту — ініціалізуємо без розсилки
+                if prev_is_up is None:
+                    await set_building_section_power_state(building_id, section_id, is_up)
+                    previous_states[(building_id, section_id)] = is_up
+                    logging.info(
+                        "Initial section power state: building=%s section=%s state=%s",
+                        building_id,
+                        section_id,
+                        "UP" if is_up else "DOWN",
+                    )
+                    continue
                 
                 # Оновлюємо стан в БД
-                state_changed = await set_building_power_state(building_id, is_up)
-                if not state_changed and prev_is_up is not None:
+                state_changed = await set_building_section_power_state(building_id, section_id, is_up)
+                if not state_changed:
                     continue
                 
                 # Оновлюємо локальний кеш
-                previous_states[building_id] = is_up
+                previous_states[(building_id, section_id)] = is_up
                 
                 # Отримуємо інформацію про будинок
                 building = get_building_by_id(building_id)
@@ -747,16 +828,17 @@ async def sensors_monitor_loop(bot: Bot):
                     continue
                 
                 # Скидаємо голоси за опалення/воду при зміні стану світла
-                await reset_votes(building_id)
+                await reset_votes(building_id, section_id)
                 
                 # Записуємо подію в історію
                 event_type = "up" if is_up else "down"
-                await add_event(event_type)
+                await add_event(event_type, building_id=building_id, section_id=section_id)
 
                 building_name = building["name"] if building else f"ID:{building_id}"
                 logging.info(
-                    "Building %s power state changed to: %s",
+                    "Building %s section %s power state changed to: %s",
                     building_name,
+                    section_id,
                     "UP" if is_up else "DOWN",
                 )
                 
@@ -782,7 +864,11 @@ async def sensors_monitor_loop(bot: Bot):
                 
                 # Надсилаємо підписникам цього будинку
                 current_hour = datetime.now().hour
-                subscribers = await get_subscribers_for_light_notification(current_hour, building_id)
+                subscribers = await get_subscribers_for_light_notification(
+                    current_hour,
+                    building_id,
+                    section_id,
+                )
                 existing_notifications = {
                     notif["chat_id"]: notif
                     for notif in await get_active_notifications("power_change")

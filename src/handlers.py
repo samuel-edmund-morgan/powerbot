@@ -230,12 +230,16 @@ async def show_place_with_map(message: Message, place_id: int):
 
 async def get_user_building_text(user_id: int) -> str:
     """Отримати текст з назвою будинку користувача."""
-    building_id = await get_subscriber_building(user_id)
+    from database import get_subscriber_building_and_section
+
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
     if building_id:
-        building = get_building_by_id(building_id)
+        building = get_building_by_id(building_id) if building_id else None
         if building:
-            return f"🏢 Ваш будинок: {building['name']}"
-    return "🏢 Будинок не обрано"
+            if section_id:
+                return f"🏢 Ваш будинок: {building['name']}, секція {section_id}"
+            return f"🏢 Ваш будинок: {building['name']} (секцію не обрано)"
+    return "🏢 Будинок/секцію не обрано"
 
 
 async def get_alert_status_text() -> str:
@@ -255,30 +259,42 @@ async def get_light_status_text(user_id: int) -> str:
     
     Логіка: сенсор онлайн = світло є, сенсор офлайн = світла немає.
     """
-    from database import get_subscriber_building, get_sensors_by_building
+    from database import (
+        get_subscriber_building_and_section,
+        get_sensors_by_building,
+        default_section_for_building,
+        VALID_SECTION_IDS,
+    )
     
-    user_building_id = await get_subscriber_building(user_id)
+    user_building_id, user_section_id = await get_subscriber_building_and_section(user_id)
     if not user_building_id:
         return "💡 Світло: оберіть будинок"
+    if user_section_id not in VALID_SECTION_IDS:
+        return "💡 Світло: оберіть секцію"
     
     # Перевіряємо чи є сенсори
     sensors = await get_sensors_by_building(user_building_id)
     if not sensors:
         return "💡 Світло: немає даних"
     
-    # Рахуємо онлайн сенсори (онлайн = світло є)
+    # Рахуємо онлайн сенсори для секції (онлайн = світло є)
     sensors_online = 0
+    sensors_total = 0
     now = datetime.now()
     timeout = timedelta(seconds=CFG.sensor_timeout)
     for s in sensors:
+        sid = s.get("section_id")
+        if sid is None:
+            sid = default_section_for_building(user_building_id)
+        if sid != user_section_id:
+            continue
+        sensors_total += 1
         if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
             sensors_online += 1
-    
-    # Світло є якщо хоча б один сенсор онлайн
-    if sensors_online > 0:
-        return "💡 Є світло"
-    else:
-        return "💡 Немає світла"
+
+    if sensors_total == 0:
+        return "💡 Світло: немає сенсора в секції"
+    return "💡 Є світло" if sensors_online > 0 else "💡 Немає світла"
 def get_main_keyboard() -> InlineKeyboardMarkup:
     """Головна клавіатура з основними діями."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -421,6 +437,24 @@ def get_buildings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_sections_keyboard(building_id: int, current_section: int | None = None) -> InlineKeyboardMarkup:
+    """Клавіатура для вибору секції (1..3) для конкретного будинку."""
+    rows = []
+    for section_id in (1, 2, 3):
+        label = f"{section_id} секція"
+        if current_section == section_id:
+            label = f"✅ {label}"
+        rows.append([
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"section_{building_id}_{section_id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="« Будинки", callback_data="select_building")])
+    rows.append([InlineKeyboardButton(text="« Меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.message(F.text == "🏠 Обрати будинок")
 async def reply_select_building(message: Message):
     """Обробник кнопки 'Обрати будинок' з ReplyKeyboard."""
@@ -432,14 +466,19 @@ async def reply_select_building(message: Message):
     except Exception:
         pass
     
-    from database import get_subscriber_building, get_building_by_id
+    from database import get_subscriber_building_and_section
     
-    building_id = await get_subscriber_building(message.chat.id)
+    building_id, section_id = await get_subscriber_building_and_section(message.chat.id)
     current_text = ""
     if building_id:
         building = get_building_by_id(building_id)
         if building:
-            current_text = f"\n\n📍 Ваш поточний будинок: <b>{building['name']} ({building['address']})</b>"
+            if section_id:
+                current_text = (
+                    f"\n\n📍 Ваш поточний вибір: <b>{building['name']} ({building['address']}), секція {section_id}</b>"
+                )
+            else:
+                current_text = f"\n\n📍 Ваш поточний будинок: <b>{building['name']} ({building['address']})</b>"
     
     await message.answer(
         f"🏠 <b>Оберіть свій будинок</b>{current_text}\n\n"
@@ -452,14 +491,19 @@ async def reply_select_building(message: Message):
 async def cb_select_building(callback: CallbackQuery):
     """Показати меню вибору будинку."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Обрати будинок")
-    from database import get_subscriber_building, get_building_by_id
+    from database import get_subscriber_building_and_section
     
-    building_id = await get_subscriber_building(callback.message.chat.id)
+    building_id, section_id = await get_subscriber_building_and_section(callback.message.chat.id)
     current_text = ""
     if building_id:
         building = get_building_by_id(building_id)
         if building:
-            current_text = f"\n\n📍 Ваш поточний будинок: <b>{building['name']} ({building['address']})</b>"
+            if section_id:
+                current_text = (
+                    f"\n\n📍 Ваш поточний вибір: <b>{building['name']} ({building['address']}), секція {section_id}</b>"
+                )
+            else:
+                current_text = f"\n\n📍 Ваш поточний будинок: <b>{building['name']} ({building['address']})</b>"
     
     await callback.message.edit_text(
         f"🏠 <b>Оберіть свій будинок</b>{current_text}\n\n"
@@ -473,8 +517,12 @@ async def cb_select_building(callback: CallbackQuery):
 async def cb_building_selected(callback: CallbackQuery):
     """Обробка вибору будинку."""
     from database import (
-        set_subscriber_building, get_building_by_id, 
-        NEWCASTLE_BUILDING_ID, add_subscriber
+        set_subscriber_building,
+        set_subscriber_section,
+        get_subscriber_section,
+        get_building_by_id,
+        add_subscriber,
+        default_section_for_building,
     )
     
     building_id = int(callback.data.split("_")[1])
@@ -494,41 +542,74 @@ async def cb_building_selected(callback: CallbackQuery):
     
     # Встановлюємо будинок
     await set_subscriber_building(callback.message.chat.id, building_id)
+    # Якщо секція ще не обрана — підкажемо дефолт (але все одно дамо вибір)
+    current_section = await get_subscriber_section(callback.message.chat.id)
+    if current_section is None:
+        await set_subscriber_section(callback.message.chat.id, default_section_for_building(building_id))
+        current_section = await get_subscriber_section(callback.message.chat.id)
     
     display_name = f"{building['name']} ({building['address']})"
-    
-    # Якщо це Ньюкасл - є сенсор
-    if building_id == NEWCASTLE_BUILDING_ID:
-        text = (
-            f"✅ <b>Ви підписались на сповіщення по будинку {display_name}</b>\n\n"
-            "Надалі ви будете отримувати сповіщення про відключення світла в цьому будинку."
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="☀️ Перевірити світло", callback_data="status")],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
-        ])
-    else:
-        # Інші будинки - сенсорів поки немає
-        text = (
-            f"🔌 Поки що сповіщення по будинку «{display_name}» недоступні.\n"
-            "Але це тимчасово.\n\n"
-            "Я розробляю компактний пристрій, який мешканці зможуть встановити у своєму будинку. "
-            "Він дозволить точно визначати відключення електроенергії саме по вашому будинку, "
-            "а не «в середньому по ЖК».\n\n"
-            "У перспективі кожен будинок матиме 1–кілька таких пристроїв, що зробить систему максимально точною.\n"
-            "💰 Вартість одного комплекту — близько 30 $. Пристрої збираю поступово — за рахунок донатів на розвиток проєкту.\n\n"
-            "🤝 Долучитись можуть мешканці або бізнес ЖК «Нова Англія»:\n"
-            "👉 https://send.monobank.ua/jar/7d56pmvjEB\n\n"
-            "📝 У коментарі до платежу вкажіть назву будинку.\n"
-            "Пристрої будуть передані мешканцям з найбільшим внеском по конкретному будинку.\n\n"
-            "Разом зробимо систему, яка працює точно і для своїх."
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Підтримати проєкт", url="https://send.monobank.ua/jar/7d56pmvjEB")],
-            [InlineKeyboardButton(text="🏠 Обрати інший будинок", callback_data="select_building")],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
-        ])
-    
+
+    text = (
+        f"🏠 <b>Будинок: {display_name}</b>\n\n"
+        "Тепер оберіть вашу секцію, щоб отримувати точні сповіщення саме по ній:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_sections_keyboard(building_id, current_section=current_section),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("section_"))
+async def cb_section_selected(callback: CallbackQuery):
+    """Обробка вибору секції."""
+    from database import (
+        set_subscriber_building,
+        set_subscriber_section,
+        get_building_by_id,
+        add_subscriber,
+        VALID_SECTION_IDS,
+    )
+
+    try:
+        _, building_id_raw, section_id_raw = callback.data.split("_", 2)
+        building_id = int(building_id_raw)
+        section_id = int(section_id_raw)
+    except Exception:
+        await callback.answer("❌ Некоректні дані секції", show_alert=True)
+        return
+
+    if section_id not in VALID_SECTION_IDS:
+        await callback.answer("❌ Некоректна секція", show_alert=True)
+        return
+
+    building = get_building_by_id(building_id)
+    if not building:
+        await callback.answer("❌ Будинок не знайдено", show_alert=True)
+        return
+
+    user = callback.from_user
+    await add_subscriber(
+        chat_id=callback.message.chat.id,
+        username=user.username if user else None,
+        first_name=user.first_name if user else None,
+    )
+
+    await set_subscriber_building(callback.message.chat.id, building_id)
+    await set_subscriber_section(callback.message.chat.id, section_id)
+
+    display_name = f"{building['name']} ({building['address']})"
+    text = (
+        f"✅ <b>Збережено</b>\n\n"
+        f"🏠 {display_name}\n"
+        f"🔢 Секція: <b>{section_id}</b>\n\n"
+        "Тепер ви будете отримувати сповіщення про світло по вашій секції."
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="☀️ Перевірити світло", callback_data="status")],
+        [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
+    ])
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
@@ -686,31 +767,9 @@ async def cmd_stats(message: Message):
     else:
         days = None
         period_text = "за весь час"
-    
-    stats = await calculate_stats(days)
-    
-    if stats['outage_count'] == 0:
-        await message.answer(
-            f"📊 <b>Статистика {period_text}</b>\n\n"
-            "✨ Відключень не зафіксовано!\n"
-            f"⚡ Uptime: 100%"
-        )
-        return
-    
-    response = (
-        f"📊 <b>Статистика {period_text}</b>\n\n"
-        f"⚡ Uptime: {stats['uptime_percent']:.1f}%\n"
-        f"🔌 Кількість відключень: {stats['outage_count']}\n"
-        f"⏱ Загальний час без світла: {format_duration(stats['total_downtime'])}\n"
-    )
-    
-    if stats['outage_count'] > 0:
-        avg_outage = stats['total_downtime'] / stats['outage_count']
-        response += f"📉 Середня тривалість: {format_duration(avg_outage)}\n"
-    
-    response += f"\n<i>Період: {stats['period_start'].strftime('%d.%m.%Y %H:%M')} — {stats['period_end'].strftime('%d.%m.%Y %H:%M')}</i>"
-    
-    await message.answer(response)
+
+    text = await format_stats_message_for_user(message.chat.id, days, period_text)
+    await message.answer(text)
 
 
 # ============ Callback handlers (Inline-кнопки) ============
@@ -1003,30 +1062,58 @@ async def cb_status(callback: CallbackQuery):
     await callback.answer()
 
 
-async def format_stats_message(days: int | None, period_text: str) -> str:
-    """Форматувати повідомлення зі статистикою."""
-    stats = await calculate_stats(days)
-    
-    if stats['outage_count'] == 0:
+async def format_stats_message_for_user(
+    user_id: int,
+    days: int | None,
+    period_text: str,
+) -> str:
+    """Форматувати повідомлення зі статистикою по обраній секції користувача."""
+    from database import get_subscriber_building_and_section, get_building_by_id, VALID_SECTION_IDS
+
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
+    building = get_building_by_id(building_id) if building_id else None
+
+    if not building:
+        return (
+            "📊 <b>Статистика</b>\n\n"
+            "⚠️ Спочатку оберіть будинок і секцію.\n"
+            "Натисніть «🏠 Обрати будинок»."
+        )
+    if section_id not in VALID_SECTION_IDS:
+        return (
+            "📊 <b>Статистика</b>\n\n"
+            f"🏠 {building['name']} ({building['address']})\n\n"
+            "⚠️ Спочатку оберіть секцію.\n"
+            "Натисніть «🏠 Обрати будинок» і оберіть секцію."
+        )
+
+    stats = await calculate_stats(days, building_id=building_id, section_id=section_id)
+
+    if stats["outage_count"] == 0:
         return (
             f"📊 <b>Статистика {period_text}</b>\n\n"
+            f"🏠 {building['name']} ({building['address']}), секція {section_id}\n\n"
             "✨ Відключень не зафіксовано!\n"
             "⚡ Uptime: 100%"
         )
-    
+
     response = (
         f"📊 <b>Статистика {period_text}</b>\n\n"
+        f"🏠 {building['name']} ({building['address']}), секція {section_id}\n\n"
         f"⚡ Uptime: {stats['uptime_percent']:.1f}%\n"
         f"🔌 Кількість відключень: {stats['outage_count']}\n"
         f"⏱ Загальний час без світла: {format_duration(stats['total_downtime'])}\n"
     )
-    
-    if stats['outage_count'] > 0:
-        avg_outage = stats['total_downtime'] / stats['outage_count']
+
+    if stats["outage_count"] > 0:
+        avg_outage = stats["total_downtime"] / stats["outage_count"]
         response += f"📉 Середня тривалість: {format_duration(avg_outage)}\n"
-    
-    response += f"\n<i>Період: {stats['period_start'].strftime('%d.%m.%Y %H:%M')} — {stats['period_end'].strftime('%d.%m.%Y %H:%M')}</i>"
-    
+
+    response += (
+        f"\n<i>Період: {stats['period_start'].strftime('%d.%m.%Y %H:%M')} — "
+        f"{stats['period_end'].strftime('%d.%m.%Y %H:%M')}</i>"
+    )
+
     return response
 
 
@@ -1034,7 +1121,7 @@ async def format_stats_message(days: int | None, period_text: str) -> str:
 async def cb_stats(callback: CallbackQuery):
     """Показати статистику за весь час."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (весь час)")
-    text = await format_stats_message(None, "за весь час")
+    text = await format_stats_message_for_user(callback.message.chat.id, None, "за весь час")
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1053,7 +1140,7 @@ async def cb_stats(callback: CallbackQuery):
 async def cb_stats_day(callback: CallbackQuery):
     """Показати статистику за день."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (день)")
-    text = await format_stats_message(1, "за останню добу")
+    text = await format_stats_message_for_user(callback.message.chat.id, 1, "за останню добу")
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1072,7 +1159,7 @@ async def cb_stats_day(callback: CallbackQuery):
 async def cb_stats_week(callback: CallbackQuery):
     """Показати статистику за тиждень."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (тиждень)")
-    text = await format_stats_message(7, "за останній тиждень")
+    text = await format_stats_message_for_user(callback.message.chat.id, 7, "за останній тиждень")
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1091,7 +1178,7 @@ async def cb_stats_week(callback: CallbackQuery):
 async def cb_stats_month(callback: CallbackQuery):
     """Показати статистику за місяць."""
     logger.info(f"User {format_user_label(callback.from_user)} clicked: Статистика (місяць)")
-    text = await format_stats_message(30, "за останній місяць")
+    text = await format_stats_message_for_user(callback.message.chat.id, 30, "за останній місяць")
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3019,9 +3106,14 @@ def get_water_vote_keyboard(user_vote: bool | None = None) -> InlineKeyboardMark
 
 async def format_heating_status(user_id: int) -> str:
     """Форматувати статус опалення на основі голосів по будинку користувача."""
-    from database import get_heating_stats, get_subscriber_building, get_building_by_id
+    from database import (
+        get_heating_stats,
+        get_subscriber_building_and_section,
+        get_building_by_id,
+        VALID_SECTION_IDS,
+    )
     
-    building_id = await get_subscriber_building(user_id)
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
     building = get_building_by_id(building_id) if building_id else None
     
     if not building:
@@ -3030,9 +3122,16 @@ async def format_heating_status(user_id: int) -> str:
             "⚠️ Ви ще не обрали свій будинок.\n"
             "Натисніть «🏠 Обрати будинок» щоб голосувати по вашому будинку."
         )
+    if section_id not in VALID_SECTION_IDS:
+        return (
+            "🔥 <b>Стан опалення</b>\n\n"
+            f"🏠 {building['name']} ({building['address']})\n\n"
+            "⚠️ Ви ще не обрали секцію.\n"
+            "Натисніть «🏠 Обрати будинок» і оберіть секцію."
+        )
     
-    building_name = f"{building['name']} ({building['address']})"
-    stats = await get_heating_stats(building_id)
+    building_name = f"{building['name']} ({building['address']}), секція {section_id}"
+    stats = await get_heating_stats(building_id, section_id)
     
     if stats["total"] == 0:
         return (
@@ -3061,9 +3160,14 @@ async def format_heating_status(user_id: int) -> str:
 
 async def format_water_status(user_id: int) -> str:
     """Форматувати статус води на основі голосів по будинку користувача."""
-    from database import get_water_stats, get_subscriber_building, get_building_by_id
+    from database import (
+        get_water_stats,
+        get_subscriber_building_and_section,
+        get_building_by_id,
+        VALID_SECTION_IDS,
+    )
     
-    building_id = await get_subscriber_building(user_id)
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
     building = get_building_by_id(building_id) if building_id else None
     
     if not building:
@@ -3072,9 +3176,16 @@ async def format_water_status(user_id: int) -> str:
             "⚠️ Ви ще не обрали свій будинок.\n"
             "Натисніть «🏠 Обрати будинок» щоб голосувати по вашому будинку."
         )
+    if section_id not in VALID_SECTION_IDS:
+        return (
+            "💧 <b>Стан води</b>\n\n"
+            f"🏠 {building['name']} ({building['address']})\n\n"
+            "⚠️ Ви ще не обрали секцію.\n"
+            "Натисніть «🏠 Обрати будинок» і оберіть секцію."
+        )
     
-    building_name = f"{building['name']} ({building['address']})"
-    stats = await get_water_stats(building_id)
+    building_name = f"{building['name']} ({building['address']}), секція {section_id}"
+    stats = await get_water_stats(building_id, section_id)
     
     if stats["total"] == 0:
         return (
@@ -3305,16 +3416,12 @@ async def do_search(query: str, user_id: int | None = None) -> str:
             text = await format_light_status(user_id, include_vote_prompt=False)
             return text
         else:
-            # Fallback для inline режиму без user_id
-            last = await db_get("last_state")
-            if last is None:
-                return "Ще немає даних. Зачекай 1-2 цикли перевірки."
-            is_up = last == "up"
-            last_event = await get_last_event()
-            last_change = last_event[1] if last_event else None
-            from weather import get_weather_line
-            weather_text = await get_weather_line()
-            return f"{state_text(is_up, last_change=last_change)}{weather_text}"
+            # Inline режим не має user_id, тому не можемо визначити будинок/секцію.
+            return (
+                "💡 <b>Статус світла</b>\n\n"
+                "Щоб побачити точну інформацію, відкрийте бота і оберіть будинок та секцію "
+                "через «🏠 Обрати будинок»."
+            )
     
     results = await search_places(query)
     
@@ -3370,16 +3477,11 @@ async def inline_search(inline_query: InlineQuery):
     
     # Якщо запит про світло — повертаємо один результат зі статусом світла
     if is_light_query(query):
-        last = await db_get("last_state")
-        if last is None:
-            text = "Ще немає даних. Зачекай 1-2 цикли перевірки."
-        else:
-            is_up = last == "up"
-            last_event = await get_last_event()
-            last_change = last_event[1] if last_event else None
-            from weather import get_weather_line
-            weather_text = await get_weather_line()
-            text = f"{state_text(is_up, last_change=last_change)}{weather_text}"
+        text = (
+            "💡 <b>Статус світла</b>\n\n"
+            "Точний статус залежить від будинку та секції.\n"
+            "Відкрийте бота і оберіть будинок та секцію через «🏠 Обрати будинок»."
+        )
         articles = [
             InlineQueryResultArticle(
                 id="light_status",

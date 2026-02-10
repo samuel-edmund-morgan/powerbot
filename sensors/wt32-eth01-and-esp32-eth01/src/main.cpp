@@ -616,6 +616,7 @@ void setup() {
     Serial.print("  Board:    ");
     Serial.println(PB_BOARD_NAME);
     Serial.printf("  Building: %s (ID: %d)\n", BUILDING_NAME, BUILDING_ID);
+    Serial.printf("  Section:  %d\n", SECTION_ID);
     Serial.printf("  Sensor:   %s\n", SENSOR_UUID);
     Serial.printf("  Server:   %s:%d\n", SERVER_HOST, SERVER_PORT);
     Serial.println("================================================");
@@ -965,7 +966,13 @@ bool sendHeartbeat() {
     JsonDocument doc;
     doc["api_key"] = API_KEY;
     doc["building_id"] = BUILDING_ID;
+    doc["section_id"] = SECTION_ID;
     doc["sensor_uuid"] = SENSOR_UUID;
+#if defined(SENSOR_COMMENT)
+    if (String(SENSOR_COMMENT).length() > 0) {
+        doc["comment"] = SENSOR_COMMENT;
+    }
+#endif
 
     String payload;
     serializeJson(doc, payload);

@@ -9,6 +9,7 @@
     setActiveView,
     showToast,
     renderBuildings,
+    renderSections,
     renderPower,
     renderSchedule,
     renderAlerts,
@@ -67,6 +68,7 @@
     state.categories = payload.categories;
 
     renderBuildings(payload.buildings, payload.settings.building_id);
+    renderSections(payload.settings.section_id);
     renderPower(payload.power);
     renderSchedule(payload.schedule);
     renderAlerts(payload.alerts);
@@ -96,14 +98,21 @@
   };
 
   const saveBuilding = async () => {
-    const id = parseInt(elements.buildingSelect.value, 10);
-    if (!id) {
+    const building_id = parseInt(elements.buildingSelect.value, 10);
+    if (!building_id) {
       showToast("Оберіть будинок");
       return;
     }
-    await app.api("/building", { method: "POST", body: JSON.stringify({ building_id: id }) });
-    state.settings.building_id = id;
-    showToast("Будинок збережено");
+    const section_id = parseInt(elements.sectionSelect?.value || "", 10);
+    if (!section_id) {
+      showToast("Оберіть секцію");
+      return;
+    }
+
+    await app.api("/building", { method: "POST", body: JSON.stringify({ building_id, section_id }) });
+    state.settings.building_id = building_id;
+    state.settings.section_id = section_id;
+    showToast("Будинок і секцію збережено");
     await refreshStatus();
   };
 

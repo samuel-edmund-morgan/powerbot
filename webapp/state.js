@@ -9,6 +9,7 @@
     authDebug: document.getElementById("authDebug"),
     heroStatus: document.getElementById("heroStatus"),
     buildingSelect: document.getElementById("buildingSelect"),
+    sectionSelect: document.getElementById("sectionSelect"),
     buildingMeta: document.getElementById("buildingMeta"),
     saveBuilding: document.getElementById("saveBuilding"),
     powerStatus: document.getElementById("powerStatus"),
