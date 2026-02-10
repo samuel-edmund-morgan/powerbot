@@ -101,23 +101,60 @@ if [[ -f "${REPO_DIR}/.env.example" ]]; then
 fi
 
 cd "${PROD_DIR}"
-docker compose down
-docker compose pull
 
 echo "NOTE: deploy_prod no longer forces light_notifications_global=off."
-echo "To avoid false light state changes during deploy, freeze sensors before deploy (recommended runbook step)."
-if [[ -f "${PROD_DIR}/state.db" ]]; then
-  # Best-effort safety signal in logs. We do NOT modify notification settings here.
-  active_sensors="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT COUNT(*) FROM sensors WHERE is_active=1;" 2>/dev/null || echo "")"
-  if [[ -n "${active_sensors}" && "${active_sensors}" != "0" ]]; then
-    frozen_sensors="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT COUNT(*) FROM sensors WHERE is_active=1 AND frozen_until IS NOT NULL;" 2>/dev/null || echo "")"
-    if [[ -n "${frozen_sensors}" && "${frozen_sensors}" != "0" ]]; then
-      echo "Detected frozen sensors: ${frozen_sensors}/${active_sensors}."
+
+# Freeze sensors automatically around deploy to avoid false "down/up" due to compose down/pull/up.
+# We freeze only sensors that are not already frozen (or whose freeze is expired).
+# After the stack is up, we wait a bit for sensors to report heartbeat, then unfreeze only those
+# we froze in this deploy (tracked by frozen_at=FREEZE_AT).
+DEPLOY_FREEZE_SENSORS="${DEPLOY_FREEZE_SENSORS:-1}"
+DEPLOY_FREEZE_MINUTES="${DEPLOY_FREEZE_MINUTES:-20}"
+DEPLOY_UNFREEZE_WAIT_SEC="${DEPLOY_UNFREEZE_WAIT_SEC:-120}"
+
+FREEZE_AT=""
+FROZEN_BY_DEPLOY_COUNT="0"
+if [[ "${DEPLOY_FREEZE_SENSORS}" == "1" && -f "${PROD_DIR}/state.db" ]]; then
+  sensors_table="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sensors' LIMIT 1;" 2>/dev/null || echo "")"
+  if [[ "${sensors_table}" == "1" ]]; then
+    FREEZE_AT="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT strftime('%Y-%m-%dT%H:%M:%S','now','localtime');")"
+    FREEZE_UNTIL="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT strftime('%Y-%m-%dT%H:%M:%S','now','localtime','+${DEPLOY_FREEZE_MINUTES} minutes');")"
+
+    section_table="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='building_section_power_state' LIMIT 1;" 2>/dev/null || echo "")"
+    if [[ "${section_table}" == "1" ]]; then
+      echo "Freezing active sensors until ${FREEZE_UNTIL}..."
+      sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" \
+        "UPDATE sensors
+            SET frozen_until='${FREEZE_UNTIL}',
+                frozen_at='${FREEZE_AT}',
+                frozen_is_up=COALESCE(
+                  (SELECT is_up
+                     FROM building_section_power_state s
+                    WHERE s.building_id=sensors.building_id
+                      AND s.section_id=COALESCE(sensors.section_id, CASE WHEN sensors.building_id=1 THEN 2 ELSE 1 END)
+                  ),
+                  1
+                )
+          WHERE is_active=1
+            AND (frozen_until IS NULL OR replace(frozen_until,' ','T') < '${FREEZE_AT}');"
     else
-      echo "WARNING: No frozen sensors detected (${active_sensors} active). You may get false light notifications during deploy."
+      echo "Freezing active sensors until ${FREEZE_UNTIL} (no building_section_power_state table; default frozen_is_up=1)..."
+      sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" \
+        "UPDATE sensors
+            SET frozen_until='${FREEZE_UNTIL}',
+                frozen_at='${FREEZE_AT}',
+                frozen_is_up=1
+          WHERE is_active=1
+            AND (frozen_until IS NULL OR replace(frozen_until,' ','T') < '${FREEZE_AT}');"
     fi
+
+    FROZEN_BY_DEPLOY_COUNT="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT COUNT(*) FROM sensors WHERE is_active=1 AND frozen_at='${FREEZE_AT}';" 2>/dev/null || echo "0")"
+    echo "Frozen by deploy: ${FROZEN_BY_DEPLOY_COUNT} sensor(s)."
   fi
 fi
+
+docker compose down
+docker compose pull
 
 if [[ "${MIGRATE}" == "1" ]]; then
   docker compose --profile migrate run --rm migrate
@@ -157,6 +194,38 @@ fi
 SENSOR_API_KEY="$(grep -m1 "^SENSOR_API_KEY=" .env | sed 's/^SENSOR_API_KEY=//')"
 if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18081/api/v1/sensors >/dev/null
+fi
+
+# Unfreeze sensors we froze for this deploy (best-effort).
+if [[ -n "${FREEZE_AT}" && "${FROZEN_BY_DEPLOY_COUNT}" != "0" && -f "${PROD_DIR}/state.db" ]]; then
+  UP_AT="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT strftime('%Y-%m-%dT%H:%M:%S','now','localtime');" 2>/dev/null || echo "")"
+  if [[ -n "${UP_AT}" ]]; then
+    echo "Waiting for sensors to report heartbeat after restart (max ${DEPLOY_UNFREEZE_WAIT_SEC}s)..."
+    reported="0"
+    for _ in $(seq 1 "${DEPLOY_UNFREEZE_WAIT_SEC}"); do
+      reported="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" \
+        "SELECT COUNT(*)
+           FROM sensors
+          WHERE is_active=1
+            AND frozen_at='${FREEZE_AT}'
+            AND last_heartbeat IS NOT NULL
+            AND replace(last_heartbeat,' ','T') >= '${UP_AT}';" 2>/dev/null || echo "0")"
+      if [[ "${reported}" == "${FROZEN_BY_DEPLOY_COUNT}" ]]; then
+        break
+      fi
+      sleep 1
+    done
+    echo "Unfreezing deploy-frozen sensors (${reported}/${FROZEN_BY_DEPLOY_COUNT} reported)..."
+  else
+    echo "Unfreezing deploy-frozen sensors (skip wait; failed to read UP_AT)..."
+  fi
+
+  sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" \
+    "UPDATE sensors
+        SET frozen_until=NULL,
+            frozen_is_up=NULL,
+            frozen_at=NULL
+      WHERE frozen_at='${FREEZE_AT}';" >/dev/null 2>&1 || true
 fi
 
 # Optional: mini app health if endpoint exists.
