@@ -471,6 +471,59 @@ class BusinessCabinetService:
         )
         return updated
 
+    async def set_place_published(
+        self,
+        admin_tg_user_id: int,
+        place_id: int,
+        *,
+        is_published: int,
+    ) -> dict[str, Any]:
+        """Admin-only: toggle place publication in resident catalog."""
+        self._require_admin(admin_tg_user_id)
+        place = await self.repository.get_place(int(place_id))
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+        await self.repository.set_place_published(int(place_id), is_published=is_published)
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=admin_tg_user_id,
+            action="place_publish_toggled",
+            payload_json=_to_json({"is_published": 1 if int(is_published) else 0}),
+        )
+        updated = await self.repository.get_place(int(place_id))
+        return updated or place
+
+    async def delete_place_draft(self, admin_tg_user_id: int, place_id: int) -> dict[str, Any]:
+        """Admin-only: delete an unpublished draft place (anti-spam)."""
+        self._require_admin(admin_tg_user_id)
+        place = await self.repository.get_place(int(place_id))
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+        if int(place.get("is_published") or 0) != 0:
+            raise ValidationError("Можна видаляти лише неопубліковані чернетки.")
+
+        ok = await self.repository.delete_place_draft(int(place_id))
+        if not ok:
+            raise RuntimeError("Не вдалося видалити заклад.")
+
+        # Keep audit trail even if the place row is removed (no FK constraints).
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=admin_tg_user_id,
+            action="place_draft_deleted",
+            payload_json=_to_json(
+                {
+                    "snapshot": {
+                        "service_id": place.get("service_id"),
+                        "service_name": place.get("service_name"),
+                        "name": place.get("name"),
+                        "address": place.get("address"),
+                    }
+                }
+            ),
+        )
+        return place
+
     async def update_place_field(
         self,
         tg_user_id: int,

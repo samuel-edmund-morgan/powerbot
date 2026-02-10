@@ -67,6 +67,18 @@ CB_BIZ_TOKG_SVC_PICK_PREFIX = "abiz_tokg_s|"
 CB_BIZ_TOKG_PLACE_PAGE_PREFIX = "abiz_tokg_pp|"
 CB_BIZ_TOKG_PLACE_ROTATE_PREFIX = "abiz_tokg_r|"
 
+CB_BIZ_PLACES_MENU = "abiz_places"
+CB_BIZ_PLACES_FILTER_PREFIX = "abiz_places_f|"
+CB_BIZ_PLACES_SVC_PAGE_PREFIX = "abiz_places_sp|"
+CB_BIZ_PLACES_SVC_PICK_PREFIX = "abiz_places_s|"
+CB_BIZ_PLACES_PLACE_PAGE_PREFIX = "abiz_places_pp|"
+CB_BIZ_PLACES_PLACE_OPEN_PREFIX = "abiz_places_o|"
+CB_BIZ_PLACES_PUBLISH_PREFIX = "abiz_places_pub|"
+CB_BIZ_PLACES_HIDE_PREFIX = "abiz_places_hide|"
+CB_BIZ_PLACES_HIDE_CONFIRM_PREFIX = "abiz_places_hidec|"
+CB_BIZ_PLACES_DELETE_PREFIX = "abiz_places_del|"
+CB_BIZ_PLACES_DELETE_CONFIRM_PREFIX = "abiz_places_delc|"
+
 business_service = BusinessCabinetService()
 business_repo = BusinessRepository()
 
@@ -762,6 +774,7 @@ def _biz_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🛡 Модерація", callback_data=CB_BIZ_MOD),
                 InlineKeyboardButton(text="🔐 Коди прив'язки", callback_data=CB_BIZ_TOK_MENU),
             ],
+            [InlineKeyboardButton(text="🏢 Заклади", callback_data=CB_BIZ_PLACES_MENU)],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")],
         ]
     )
@@ -1646,4 +1659,649 @@ async def cb_biz_tokg_place_rotate(callback: CallbackQuery) -> None:
         reply_markup=kb,
         prefer_message_id=callback.message.message_id,
         force_new_message=True,
+    )
+
+
+# =========================
+# Business: Places (Publish/Drafts)
+# =========================
+
+
+_BIZ_PLACES_FILTER_TITLES = {
+    "unpub": "📝 Чернетки",
+    "pub": "✅ Опубліковані",
+    "all": "📚 Усі",
+}
+
+
+def _biz_places_filter_to_is_published(filter_code: str) -> int | None:
+    code = str(filter_code or "").strip().lower()
+    if code == "pub":
+        return 1
+    if code == "unpub":
+        return 0
+    if code == "all":
+        return None
+    return 0
+
+
+def _biz_places_filters_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=_BIZ_PLACES_FILTER_TITLES["unpub"], callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}unpub"),
+                InlineKeyboardButton(text=_BIZ_PLACES_FILTER_TITLES["pub"], callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}pub"),
+            ],
+            [InlineKeyboardButton(text=_BIZ_PLACES_FILTER_TITLES["all"], callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}all")],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+            [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+        ]
+    )
+
+
+async def _render_biz_places_filters(bot: Bot, chat_id: int, *, prefer_message_id: int | None, note: str | None = None) -> None:
+    text = "🏢 <b>Заклади</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += "Оберіть фільтр:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=_biz_places_filters_keyboard(),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_PLACES_MENU)
+async def cb_biz_places_menu(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_biz_places_filters(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id)
+
+
+async def _render_biz_places_services(
+    bot: Bot,
+    chat_id: int,
+    *,
+    filter_code: str,
+    page: int,
+    prefer_message_id: int | None,
+) -> None:
+    is_published = _biz_places_filter_to_is_published(filter_code)
+    try:
+        services = await business_repo.list_services_with_place_counts_filtered(is_published=is_published)
+    except Exception:
+        logger.exception("Failed to list services for places filter=%s", filter_code)
+        await _render_biz_places_filters(
+            bot,
+            chat_id,
+            prefer_message_id=prefer_message_id,
+            note="❌ Не вдалося завантажити категорії.",
+        )
+        return
+
+    if not services:
+        await _render_biz_places_filters(
+            bot,
+            chat_id,
+            prefer_message_id=prefer_message_id,
+            note="Немає закладів для цього фільтра.",
+        )
+        return
+
+    total_pages = max(1, (len(services) + BIZ_SERVICES_PAGE_SIZE - 1) // BIZ_SERVICES_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * BIZ_SERVICES_PAGE_SIZE
+    chunk = services[start : start + BIZ_SERVICES_PAGE_SIZE]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    buffer: list[InlineKeyboardButton] = []
+    for svc in chunk:
+        label = _format_service_button(svc)
+        cb = f"{CB_BIZ_PLACES_SVC_PICK_PREFIX}{filter_code}|{int(svc['id'])}|{safe_page}"
+        buffer.append(InlineKeyboardButton(text=label, callback_data=cb))
+        if len(buffer) >= 2:
+            rows.append(buffer)
+            buffer = []
+    if buffer:
+        rows.append(buffer)
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{safe_page + 1}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+
+    title = _BIZ_PLACES_FILTER_TITLES.get(filter_code, filter_code)
+    text = f"🏢 <b>Заклади</b>\n\nФільтр: <b>{escape(str(title))}</b>\nОберіть категорію:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_FILTER_PREFIX))
+async def cb_biz_places_filter(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    filter_code = callback.data.split("|", 1)[1] if "|" in callback.data else "unpub"
+    await _render_biz_places_services(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        page=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_SVC_PAGE_PREFIX))
+async def cb_biz_places_service_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        page = int(parts[2])
+    except Exception:
+        page = 0
+    await _render_biz_places_services(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _render_biz_places_list(
+    bot: Bot,
+    chat_id: int,
+    *,
+    filter_code: str,
+    service_id: int,
+    place_page: int,
+    service_page: int,
+    prefer_message_id: int | None,
+) -> None:
+    is_published = _biz_places_filter_to_is_published(filter_code)
+    try:
+        total = await business_repo.count_places_by_service_filtered(int(service_id), is_published=is_published)
+        total_pages = max(1, (total + BIZ_PLACES_PAGE_SIZE - 1) // BIZ_PLACES_PAGE_SIZE)
+        safe_page = max(0, min(int(place_page), total_pages - 1))
+        offset = safe_page * BIZ_PLACES_PAGE_SIZE
+        places = await business_repo.list_places_by_service_filtered(
+            int(service_id),
+            is_published=is_published,
+            limit=BIZ_PLACES_PAGE_SIZE,
+            offset=offset,
+        )
+    except Exception:
+        logger.exception("Failed to list places for service=%s filter=%s", service_id, filter_code)
+        await _render_biz_places_services(
+            bot,
+            chat_id,
+            filter_code=filter_code,
+            page=service_page,
+            prefer_message_id=prefer_message_id,
+        )
+        return
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for p in places:
+        pid = int(p.get("id") or 0)
+        published = int(p.get("is_published") or 0) == 1
+        prefix = "✅" if published else "📝"
+        label = _truncate_label(f"{prefix} {p.get('name') or f'ID {pid}'}", 40)
+        cb = f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{pid}|{int(service_id)}|{safe_page}|{int(service_page)}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_PAGE_PREFIX}{filter_code}|{int(service_id)}|{safe_page - 1}|{int(service_page)}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_PAGE_PREFIX}{filter_code}|{int(service_id)}|{safe_page + 1}|{int(service_page)}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{int(service_page)}")])
+    rows.append([InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+
+    title = _BIZ_PLACES_FILTER_TITLES.get(filter_code, filter_code)
+    text = f"🏢 <b>Заклади</b>\n\nФільтр: <b>{escape(str(title))}</b>\nОберіть заклад:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_SVC_PICK_PREFIX))
+async def cb_biz_places_service_pick(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 4:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        service_id = int(parts[2])
+        service_page = int(parts[3])
+    except Exception:
+        service_id = 0
+        service_page = 0
+    await _render_biz_places_list(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        service_id=service_id,
+        place_page=0,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_PLACE_PAGE_PREFIX))
+async def cb_biz_places_place_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 5:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        service_id = int(parts[2])
+        place_page = int(parts[3])
+        service_page = int(parts[4])
+    except Exception:
+        service_id = 0
+        place_page = 0
+        service_page = 0
+    await _render_biz_places_list(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _render_biz_place_detail(
+    bot: Bot,
+    chat_id: int,
+    *,
+    filter_code: str,
+    place_id: int,
+    service_id: int,
+    place_page: int,
+    service_page: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
+    try:
+        place = await business_repo.get_place(int(place_id))
+    except Exception:
+        logger.exception("Failed to load place %s", place_id)
+        place = None
+    if not place:
+        await _render_biz_places_list(
+            bot,
+            chat_id,
+            filter_code=filter_code,
+            service_id=service_id,
+            place_page=place_page,
+            service_page=service_page,
+            prefer_message_id=prefer_message_id,
+        )
+        return
+
+    published = int(place.get("is_published") or 0) == 1
+    published_label = "✅ Опублікований" if published else "📝 Чернетка (не видна мешканцям)"
+
+    name = escape(str(place.get("name") or "—"))
+    addr = escape(str(place.get("address") or "—"))
+    svc_name = escape(str(place.get("service_name") or "—"))
+    biz_enabled = "ON" if int(place.get("business_enabled") or 0) else "OFF"
+    verified = "✅" if int(place.get("is_verified") or 0) else "—"
+    tier = escape(str(place.get("verified_tier") or "—"))
+    until = escape(str(place.get("verified_until") or "—"))
+
+    text = "🏢 <b>Заклад</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += (
+        f"ID: <code>{int(place_id)}</code>\n"
+        f"Категорія: <b>{svc_name}</b>\n"
+        f"Статус: {published_label}\n"
+        f"Business enabled: <b>{biz_enabled}</b>\n"
+        f"Verified: <b>{verified}</b> (tier: <code>{tier}</code>, until: <code>{until}</code>)\n\n"
+        f"Назва: <b>{name}</b>\n"
+        f"Адреса: {addr}"
+    )
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if published:
+        rows.append([InlineKeyboardButton(text="🙈 Приховати (unpublish)", callback_data=f"{CB_BIZ_PLACES_HIDE_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
+    else:
+        rows.append([InlineKeyboardButton(text="✅ Опублікувати", callback_data=f"{CB_BIZ_PLACES_PUBLISH_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
+        rows.append([InlineKeyboardButton(text="🗑 Видалити чернетку", callback_data=f"{CB_BIZ_PLACES_DELETE_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
+
+    rows.append([InlineKeyboardButton(text="« Заклади", callback_data=f"{CB_BIZ_PLACES_PLACE_PAGE_PREFIX}{filter_code}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
+    rows.append([InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{int(service_page)}")])
+    rows.append([InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_PLACE_OPEN_PREFIX))
+async def cb_biz_places_place_open(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳")
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    await _render_biz_place_detail(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_PUBLISH_PREFIX))
+async def cb_biz_places_publish(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Публікую…")
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        await business_service.set_place_published(int(callback.from_user.id), place_id, is_published=1)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to publish place %s", place_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    await _render_biz_place_detail(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+        note="✅ Опубліковано.",
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_HIDE_PREFIX))
+async def cb_biz_places_hide_confirm_screen(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    text = (
+        "⚠️ <b>Підтвердження</b>\n\n"
+        "Приховати цей заклад від мешканців?\n"
+        "Він зникне з каталогу і з WebApp."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Так, приховати",
+                    callback_data=f"{CB_BIZ_PLACES_HIDE_CONFIRM_PREFIX}{filter_code}|{place_id}|{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{place_id}|{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_HIDE_CONFIRM_PREFIX))
+async def cb_biz_places_hide(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Приховую…")
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        await business_service.set_place_published(int(callback.from_user.id), place_id, is_published=0)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to unpublish place %s", place_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    await _render_biz_place_detail(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+        note="✅ Приховано.",
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_DELETE_PREFIX))
+async def cb_biz_places_delete_confirm_screen(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    text = (
+        "⚠️ <b>Підтвердження</b>\n\n"
+        "Видалити цю чернетку?\n"
+        "Ця дія незворотна."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🗑 Так, видалити",
+                    callback_data=f"{CB_BIZ_PLACES_DELETE_CONFIRM_PREFIX}{filter_code}|{place_id}|{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{place_id}|{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_DELETE_CONFIRM_PREFIX))
+async def cb_biz_places_delete(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Видаляю…")
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        await business_service.delete_place_draft(int(callback.from_user.id), place_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to delete draft place %s", place_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    await callback.answer("✅ Видалено")
+    await _render_biz_places_list(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
     )

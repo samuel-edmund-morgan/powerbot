@@ -88,12 +88,56 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def list_services_with_place_counts_filtered(
+        self,
+        *,
+        is_published: int | None,
+    ) -> list[dict[str, Any]]:
+        """List services with place counts using optional publish filter."""
+        where_clause = ""
+        params: tuple[Any, ...] = ()
+        if is_published is not None:
+            where_clause = "WHERE p.is_published = ?"
+            params = (1 if int(is_published) else 0,)
+        query = (
+            """
+            SELECT s.id, s.name, COUNT(p.id) AS place_count
+              FROM general_services s
+              JOIN places p ON p.service_id = s.id
+            """
+            + where_clause
+            + """
+             GROUP BY s.id, s.name
+             ORDER BY s.name COLLATE NOCASE
+            """
+        )
+        async with open_business_db() as db:
+            async with db.execute(query, params) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def count_places_by_service(self, service_id: int) -> int:
         async with open_business_db() as db:
             async with db.execute(
                 "SELECT COUNT(*) AS cnt FROM places WHERE service_id = ?",
                 (int(service_id),),
             ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row else 0)
+
+    async def count_places_by_service_filtered(
+        self,
+        service_id: int,
+        *,
+        is_published: int | None,
+    ) -> int:
+        query = "SELECT COUNT(*) AS cnt FROM places WHERE service_id = ?"
+        params: list[Any] = [int(service_id)]
+        if is_published is not None:
+            query += " AND is_published = ?"
+            params.append(1 if int(is_published) else 0)
+        async with open_business_db() as db:
+            async with db.execute(query, tuple(params)) as cur:
                 row = await cur.fetchone()
                 return int(row[0] if row else 0)
 
@@ -117,6 +161,32 @@ class BusinessRepository:
                 """,
                 (int(service_id), safe_limit, safe_offset),
             ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
+    async def list_places_by_service_filtered(
+        self,
+        service_id: int,
+        *,
+        is_published: int | None,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 50))
+        safe_offset = max(0, int(offset))
+        query = (
+            "SELECT id, name, address, is_published "
+            "  FROM places "
+            " WHERE service_id = ?"
+        )
+        params: list[Any] = [int(service_id)]
+        if is_published is not None:
+            query += " AND is_published = ?"
+            params.append(1 if int(is_published) else 0)
+        query += " ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?"
+        params.extend([safe_limit, safe_offset])
+        async with open_business_db() as db:
+            async with db.execute(query, tuple(params)) as cur:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
@@ -286,6 +356,7 @@ class BusinessRepository:
         async with open_business_db() as db:
             async with db.execute(
                 """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
+                          p.is_published,
                           p.is_verified, p.verified_tier, p.verified_until, p.business_enabled,
                           s.name AS service_name
                      FROM places p
@@ -295,6 +366,51 @@ class BusinessRepository:
             ) as cur:
                 row = await cur.fetchone()
                 return dict(row) if row else None
+
+    async def delete_place_draft(self, place_id: int) -> bool:
+        """Delete an unpublished place and its related business rows.
+
+        Safety: only deletes when is_published=0 to avoid accidental removal of a live catalog entry.
+        """
+        pid = int(place_id)
+        last_error: Exception | None = None
+        for attempt in range(WRITE_RETRY_ATTEMPTS):
+            try:
+                async with open_business_db() as db:
+                    async with db.execute(
+                        "SELECT is_published FROM places WHERE id = ?",
+                        (pid,),
+                    ) as cur:
+                        row = await cur.fetchone()
+                        if not row:
+                            return False
+                        if int(row["is_published"] or 0) != 0:
+                            return False
+
+                    await db.execute("BEGIN")
+                    # Business-related tables
+                    await db.execute("DELETE FROM business_owners WHERE place_id = ?", (pid,))
+                    await db.execute("DELETE FROM business_subscriptions WHERE place_id = ?", (pid,))
+                    await db.execute("DELETE FROM business_claim_tokens WHERE place_id = ?", (pid,))
+                    await db.execute("DELETE FROM business_payment_events WHERE place_id = ?", (pid,))
+                    # Legacy likes table (may be empty for drafts, but keep DB tidy)
+                    await db.execute("DELETE FROM place_likes WHERE place_id = ?", (pid,))
+                    cursor = await db.execute("DELETE FROM places WHERE id = ?", (pid,))
+                    await db.commit()
+                    return int(cursor.rowcount or 0) > 0
+            except aiosqlite.OperationalError as error:
+                if "database is locked" not in str(error).lower():
+                    raise
+                last_error = error
+                backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                await asyncio.sleep(backoff)
+                continue
+            except Exception as error:
+                last_error = error
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Unexpected retry loop state")
 
     async def get_places_business_meta(self, place_ids: Sequence[int]) -> dict[int, dict[str, Any]]:
         """Batch load business metadata for places.
