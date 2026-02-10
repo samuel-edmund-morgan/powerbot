@@ -104,9 +104,19 @@ cd "${PROD_DIR}"
 docker compose down
 docker compose pull
 
-echo "Ensuring light notifications are OFF in DB before bringing the stack up..."
+echo "NOTE: deploy_prod no longer forces light_notifications_global=off."
+echo "To avoid false light state changes during deploy, freeze sensors before deploy (recommended runbook step)."
 if [[ -f "${PROD_DIR}/state.db" ]]; then
-  sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "INSERT OR REPLACE INTO kv (k, v) VALUES ('light_notifications_global', 'off');"
+  # Best-effort safety signal in logs. We do NOT modify notification settings here.
+  active_sensors="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT COUNT(*) FROM sensors WHERE is_active=1;" 2>/dev/null || echo "")"
+  if [[ -n "${active_sensors}" && "${active_sensors}" != "0" ]]; then
+    frozen_sensors="$(sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "SELECT COUNT(*) FROM sensors WHERE is_active=1 AND frozen_until IS NOT NULL;" 2>/dev/null || echo "")"
+    if [[ -n "${frozen_sensors}" && "${frozen_sensors}" != "0" ]]; then
+      echo "Detected frozen sensors: ${frozen_sensors}/${active_sensors}."
+    else
+      echo "WARNING: No frozen sensors detected (${active_sensors} active). You may get false light notifications during deploy."
+    fi
+  fi
 fi
 
 if [[ "${MIGRATE}" == "1" ]]; then
@@ -155,4 +165,4 @@ curl -s http://127.0.0.1:18081/api/v1/webapp/health >/dev/null || true
 # Log health gate (fail only on bad patterns).
 "${REPO_DIR}/scripts/log_health_check.sh" powerbot
 
-echo "Prod deployed. Light notifications remain OFF until you enable them."
+echo "Prod deployed."
