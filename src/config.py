@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -54,6 +55,9 @@ class Config:
     api_port: int  # Порт для HTTP API сервера
     sensor_api_key: str  # API ключ для сенсорів
     sensor_timeout: int  # Таймаут в секундах для визначення відключення
+    # Sensor aliases: treat heartbeat from one (building, section) as present for others.
+    # Mapping: (src_building_id, src_section_id) -> [(dst_building_id, dst_section_id), ...]
+    sensor_aliases: dict[tuple[int, int], list[tuple[int, int]]]
     # Web App
     web_app_enabled: bool
     web_app_url: str
@@ -104,6 +108,84 @@ def parse_int(value: str | None) -> int | None:
     return int(value)
 
 
+def parse_sensor_aliases_from_env() -> dict[tuple[int, int], list[tuple[int, int]]]:
+    """Parse SENSOR_ALIAS_* env vars into a mapping.
+
+    Env format:
+      SENSOR_ALIAS_<SRC_BUILDING_ID>_<SRC_SECTION_ID>="DSTB:DSTS,DSTB:DSTS"
+
+    Example:
+      SENSOR_ALIAS_1_2="1:1,1:3,5:3"
+
+    Notes:
+    - Invalid entries are ignored.
+    - Self-mapping is ignored.
+    - Duplicates are removed preserving order.
+    """
+    mapping: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    valid_sections = {1, 2, 3}
+    prefix = "SENSOR_ALIAS_"
+
+    for key, raw_value in os.environ.items():
+        if not key.startswith(prefix):
+            continue
+        rest = key[len(prefix):]
+        parts = rest.split("_")
+        if len(parts) != 2:
+            continue
+        try:
+            src_building_id = int(parts[0])
+            src_section_id = int(parts[1])
+        except Exception:
+            continue
+        if src_building_id <= 0 or src_section_id not in valid_sections:
+            continue
+
+        value = (raw_value or "").strip().strip('"').strip("'")
+        if not value:
+            continue
+
+        # Accept comma/space/semicolon-separated targets.
+        tokens = re.split(r"[,\s;]+", value)
+        targets: list[tuple[int, int]] = []
+        for token in tokens:
+            token = token.strip().strip('"').strip("'")
+            if not token:
+                continue
+            if ":" in token:
+                b, s = token.split(":", 1)
+            elif "_" in token:
+                b, s = token.split("_", 1)
+            else:
+                continue
+            if not b.isdigit() or not s.isdigit():
+                continue
+            dst_building_id = int(b)
+            dst_section_id = int(s)
+            if dst_building_id <= 0 or dst_section_id not in valid_sections:
+                continue
+            if (dst_building_id, dst_section_id) == (src_building_id, src_section_id):
+                continue
+            targets.append((dst_building_id, dst_section_id))
+
+        if not targets:
+            continue
+
+        # De-dup (preserve order).
+        uniq: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for t in targets:
+            if t in seen:
+                continue
+            seen.add(t)
+            uniq.append(t)
+
+        if uniq:
+            mapping[(src_building_id, src_section_id)] = uniq
+
+    return mapping
+
+
 CFG = Config(
     token=os.environ["BOT_TOKEN"],
     admin_ids=parse_admin_ids(os.getenv("ADMIN_IDS", "")),
@@ -129,6 +211,7 @@ CFG = Config(
     api_port=int(os.getenv("API_PORT", "8080")),
     sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),
     sensor_timeout=int(os.getenv("SENSOR_TIMEOUT_SEC", "150")),
+    sensor_aliases=parse_sensor_aliases_from_env(),
     web_app_enabled=parse_bool(os.getenv("WEB_APP", "0")),
     web_app_url=os.getenv("WEB_APP_URL", "").strip().strip('"').strip("'"),
     web_app_debug_user_id=parse_int(os.getenv("WEB_APP_DEBUG_USER_ID")),
