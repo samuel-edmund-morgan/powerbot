@@ -100,14 +100,15 @@ if [[ -f "${REPO_DIR}/.env.example" ]]; then
   done < "${REPO_DIR}/.env.example"
 fi
 
-echo "Disabling light notifications in DB before deploy..."
-if [[ -f "${PROD_DIR}/state.db" ]]; then
-  sqlite3 "${PROD_DIR}/state.db" "INSERT OR REPLACE INTO kv (k, v) VALUES ('light_notifications_global', 'off');"
-fi
-
 cd "${PROD_DIR}"
 docker compose down
 docker compose pull
+
+echo "Ensuring light notifications are OFF in DB before bringing the stack up..."
+if [[ -f "${PROD_DIR}/state.db" ]]; then
+  sqlite3 -cmd ".timeout 5000" "${PROD_DIR}/state.db" "INSERT OR REPLACE INTO kv (k, v) VALUES ('light_notifications_global', 'off');"
+fi
+
 if [[ "${MIGRATE}" == "1" ]]; then
   docker compose --profile migrate run --rm migrate
 fi
