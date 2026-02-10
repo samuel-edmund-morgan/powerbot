@@ -424,6 +424,9 @@ class BusinessCabinetService:
         tier = subscription["tier"]
         sub_status = subscription["status"]
         verified_until = subscription["expires_at"] if (tier in PAID_TIERS and sub_status == "active") else None
+        # New places created via business bot are created unpublished to avoid spam in resident catalog.
+        # Publishing happens only after admin approval of the ownership request.
+        await self.repository.set_place_published(updated["place_id"], is_published=1)
         await self.repository.update_place_business_flags(
             updated["place_id"],
             business_enabled=1,
