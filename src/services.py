@@ -58,6 +58,8 @@ async def format_light_status(
     building_sensors_online = 0
     section_sensors_total = 0
     section_sensors_online = 0
+    # Physical (non-aliased) section states for this building.
+    physical_section_any_online: dict[int, bool] = {}
     now = datetime.now()
     timeout = timedelta(seconds=CFG.sensor_timeout)
     for s in sensors:
@@ -74,12 +76,71 @@ async def format_light_status(
         else:
             effective_online = bool(s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout)
 
+        physical_section_any_online[int(sensor_section)] = (
+            physical_section_any_online.get(int(sensor_section), False) or effective_online
+        )
+
         if effective_online:
             building_sensors_online += 1
             if user_section_id is not None and sensor_section == user_section_id:
                 section_sensors_online += 1
         if user_section_id is not None and sensor_section == user_section_id:
             section_sensors_total += 1
+
+    # Sensor aliases: treat source section state as a "virtual sensor" in target sections.
+    # This is a temporary bridge for cases when one physical sensor represents multiple
+    # sections/buildings (shared power line).
+    alias_edges: list[tuple[int, int, int]] = []
+    aliases = getattr(CFG, "sensor_aliases", None) or {}
+    if user_building_id and aliases:
+        for (src_bid, src_sid), dsts in aliases.items():
+            for (dst_bid, dst_sid) in dsts:
+                if int(dst_bid) == int(user_building_id):
+                    alias_edges.append((int(src_bid), int(src_sid), int(dst_sid)))
+
+    src_section_is_up: dict[tuple[int, int], bool] = {}
+    if alias_edges:
+        # Seed with states for this building (already computed from physical sensors).
+        for sid, is_up in physical_section_any_online.items():
+            src_section_is_up[(int(user_building_id), int(sid))] = bool(is_up)
+
+        # Fetch minimal extra buildings needed to resolve cross-building aliases.
+        src_building_ids = {src_bid for (src_bid, _src_sid, _dst_sid) in alias_edges if src_bid != int(user_building_id)}
+        for src_bid in sorted(src_building_ids):
+            src_sensors = await get_sensors_by_building(src_bid)
+            any_online: dict[int, bool] = {}
+            for sensor in src_sensors:
+                sid = sensor.get("section_id")
+                if sid is None:
+                    sid = default_section_for_building(src_bid)
+                if sid is None:
+                    continue
+                sid_int = int(sid)
+
+                frozen_until = sensor.get("frozen_until")
+                frozen_active = bool(frozen_until and frozen_until > now)
+                if frozen_active:
+                    effective_online = (
+                        bool(sensor.get("frozen_is_up")) if sensor.get("frozen_is_up") is not None else False
+                    )
+                else:
+                    effective_online = bool(sensor["last_heartbeat"] and (now - sensor["last_heartbeat"]) < timeout)
+
+                any_online[sid_int] = any_online.get(sid_int, False) or effective_online
+
+            for sid_int, is_up in any_online.items():
+                src_section_is_up[(src_bid, sid_int)] = bool(is_up)
+
+        # Apply virtual sensors to totals (one per alias edge).
+        for (src_bid, src_sid, dst_sid) in alias_edges:
+            src_is_up = bool(src_section_is_up.get((src_bid, src_sid), False))
+            building_sensors_total += 1
+            if src_is_up:
+                building_sensors_online += 1
+            if user_section_id is not None and int(dst_sid) == int(user_section_id):
+                section_sensors_total += 1
+                if src_is_up:
+                    section_sensors_online += 1
 
     building_is_up = building_sensors_online > 0
     section_is_up: bool | None
@@ -388,8 +449,8 @@ async def check_sensors_timeout() -> dict[tuple[int, int], bool]:
         key = (bid, int(sid))
         sections_sensors.setdefault(key, []).append(sensor)
     
-    # Визначаємо стан кожної секції
-    result = {}
+    # Визначаємо стан кожної секції (base = physical sensors only)
+    result: dict[tuple[int, int], bool] = {}
     for (building_id, section_id), section_sensors in sections_sensors.items():
         # Секція UP якщо хоча б один сенсор "живий"
         is_up = False
@@ -407,6 +468,18 @@ async def check_sensors_timeout() -> dict[tuple[int, int], bool]:
                 is_up = True
                 break
         result[(building_id, section_id)] = is_up
+
+    # Sensor aliases: treat "UP" from source section as additional "virtual sensor"
+    # for target sections/buildings. We intentionally use *base* (physical) source
+    # state to avoid recursive alias loops.
+    aliases = getattr(CFG, "sensor_aliases", None) or {}
+    if aliases:
+        base_states = dict(result)
+        for (src_bid, src_sid), targets in aliases.items():
+            src_state = bool(base_states.get((src_bid, src_sid), False))
+            for (dst_bid, dst_sid) in targets:
+                dst_key = (int(dst_bid), int(dst_sid))
+                result[dst_key] = bool(result.get(dst_key, False) or src_state)
     
     return result
 
