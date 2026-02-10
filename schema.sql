@@ -249,6 +249,26 @@ CREATE TABLE IF NOT EXISTS building_section_power_state (
     FOREIGN KEY (building_id) REFERENCES buildings(id)
 );
 
+-- Черга адмін-задач (control-plane): tasks executed by main bot (data-plane)
+CREATE TABLE IF NOT EXISTS admin_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,                      -- broadcast | light_notify | ...
+    payload_json TEXT NOT NULL,              -- JSON payload
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending|running|done|failed|canceled
+    created_at TEXT NOT NULL,                -- ISO 8601
+    created_by INTEGER DEFAULT NULL,         -- tg user id (admin)
+    started_at TEXT DEFAULT NULL,            -- ISO 8601
+    finished_at TEXT DEFAULT NULL,           -- ISO 8601
+    updated_at TEXT DEFAULT NULL,            -- ISO 8601 (heartbeat/progress)
+    attempts INTEGER NOT NULL DEFAULT 0,
+    progress_current INTEGER DEFAULT 0,
+    progress_total INTEGER DEFAULT 0,
+    last_error TEXT DEFAULT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_jobs_status_created
+    ON admin_jobs (status, created_at);
+
 -- Індекси бізнес-режиму
 CREATE INDEX IF NOT EXISTS idx_subscribers_building_section
     ON subscribers (building_id, section_id);
