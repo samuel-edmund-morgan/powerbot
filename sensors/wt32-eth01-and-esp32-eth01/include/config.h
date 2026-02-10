@@ -50,10 +50,26 @@
 // Для багатьох ESP32-ETH01 клонів потрібен clock OUT від ESP32 (GPIO0_OUT або GPIO17_OUT).
 // Це задається через build_flags у `platformio.ini` (див. env:esp32-eth01).
 //
+// Якщо `PB_ETH_AUTOCONFIG=1` — firmware автоматично перебирає кілька типових
+// профілів (addr/clock/reset/pwr_en) на різних перезавантаженнях і зберігає
+// робочий профіль в NVS. Це зроблено, бо ESP32-ETH01/WT32-ETH01 "клони" часто
+// відрізняються саме цими параметрами.
+//
 // ВАЖЛИВО: в Arduino-ESP32 `ETH.begin(..., power, ...)` у сучасних версіях
 // передає `power` як `reset_gpio_num` у ESP-IDF (тобто це скоріше RESET pin, а не PWR_EN).
 // На деяких платах є окремий PWR_EN для PHY (його потрібно просто виставити в HIGH перед ETH.begin()).
 // ═══════════════════════════════════════════════════════════════
+
+#ifndef PB_ETH_AUTOCONFIG
+#define PB_ETH_AUTOCONFIG  0
+#endif
+
+// Якщо PB_ETH_AUTOCONFIG=1, можна підказати який PHY очікуємо.
+// Це не вимикає інші варіанти, але дозволяє стартувати зі "схожих" профілів.
+// Приклад для ESP32-ETH01 з IC+ IP101: -DPB_ETH_AUTOCONFIG_PREFERRED_PHY=ETH_PHY_IP101
+#ifndef PB_ETH_AUTOCONFIG_PREFERRED_PHY
+#define PB_ETH_AUTOCONFIG_PREFERRED_PHY  ETH_PHY_MAX
+#endif
 
 #ifndef PB_ETH_PHY_ADDR
 #define PB_ETH_PHY_ADDR    1
