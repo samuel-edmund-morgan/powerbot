@@ -65,7 +65,16 @@ async def format_light_status(
         if sensor_section is None:
             sensor_section = default_section_for_building(user_building_id)
 
-        if s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout:
+        frozen_until = s.get("frozen_until")
+        frozen_active = bool(frozen_until and frozen_until > now)
+        if frozen_active:
+            effective_online = (
+                bool(s.get("frozen_is_up")) if s.get("frozen_is_up") is not None else False
+            )
+        else:
+            effective_online = bool(s["last_heartbeat"] and (now - s["last_heartbeat"]) < timeout)
+
+        if effective_online:
             building_sensors_online += 1
             if user_section_id is not None and sensor_section == user_section_id:
                 section_sensors_online += 1
@@ -385,11 +394,18 @@ async def check_sensors_timeout() -> dict[tuple[int, int], bool]:
         # Секція UP якщо хоча б один сенсор "живий"
         is_up = False
         for sensor in section_sensors:
-            if sensor["last_heartbeat"]:
-                time_since_heartbeat = now - sensor["last_heartbeat"]
-                if time_since_heartbeat < timeout:
-                    is_up = True
-                    break
+            frozen_until = sensor.get("frozen_until")
+            frozen_active = bool(frozen_until and frozen_until > now)
+            if frozen_active:
+                effective_online = (
+                    bool(sensor.get("frozen_is_up")) if sensor.get("frozen_is_up") is not None else False
+                )
+            else:
+                effective_online = bool(sensor["last_heartbeat"] and (now - sensor["last_heartbeat"]) < timeout)
+
+            if effective_online:
+                is_up = True
+                break
         result[(building_id, section_id)] = is_up
     
     return result

@@ -225,6 +225,9 @@ CREATE TABLE IF NOT EXISTS sensors (
     section_id INTEGER DEFAULT NULL,         -- Номер секції (1..3)
     name TEXT,                               -- Назва сенсора (опціонально)
     comment TEXT DEFAULT NULL,               -- Опціональна примітка (квартира/контакт)
+    frozen_until TEXT DEFAULT NULL,          -- Заморозка сенсора до (ISO 8601), щоб не ловити фейкові "down" під час прошивки
+    frozen_is_up INTEGER DEFAULT NULL,       -- Поки заморожений: внесок у стан секції (1=UP, 0=DOWN)
+    frozen_at TEXT DEFAULT NULL,             -- Коли заморожено (ISO 8601)
     last_heartbeat TEXT,                     -- Час останнього heartbeat (ISO 8601)
     created_at TEXT NOT NULL,                -- Час реєстрації (ISO 8601)
     is_active INTEGER DEFAULT 1,             -- Активний (1/0)
