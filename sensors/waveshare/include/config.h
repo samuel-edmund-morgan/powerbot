@@ -32,10 +32,10 @@
 #define SECTION_ID      2
 
 // Опціональна примітка (наприклад: "кв 123"). Залиш порожнім якщо не потрібно.
-#define SENSOR_COMMENT  ""
+#define SENSOR_COMMENT  "My sensor, app.305"
 
 // Унікальний ідентифікатор сенсора
-#define SENSOR_UUID     "esp32-newcastle-002"
+#define SENSOR_UUID     "esp32-newcastle-001"
 
 // Назва будинку (для логів)
 #define BUILDING_NAME   "Newcastle"
