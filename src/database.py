@@ -454,6 +454,9 @@ async def init_db():
                 section_id INTEGER DEFAULT NULL,
                 name TEXT,
                 comment TEXT DEFAULT NULL,
+                frozen_until TEXT DEFAULT NULL,
+                frozen_is_up INTEGER DEFAULT NULL,
+                frozen_at TEXT DEFAULT NULL,
                 last_heartbeat TEXT,
                 created_at TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
@@ -461,13 +464,25 @@ async def init_db():
             )"""
         )
 
-        # Міграція: додати section_id/comment до sensors (для старих БД)
+        # Міграція: додати поля до sensors (для старих БД)
         try:
             await db.execute("ALTER TABLE sensors ADD COLUMN section_id INTEGER DEFAULT NULL")
         except Exception:
             pass
         try:
             await db.execute("ALTER TABLE sensors ADD COLUMN comment TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE sensors ADD COLUMN frozen_until TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE sensors ADD COLUMN frozen_is_up INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE sensors ADD COLUMN frozen_at TEXT DEFAULT NULL")
         except Exception:
             pass
         try:
@@ -755,7 +770,8 @@ async def get_admin_job(job_id: int) -> dict | None:
 
 
 async def list_admin_jobs(limit: int = 20, offset: int = 0) -> list[dict]:
-    limit = max(1, min(int(limit), 200))
+    # Allow larger exports (file) while keeping UI pages small.
+    limit = max(1, min(int(limit), 5000))
     offset = max(0, int(offset))
 
     async def _op() -> list[dict]:
@@ -1115,6 +1131,31 @@ async def count_subscribers() -> int:
         async with db.execute("SELECT COUNT(*) FROM subscribers") as cur:
             row = await cur.fetchone()
             return row[0] if row else 0
+
+
+async def get_subscribers_stats_by_building_section() -> dict[int | None, dict[int | None, int]]:
+    """Статистика підписників по (building_id, section_id).
+
+    Повертає:
+      {building_id: {section_id: count}}
+    де building_id/section_id можуть бути None для legacy/необраних.
+    """
+    async with open_db() as db:
+        async with db.execute(
+            """
+            SELECT building_id, section_id, COUNT(*)
+              FROM subscribers
+             GROUP BY building_id, section_id
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+
+    result: dict[int | None, dict[int | None, int]] = {}
+    for building_id, section_id, count in rows:
+        b = building_id if building_id is not None else None
+        s = section_id if section_id is not None else None
+        result.setdefault(b, {})[s] = int(count)
+    return result
 
 
 # ============ Тихі години ============
@@ -2467,7 +2508,13 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at, is_active FROM sensors WHERE uuid=?",
+            """
+            SELECT uuid, building_id, section_id, name, comment,
+                   frozen_until, frozen_is_up, frozen_at,
+                   last_heartbeat, created_at, is_active
+              FROM sensors
+             WHERE uuid=?
+            """,
             (uuid,)
         ) as cur:
             row = await cur.fetchone()
@@ -2478,6 +2525,9 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
                     "section_id": row["section_id"],
                     "name": row["name"],
                     "comment": row["comment"],
+                    "frozen_until": datetime.fromisoformat(row["frozen_until"]) if row["frozen_until"] else None,
+                    "frozen_is_up": (bool(row["frozen_is_up"]) if row["frozen_is_up"] is not None else None),
+                    "frozen_at": datetime.fromisoformat(row["frozen_at"]) if row["frozen_at"] else None,
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                     "is_active": bool(row["is_active"]),
@@ -2490,7 +2540,13 @@ async def get_sensors_by_building(building_id: int) -> list[dict]:
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at FROM sensors WHERE building_id=? AND is_active=1",
+            """
+            SELECT uuid, building_id, section_id, name, comment,
+                   frozen_until, frozen_is_up, frozen_at,
+                   last_heartbeat, created_at
+              FROM sensors
+             WHERE building_id=? AND is_active=1
+            """,
             (building_id,)
         ) as cur:
             rows = await cur.fetchall()
@@ -2501,6 +2557,9 @@ async def get_sensors_by_building(building_id: int) -> list[dict]:
                     "section_id": row["section_id"],
                     "name": row["name"],
                     "comment": row["comment"],
+                    "frozen_until": datetime.fromisoformat(row["frozen_until"]) if row["frozen_until"] else None,
+                    "frozen_is_up": (bool(row["frozen_is_up"]) if row["frozen_is_up"] is not None else None),
+                    "frozen_at": datetime.fromisoformat(row["frozen_at"]) if row["frozen_at"] else None,
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                 }
@@ -2514,7 +2573,9 @@ async def get_sensors_by_building_section(building_id: int, section_id: int) -> 
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at
+            SELECT uuid, building_id, section_id, name, comment,
+                   frozen_until, frozen_is_up, frozen_at,
+                   last_heartbeat, created_at
               FROM sensors
              WHERE building_id=?
                AND section_id=?
@@ -2530,6 +2591,9 @@ async def get_sensors_by_building_section(building_id: int, section_id: int) -> 
                     "section_id": row["section_id"],
                     "name": row["name"],
                     "comment": row["comment"],
+                    "frozen_until": datetime.fromisoformat(row["frozen_until"]) if row["frozen_until"] else None,
+                    "frozen_is_up": (bool(row["frozen_is_up"]) if row["frozen_is_up"] is not None else None),
+                    "frozen_at": datetime.fromisoformat(row["frozen_at"]) if row["frozen_at"] else None,
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                 }
@@ -2542,7 +2606,13 @@ async def get_all_active_sensors() -> list[dict]:
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT uuid, building_id, section_id, name, comment, last_heartbeat, created_at FROM sensors WHERE is_active=1"
+            """
+            SELECT uuid, building_id, section_id, name, comment,
+                   frozen_until, frozen_is_up, frozen_at,
+                   last_heartbeat, created_at
+              FROM sensors
+             WHERE is_active=1
+            """
         ) as cur:
             rows = await cur.fetchall()
             return [
@@ -2552,11 +2622,76 @@ async def get_all_active_sensors() -> list[dict]:
                     "section_id": row["section_id"],
                     "name": row["name"],
                     "comment": row["comment"],
+                    "frozen_until": datetime.fromisoformat(row["frozen_until"]) if row["frozen_until"] else None,
+                    "frozen_is_up": (bool(row["frozen_is_up"]) if row["frozen_is_up"] is not None else None),
+                    "frozen_at": datetime.fromisoformat(row["frozen_at"]) if row["frozen_at"] else None,
                     "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
                     "created_at": datetime.fromisoformat(row["created_at"]),
                 }
                 for row in rows
             ]
+
+
+async def freeze_sensor(
+    uuid: str,
+    *,
+    frozen_until: datetime,
+    frozen_is_up: bool,
+    frozen_at: datetime | None = None,
+) -> bool:
+    """Заморозити сенсор до конкретного часу.
+
+    Важливо: це лише впливає на трактування online/offline у моніторингу світла
+    (щоб не ловити фейкові "down" при прошивці/перезапуску сенсора).
+    """
+    if not uuid:
+        return False
+    if frozen_at is None:
+        frozen_at = datetime.now()
+
+    until_iso = frozen_until.isoformat()
+    at_iso = frozen_at.isoformat()
+    is_up_int = 1 if frozen_is_up else 0
+
+    async def _op() -> bool:
+        async with open_db() as db:
+            cur = await db.execute(
+                """
+                UPDATE sensors
+                   SET frozen_until=?,
+                       frozen_is_up=?,
+                       frozen_at=?
+                 WHERE uuid=? AND is_active=1
+                """,
+                (until_iso, is_up_int, at_iso, uuid),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
+
+
+async def unfreeze_sensor(uuid: str) -> bool:
+    """Зняти заморозку сенсора."""
+    if not uuid:
+        return False
+
+    async def _op() -> bool:
+        async with open_db() as db:
+            cur = await db.execute(
+                """
+                UPDATE sensors
+                   SET frozen_until=NULL,
+                       frozen_is_up=NULL,
+                       frozen_at=NULL
+                 WHERE uuid=? AND is_active=1
+                """,
+                (uuid,),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def deactivate_sensor(uuid: str):
