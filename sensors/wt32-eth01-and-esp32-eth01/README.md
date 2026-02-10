@@ -41,6 +41,10 @@ pip install platformio
 ```bash
 cd /home/powerbot/powerbot/sensors
 
+# Якщо `pio` не в PATH (часто після інсталяції через VSCode Extension),
+# використовуй повний шлях:
+#   ~/.platformio/penv/bin/pio ...
+
 # Збірка (WT32-ETH01)
 pio run -e wt32-eth01
 
@@ -86,8 +90,25 @@ sensors/
 
 ### ESP32-ETH01 (поширені клони)
 
-На багатьох ESP32-ETH01 плата **не подає зовнішній 50MHz clock** на GPIO0, тому потрібен режим
-`ETH_CLOCK_GPIO0_OUT` (ESP32 генерує 50MHz для PHY). Це вже налаштовано в `env:esp32-eth01` у `platformio.ini`.
+ESP32-ETH01 має багато клонів/ревізій, які відрізняються:
+- PHY address (0/1)
+- RMII clock (GPIO0_IN vs GPIO0_OUT vs GPIO17_OUT)
+- reset/pwr_en pin (часто GPIO16, інколи відсутній)
+- інколи навіть тип PHY (LAN8720 vs IP101/RTL8201)
+
+Тому `env:esp32-eth01` вмикає `PB_ETH_AUTOCONFIG=1`: firmware автоматично підбирає робочий профіль
+і запамʼятовує його в NVS. Дивись Serial Monitor: там буде рядок `ETH autoconfig: profile ...`.
+
+Якщо маркування PHY: `SMSC 8720A` / `LAN8720A` / `Microchip` — це `ETH_PHY_LAN8720` (дефолт для `env:esp32-eth01`).
+Якщо маркування PHY: `IP101` (IC+) — це `ETH_PHY_IP101` (alias: `TLK110`); тоді зміни в `platformio.ini` `PB_ETH_AUTOCONFIG_PREFERRED_PHY` на `ETH_PHY_IP101`, щоб починати перебір з IP101-профілів.
+
+Додатково, перед кожним `ETH.begin()` firmware друкує `PHY_ID=0x.... / 0x....` (регістри 2/3 через MDIO).
+Це допомагає швидко відрізнити:
+- `0xFFFF/0xFFFF` або `0x0000/0x0000` майже завжди означає, що PHY не читається по MDIO (не той addr, не ті MDC/MDIO, або PHY без живлення/в reset).
+- валідний OUI/ID (наприклад для LAN87xx часто видно `0x0007/....`) означає, що MDIO/MDC+addr скоріше правильні, і проблема далі в clock/reset.
+
+Якщо у тебе дуже "нестандартний" клон — в `platformio.ini` для `env:esp32-eth01` увімкнено `PB_ETH_AUTOCONFIG_DETECT_WIDE=1`,
+який ширше перебирає MDC/MDIO (займає більше часу, але виконується лише 1 раз за сесію автоконфігу).
 
 ## Список будинків
 
@@ -133,6 +154,13 @@ Content-Type: application/json
 - Перевірте Ethernet кабель
 - Перевірте що є DHCP сервер в мережі
 - Подивіться Serial Monitor для діагностики
+
+### `ETH autoconfig`: жоден профіль не підійшов
+Найчастіше це не "код", а одна з проблем заліза/ревізії:
+- PHY не отримує живлення (або GPIO, який мав би його вмикати, не той).
+- PHY фізично в reset (або reset/pwr_en лінія "не там").
+- Немає/неправильний RMII ref clock (50MHz): плати з дефектним осцилятором/пайкою трапляються.
+- Рідкісний клон з іншими MDC/MDIO (тоді дивись `PHY_ID=...` і/або увімкни wide detect).
 
 ### HTTP помилка 401
 - Неправильний `API_KEY` в `config.h`
