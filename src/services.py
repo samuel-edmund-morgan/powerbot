@@ -34,6 +34,31 @@ BROADCAST_MAX_RETRIES = int(os.getenv("BROADCAST_MAX_RETRIES", "1"))
 _notification_save_lock = asyncio.Lock()
 
 
+def _get_unique_sensor_alias_source_for_target(
+    building_id: int,
+    section_id: int,
+) -> tuple[int, int] | None:
+    """If (building_id, section_id) is an alias target, return a unique source section.
+
+    We only return a source when there is exactly 1 distinct source mapping to this target.
+    If multiple sources map to the same target (OR-state), history/statistics become ambiguous.
+    """
+    aliases = getattr(CFG, "sensor_aliases", None) or {}
+    if not aliases:
+        return None
+
+    sources: list[tuple[int, int]] = []
+    for (src_bid, src_sid), dsts in aliases.items():
+        for (dst_bid, dst_sid) in dsts:
+            if int(dst_bid) == int(building_id) and int(dst_sid) == int(section_id):
+                sources.append((int(src_bid), int(src_sid)))
+
+    uniq = list(dict.fromkeys(sources))  # de-dup preserve order
+    if len(uniq) == 1:
+        return uniq[0]
+    return None
+
+
 async def format_light_status(
     user_id: int,
     include_vote_prompt: bool = False,
@@ -151,11 +176,30 @@ async def format_light_status(
     else:
         section_is_up = section_sensors_online > 0
 
+    # Resolve history source for alias targets:
+    # If user section is an alias target AND has no events of its own yet, we show history/stats
+    # from the unique alias source (so UI isn't "0 сек | 0 сек").
+    history_building_id = user_building_id
+    history_section_id = user_section_id
+
     last_event = (
         await get_last_event(building_id=user_building_id, section_id=user_section_id)
         if user_building_id and user_section_id
         else None
     )
+    if (
+        last_event is None
+        and user_building_id is not None
+        and user_section_id in VALID_SECTION_IDS
+    ):
+        alias_src = _get_unique_sensor_alias_source_for_target(user_building_id, int(user_section_id))
+        if alias_src:
+            src_bid, src_sid = alias_src
+            src_last = await get_last_event(building_id=src_bid, section_id=src_sid)
+            if src_last is not None:
+                history_building_id, history_section_id = src_bid, src_sid
+                last_event = src_last
+
     perf_after_last_event = asyncio.get_running_loop().time()
     last_change_text = ""
     if last_event:
@@ -168,8 +212,8 @@ async def format_light_status(
 
     duration_text = ""
     last_events = (
-        await get_last_events(2, building_id=user_building_id, section_id=user_section_id)
-        if user_building_id and user_section_id
+        await get_last_events(2, building_id=history_building_id, section_id=history_section_id)
+        if history_building_id and history_section_id
         else []
     )
     perf_after_last_events = asyncio.get_running_loop().time()
@@ -185,8 +229,8 @@ async def format_light_status(
 
     stats = await calculate_stats(
         period_days=1,
-        building_id=user_building_id,
-        section_id=user_section_id,
+        building_id=history_building_id,
+        section_id=history_section_id,
     )
     perf_after_stats = asyncio.get_running_loop().time()
     today_uptime = format_duration(stats["total_uptime"])
@@ -622,6 +666,25 @@ async def calculate_stats(
         'period_end': datetime,
     }
     """
+    # Alias-aware fallback:
+    # If the requested section has no events at all, but it is an alias target with exactly
+    # one source that has history, use the source history for stats.
+    if building_id is not None and section_id is not None:
+        try:
+            last = await get_last_event(building_id=building_id, section_id=section_id)
+        except Exception:
+            last = None
+        if last is None:
+            alias_src = _get_unique_sensor_alias_source_for_target(int(building_id), int(section_id))
+            if alias_src:
+                src_bid, src_sid = alias_src
+                try:
+                    src_last = await get_last_event(building_id=src_bid, section_id=src_sid)
+                except Exception:
+                    src_last = None
+                if src_last is not None:
+                    building_id, section_id = src_bid, src_sid
+
     now = datetime.now()
     
     if period_days:
