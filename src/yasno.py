@@ -18,7 +18,7 @@ _BASE_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 _PLANNED_OUTAGES_KEY = "yasno:planned_outages"
 _PLANNED_OUTAGES_TTL = 600  # 10 хвилин
 _ADDRESS_CACHE_TTL = 6 * 3600  # 6 годин
-_LAST_CONFIG: dict[int, tuple[str | None, tuple[str, ...]]] = {}
+_LAST_CONFIG: dict[tuple[int, int], tuple[str | None, tuple[str, ...]]] = {}
 
 
 def _now_ts() -> float:
@@ -60,10 +60,15 @@ def _parse_queries(value: str | None) -> list[str]:
     return parts
 
 
-def _get_building_queries(building_id: int) -> tuple[str | None, list[str]]:
+def _get_building_queries(building_id: int, section_id: int | None) -> tuple[str | None, list[str]]:
     prefix = _building_env_prefix(building_id)
     street_query = os.getenv(f"{prefix}_STREET_QUERY")
-    house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES")
+    house_queries_raw = None
+    if section_id in (1, 2, 3):
+        house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES_SEC_{section_id}")
+    if not house_queries_raw:
+        # Backward-compatible fallback for old env var (same schedule for all sections).
+        house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES")
     if street_query:
         street_query = street_query.strip().strip('"').strip("'")
     house_queries = _parse_queries(house_queries_raw)
@@ -74,15 +79,21 @@ def _get_building_queries(building_id: int) -> tuple[str | None, list[str]]:
     return street_query or None, house_queries
 
 
-def _log_config_if_changed(building_id: int, street_query: str | None, house_queries: list[str]) -> None:
+def _log_config_if_changed(
+    building_id: int,
+    section_id: int,
+    street_query: str | None,
+    house_queries: list[str],
+) -> None:
     current = (street_query, tuple(house_queries))
-    previous = _LAST_CONFIG.get(building_id)
+    previous = _LAST_CONFIG.get((building_id, section_id))
     if previous == current:
         return
-    _LAST_CONFIG[building_id] = current
+    _LAST_CONFIG[(building_id, section_id)] = current
     logger.info(
-        "yasno: config building=%s street_query=%s house_queries=%s",
+        "yasno: config building=%s section=%s street_query=%s house_queries=%s",
         building_id,
+        section_id,
         street_query,
         "|".join(house_queries),
     )
@@ -300,15 +311,17 @@ def _format_schedule_text(data: dict[str, Any], include_building: bool = True) -
 
 async def _get_building_schedule_data(
     building_id: int,
+    section_id: int | None,
     *,
     log_context: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not CFG.yasno_enabled:
         return None, "ℹ️ Графіки не ввімкнені."
-    street_query, house_queries = _get_building_queries(building_id)
+    street_query, house_queries = _get_building_queries(building_id, section_id)
     if not street_query or not house_queries:
         return None, "ℹ️ Графіки для цього будинку не налаштовані."
-    _log_config_if_changed(building_id, street_query, house_queries)
+    if section_id in (1, 2, 3):
+        _log_config_if_changed(building_id, int(section_id), street_query, house_queries)
 
     planned = await get_planned_outages()
     if not planned:
@@ -357,11 +370,16 @@ async def _get_building_schedule_data(
         return None, "⚠️ Графіки для цього будинку недоступні."
 
     building = get_building_by_id(building_id)
-    return {"building": building, "queues": queues}, None
+    return {"building": building, "section_id": section_id, "queues": queues}, None
 
 
-async def get_building_schedule_text(building_id: int, include_building: bool = True) -> str:
-    data, error = await _get_building_schedule_data(building_id)
+async def get_building_schedule_text(
+    building_id: int,
+    *,
+    section_id: int | None = None,
+    include_building: bool = True,
+) -> str:
+    data, error = await _get_building_schedule_data(building_id, section_id)
     if error:
         return error
     return _format_schedule_text(data, include_building=include_building)
@@ -401,7 +419,7 @@ async def yasno_schedule_monitor_loop(bot) -> None:
     def _status_has_data(status: str | None) -> bool:
         return status not in (None, "", "NoData")
 
-    async def _detect_changes(building_id: int, data: dict[str, Any]) -> dict:
+    async def _detect_changes(building_id: int, section_id: int, data: dict[str, Any]) -> dict:
         changes = {
             "today_changed": False,
             "tomorrow_changed": False,
@@ -416,7 +434,12 @@ async def yasno_schedule_monitor_loop(bot) -> None:
                 day_key = _day_key(label, outage)
                 status = outage.get("status") if outage else None
                 slots_hash = _hash_outage(outage)
-                prev = await get_yasno_schedule_state(building_id, queue_key, day_key)
+                prev = await get_yasno_schedule_state(
+                    building_id,
+                    queue_key,
+                    day_key,
+                    section_id=section_id,
+                )
                 if prev:
                     if prev["status"] != status or prev["slots_hash"] != slots_hash:
                         if label == "today":
@@ -429,6 +452,7 @@ async def yasno_schedule_monitor_loop(bot) -> None:
                             changes["emergency"] = True
                 await upsert_yasno_schedule_state(
                     building_id,
+                    section_id,
                     queue_key,
                     day_key,
                     status,
@@ -444,77 +468,91 @@ async def yasno_schedule_monitor_loop(bot) -> None:
 
             for building in BUILDINGS:
                 building_id = building["id"]
-                data, error = await _get_building_schedule_data(building_id, log_context=True)
-                if error or not data:
-                    continue
+                for section_id in (1, 2, 3):
+                    data, error = await _get_building_schedule_data(
+                        building_id,
+                        section_id,
+                        log_context=True,
+                    )
+                    if error or not data:
+                        continue
 
-                changes = await _detect_changes(building_id, data)
-                if not any(changes.values()):
-                    continue
-                logger.info(
-                    "yasno: schedule change building=%s today=%s tomorrow=%s emergency=%s",
-                    building_id,
-                    changes["today_changed"],
-                    changes["tomorrow_changed"],
-                    changes["emergency"],
-                )
+                    changes = await _detect_changes(building_id, section_id, data)
+                    if not any(changes.values()):
+                        continue
+                    logger.info(
+                        "yasno: schedule change building=%s section=%s today=%s tomorrow=%s emergency=%s",
+                        building_id,
+                        section_id,
+                        changes["today_changed"],
+                        changes["tomorrow_changed"],
+                        changes["emergency"],
+                    )
 
-                header_lines = ["🗓 <b>Оновлення графіків відключень</b>"]
-                b = get_building_by_id(building_id)
-                if b:
-                    header_lines.append(f"🏠 {b['name']} ({b['address']})")
+                    header_lines = ["🗓 <b>Оновлення графіків відключень</b>"]
+                    b = get_building_by_id(building_id)
+                    if b:
+                        header_lines.append(f"🏠 {b['name']} ({b['address']}), секція {section_id}")
 
-                if changes["emergency"]:
-                    header_lines.append("⚠️ Увага! Графіки позначені як екстрені відключення.")
-                else:
-                    if changes["tomorrow_changed"]:
-                        header_lines.append("📅 Зʼявились або оновились орієнтовні графіки відключень на завтра.")
-                    if changes["today_changed"]:
-                        header_lines.append("🔄 Сьогоднішні графіки відключень були оновлені.")
+                    if changes["emergency"]:
+                        header_lines.append("⚠️ Увага! Графіки позначені як екстрені відключення.")
+                    else:
+                        if changes["tomorrow_changed"]:
+                            header_lines.append("📅 Зʼявились або оновились орієнтовні графіки відключень на завтра.")
+                        if changes["today_changed"]:
+                            header_lines.append("🔄 Сьогоднішні графіки відключень були оновлені.")
 
-                schedule_text = _format_schedule_text(data, include_building=False)
-                schedule_body = "\n".join(schedule_text.splitlines()[1:]).strip()
-                if schedule_body:
-                    header_lines.append("")
-                    header_lines.append(schedule_body)
+                    schedule_text = _format_schedule_text(data, include_building=False)
+                    schedule_body = "\n".join(schedule_text.splitlines()[1:]).strip()
+                    if schedule_body:
+                        header_lines.append("")
+                        header_lines.append(schedule_body)
 
-                text = "\n".join(header_lines).strip()
-                subscribers = await get_subscribers_for_schedule_notification(current_hour, building_id)
-                existing_notifications = {
-                    notif["chat_id"]: notif
-                    for notif in await get_active_notifications("schedule")
-                }
-                logger.info(
-                    "yasno: schedule notify building=%s subscribers=%s",
-                    building_id,
-                    len(subscribers),
-                )
+                    text = "\n".join(header_lines).strip()
+                    subscribers = await get_subscribers_for_schedule_notification(
+                        current_hour,
+                        building_id,
+                        section_id,
+                    )
+                    if not subscribers:
+                        continue
 
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
-                )
+                    existing_notifications = {
+                        notif["chat_id"]: notif
+                        for notif in await get_active_notifications("schedule")
+                    }
+                    logger.info(
+                        "yasno: schedule notify building=%s section=%s subscribers=%s",
+                        building_id,
+                        section_id,
+                        len(subscribers),
+                    )
 
-                async def send_schedule(chat_id: int):
-                    last_menu_id = await get_last_bot_message(chat_id)
-                    if last_menu_id:
-                        try:
-                            await bot.delete_message(chat_id, last_menu_id)
-                        except Exception:
-                            pass
-                        await delete_last_bot_message_record(chat_id)
+                    keyboard = InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+                    )
 
-                    prev = existing_notifications.get(chat_id)
-                    if prev:
-                        try:
-                            await bot.delete_message(chat_id, prev["message_id"])
-                        except Exception:
-                            pass
-                        await delete_notification(prev["id"])
+                    async def send_schedule(chat_id: int, *, _text: str = text, _existing=existing_notifications):
+                        last_menu_id = await get_last_bot_message(chat_id)
+                        if last_menu_id:
+                            try:
+                                await bot.delete_message(chat_id, last_menu_id)
+                            except Exception:
+                                pass
+                            await delete_last_bot_message_record(chat_id)
 
-                    msg = await bot.send_message(chat_id, text, reply_markup=keyboard)
-                    await save_notification(chat_id, msg.message_id, "schedule")
+                        prev = _existing.get(chat_id)
+                        if prev:
+                            try:
+                                await bot.delete_message(chat_id, prev["message_id"])
+                            except Exception:
+                                pass
+                            await delete_notification(prev["id"])
 
-                await broadcast_messages(subscribers, send_schedule)
+                        msg = await bot.send_message(chat_id, _text, reply_markup=keyboard)
+                        await save_notification(chat_id, msg.message_id, "schedule")
+
+                    await broadcast_messages(subscribers, send_schedule)
         except Exception:
             logger.exception("yasno_schedule_monitor_loop error")
 

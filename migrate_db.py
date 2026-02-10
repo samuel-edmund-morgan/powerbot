@@ -57,6 +57,9 @@ USER_DATA_TABLES = {
     "kv",
     "sensors",
     "building_power_state",
+    "building_section_power_state",
+    "yasno_schedule_state",
+    "yasno_schedule_state_v2",
     "business_owners",
     "business_subscriptions",
     "business_audit_log",
@@ -346,6 +349,101 @@ class DatabaseMigrator:
         
         conn_source.close()
         conn_target.close()
+
+    def _apply_post_migration_backfills(self) -> None:
+        """
+        Custom post-migration updates that cannot be expressed as DEFAULT values.
+
+        Must be idempotent and safe to run multiple times.
+        """
+        NEWCASTLE_BUILDING_ID = 1
+        DEFAULT_SECTION_FOR_OTHER_BUILDINGS = 1
+        DEFAULT_SECTION_FOR_NEWCASTLE = 2
+
+        self.changes.append("Backfill: section_id defaults (subscribers/sensors/votes/events)")
+
+        if self.dry_run:
+            log_action(
+                "DRY RUN: backfill section_id для subscribers/sensors/votes; events -> (building_id=1, section_id=2)"
+            )
+            return
+
+        conn = sqlite3.connect(self.target_db)
+        cursor = conn.cursor()
+        try:
+            # subscribers: set section_id for existing users, but never overwrite non-NULL.
+            cursor.execute(
+                """
+                UPDATE subscribers
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                   AND building_id IS NOT NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_FOR_NEWCASTLE, DEFAULT_SECTION_FOR_OTHER_BUILDINGS),
+            )
+            log_info(f"Backfill subscribers.section_id rows={cursor.rowcount}")
+
+            # sensors: default section_id for existing sensors.
+            cursor.execute(
+                """
+                UPDATE sensors
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_FOR_NEWCASTLE, DEFAULT_SECTION_FOR_OTHER_BUILDINGS),
+            )
+            log_info(f"Backfill sensors.section_id rows={cursor.rowcount}")
+
+            # votes: default section_id for existing votes.
+            cursor.execute(
+                """
+                UPDATE heating_votes
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                   AND building_id IS NOT NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_FOR_NEWCASTLE, DEFAULT_SECTION_FOR_OTHER_BUILDINGS),
+            )
+            log_info(f"Backfill heating_votes.section_id rows={cursor.rowcount}")
+
+            cursor.execute(
+                """
+                UPDATE water_votes
+                   SET section_id = CASE
+                       WHEN building_id = ? THEN ?
+                       ELSE ?
+                   END
+                 WHERE section_id IS NULL
+                   AND building_id IS NOT NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_FOR_NEWCASTLE, DEFAULT_SECTION_FOR_OTHER_BUILDINGS),
+            )
+            log_info(f"Backfill water_votes.section_id rows={cursor.rowcount}")
+
+            # events: preserve history by binding existing global events to Newcastle секція 2.
+            cursor.execute(
+                """
+                UPDATE events
+                   SET building_id = ?, section_id = ?
+                 WHERE building_id IS NULL
+                   AND section_id IS NULL
+                """,
+                (NEWCASTLE_BUILDING_ID, DEFAULT_SECTION_FOR_NEWCASTLE),
+            )
+            log_info(f"Backfill events.building_id/section_id rows={cursor.rowcount}")
+
+            conn.commit()
+        finally:
+            conn.close()
     
     def run(self):
         """Виконує міграцію."""
@@ -423,6 +521,11 @@ class DatabaseMigrator:
             if table in source_info:
                 log_action(f"Мігрую дані: {table}")
                 self.migrate_static_data(table)
+
+        # Після-міграційні backfill-и (дані, які не можна безпечно вирішити DEFAULT-ами)
+        print("")
+        print(f"{Colors.BLUE}7. Після-міграційні backfill-и{Colors.NC}")
+        self._apply_post_migration_backfills()
         
         # Підсумок
         print("")

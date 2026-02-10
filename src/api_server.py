@@ -5,6 +5,8 @@ Endpoint: POST /api/v1/heartbeat
 Body: {
     "api_key": "your-secret-key",
     "building_id": 1,
+    "section_id": 2,
+    "comment": "кв 123 (опц.)",
     "sensor_uuid": "esp32-newcastle-01"
 }
 
@@ -27,12 +29,12 @@ from config import CFG
 from yasno import get_planned_outages, get_building_schedule_text
 from database import (
     get_sensor_by_uuid,
-    register_sensor,
-    update_sensor_heartbeat,
+    upsert_sensor_heartbeat,
     get_building_by_id,
     add_subscriber,
-    get_subscriber_building,
+    get_subscriber_building_and_section,
     set_subscriber_building,
+    set_subscriber_section,
     get_all_buildings,
     get_building_info,
     get_notification_settings,
@@ -60,6 +62,8 @@ from database import (
     get_last_event,
     db_get,
     db_set,
+    default_section_for_building,
+    VALID_SECTION_IDS,
 )
 
 
@@ -129,6 +133,7 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
     {
         "api_key": "secret-key",
         "building_id": 1,
+        "section_id": 2,
         "sensor_uuid": "unique-sensor-id"
     }
     """
@@ -172,28 +177,69 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
             {"status": "error", "message": "sensor_uuid is required and must be a string"},
             status=400
         )
+
+    # Валідація section_id (1..3). Для backward-compat дозволяємо відсутність (ставимо дефолт).
+    section_id = data.get("section_id")
+    if section_id is None:
+        section_id = default_section_for_building(building_id)
+        logger.warning(
+            "Heartbeat missing section_id: uuid=%s building=%s; defaulting section_id=%s",
+            sensor_uuid,
+            building_id,
+            section_id,
+        )
+    if not isinstance(section_id, int) or section_id not in VALID_SECTION_IDS:
+        return web.json_response(
+            {"status": "error", "message": "section_id must be integer 1..3"},
+            status=400,
+        )
+
+    sensor_name = data.get("name")
+    if sensor_name is not None and not isinstance(sensor_name, str):
+        return web.json_response(
+            {"status": "error", "message": "name must be string"},
+            status=400,
+        )
+    if isinstance(sensor_name, str):
+        sensor_name = sensor_name.strip() or None
+
+    comment = data.get("comment")
+    if comment is not None and not isinstance(comment, str):
+        return web.json_response(
+            {"status": "error", "message": "comment must be string"},
+            status=400,
+        )
+    if isinstance(comment, str):
+        comment = comment.strip()
+        if not comment:
+            comment = None
+        elif len(comment) > 160:
+            comment = comment[:160]
     
-    # Перевіряємо/реєструємо сенсор
-    sensor = await get_sensor_by_uuid(sensor_uuid)
-    
-    if sensor is None:
-        # Новий сенсор — реєструємо
-        sensor_name = data.get("name")  # Опціональна назва
-        is_new = await register_sensor(sensor_uuid, building_id, sensor_name)
-        if is_new:
-            logger.info(f"New sensor registered: {sensor_uuid} for building {building_id} ({building['name']})")
+    # Upsert сенсора + heartbeat (1 операція БД)
+    sensor_before = await get_sensor_by_uuid(sensor_uuid)
+    is_new = await upsert_sensor_heartbeat(sensor_uuid, building_id, section_id, sensor_name, comment)
+    if is_new:
+        logger.info(
+            "New sensor registered: %s building=%s section=%s (%s)",
+            sensor_uuid,
+            building_id,
+            section_id,
+            building["name"],
+        )
     else:
-        # Існуючий сенсор — перевіряємо building_id
-        if sensor["building_id"] != building_id:
+        if sensor_before and (
+            sensor_before.get("building_id") != building_id
+            or sensor_before.get("section_id") != section_id
+        ):
             logger.warning(
-                f"Sensor {sensor_uuid} registered for building {sensor['building_id']}, "
-                f"but heartbeat received for building {building_id}"
+                "Sensor %s moved: (%s,%s) -> (%s,%s)",
+                sensor_uuid,
+                sensor_before.get("building_id"),
+                sensor_before.get("section_id"),
+                building_id,
+                section_id,
             )
-            # Оновлюємо building_id якщо змінився
-            await register_sensor(sensor_uuid, building_id)
-    
-    # Оновлюємо heartbeat
-    await update_sensor_heartbeat(sensor_uuid)
     
     now = datetime.now().isoformat()
     
@@ -201,6 +247,7 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
         "status": "ok",
         "timestamp": now,
         "building": building["name"],
+        "section_id": section_id,
         "sensor_uuid": sensor_uuid,
     })
 
@@ -236,7 +283,9 @@ async def sensors_info_handler(request: web.Request) -> web.Response:
             {
                 "uuid": s["uuid"],
                 "building_id": s["building_id"],
+                "section_id": s.get("section_id"),
                 "name": s["name"],
+                "comment": s.get("comment"),
                 "last_heartbeat": s["last_heartbeat"].isoformat() if s["last_heartbeat"] else None,
             }
             for s in sensors
@@ -334,10 +383,11 @@ def _serialize_dt(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-async def _get_power_payload(building_id: int | None) -> dict:
-    if not building_id:
+async def _get_power_payload(building_id: int | None, section_id: int | None) -> dict:
+    if not building_id or section_id not in VALID_SECTION_IDS:
         return {
             "building": None,
+            "section_id": None,
             "is_up": None,
             "sensors_online": 0,
             "sensors_total": 0,
@@ -347,11 +397,19 @@ async def _get_power_payload(building_id: int | None) -> dict:
 
     building = await get_building_info(building_id)
     sensors = await get_sensors_by_building(building_id)
-    sensors_total = len(sensors)
+    section_sensors = []
+    for s in sensors:
+        sid = s.get("section_id")
+        if sid is None:
+            sid = default_section_for_building(building_id)
+        if sid == section_id:
+            section_sensors.append(s)
+
+    sensors_total = len(section_sensors)
     sensors_online = 0
     now = datetime.now()
     timeout = CFG.sensor_timeout
-    for s in sensors:
+    for s in section_sensors:
         if s["last_heartbeat"]:
             delta = (now - s["last_heartbeat"]).total_seconds()
             if delta < timeout:
@@ -361,7 +419,7 @@ async def _get_power_payload(building_id: int | None) -> dict:
     if sensors_total > 0:
         is_up = sensors_online > 0
 
-    last_event = await get_last_event()
+    last_event = await get_last_event(building_id=building_id, section_id=section_id)
     last_change = None
     last_event_type = None
     if last_event:
@@ -375,6 +433,7 @@ async def _get_power_payload(building_id: int | None) -> dict:
             "has_sensor": building["has_sensor"],
             "sensor_count": building["sensor_count"],
         } if building else None,
+        "section_id": section_id,
         "is_up": is_up,
         "sensors_online": sensors_online,
         "sensors_total": sensors_total,
@@ -392,11 +451,15 @@ def _strip_schedule_header(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-async def _get_schedule_payload(building_id: int | None) -> dict:
-    if not building_id:
+async def _get_schedule_payload(building_id: int | None, section_id: int | None) -> dict:
+    if not building_id or section_id not in VALID_SECTION_IDS:
         return {"text": ""}
     try:
-        text = await get_building_schedule_text(building_id, include_building=False)
+        text = await get_building_schedule_text(
+            building_id,
+            section_id=section_id,
+            include_building=False,
+        )
     except Exception as exc:
         logger.warning("Failed to get webapp schedule: %s", exc)
         return {"text": "⚠️ Не вдалося отримати графіки."}
@@ -456,16 +519,16 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
     webapp_logger.info("User %s webapp: bootstrap", _format_webapp_user_label(user))
     user_id = int(user["id"])
 
-    building_id = await get_subscriber_building(user_id)
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
     buildings = await get_all_buildings()
     notifications = await get_notification_settings(user_id)
-    power = await _get_power_payload(building_id)
-    schedule = await _get_schedule_payload(building_id)
+    power = await _get_power_payload(building_id, section_id)
+    schedule = await _get_schedule_payload(building_id, section_id)
     alerts_payload = await _get_alert_payload()
-    heating_stats = await get_heating_stats(building_id)
-    water_stats = await get_water_stats(building_id)
-    heating_vote = await get_user_vote(user_id, "heating")
-    water_vote = await get_user_vote(user_id, "water")
+    heating_stats = await get_heating_stats(building_id, section_id)
+    water_stats = await get_water_stats(building_id, section_id)
+    heating_vote = await get_user_vote(user_id, "heating", building_id, section_id)
+    water_vote = await get_user_vote(user_id, "water", building_id, section_id)
     shelters = await _get_shelters_payload(user_id)
     categories = await get_all_general_services()
 
@@ -479,6 +542,7 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
         "settings": {
             **notifications,
             "building_id": building_id,
+            "section_id": section_id,
         },
         "buildings": buildings,
         "power": power,
@@ -506,15 +570,15 @@ async def webapp_status_handler(request: web.Request) -> web.Response:
     await _ensure_subscriber(user)
     webapp_logger.info("User %s webapp: status", _format_webapp_user_label(user))
     user_id = int(user["id"])
-    building_id = await get_subscriber_building(user_id)
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
 
-    power = await _get_power_payload(building_id)
-    schedule = await _get_schedule_payload(building_id)
+    power = await _get_power_payload(building_id, section_id)
+    schedule = await _get_schedule_payload(building_id, section_id)
     alerts_payload = await _get_alert_payload()
-    heating_stats = await get_heating_stats(building_id)
-    water_stats = await get_water_stats(building_id)
-    heating_vote = await get_user_vote(user_id, "heating")
-    water_vote = await get_user_vote(user_id, "water")
+    heating_stats = await get_heating_stats(building_id, section_id)
+    water_stats = await get_water_stats(building_id, section_id)
+    heating_vote = await get_user_vote(user_id, "heating", building_id, section_id)
+    water_vote = await get_user_vote(user_id, "water", building_id, section_id)
 
     return web.json_response({
         "status": "ok",
@@ -541,17 +605,33 @@ async def webapp_building_handler(request: web.Request) -> web.Response:
     if not isinstance(building_id, int):
         return web.json_response({"status": "error", "message": "building_id must be integer"}, status=400)
 
+    section_id = data.get("section_id")
+    if section_id is None:
+        section_id = default_section_for_building(building_id)
+    if not isinstance(section_id, int) or section_id not in VALID_SECTION_IDS:
+        return web.json_response({"status": "error", "message": "section_id must be integer 1..3"}, status=400)
+
     building = await get_building_info(building_id)
     if not building:
         return web.json_response({"status": "error", "message": "Building not found"}, status=404)
 
-    success = await set_subscriber_building(int(user["id"]), building_id)
+    user_id = int(user["id"])
+    updated_building = await set_subscriber_building(user_id, building_id)
+    updated_section = await set_subscriber_section(user_id, section_id)
     webapp_logger.info(
-        "User %s webapp: set building %s",
+        "User %s webapp: set building %s section %s",
         _format_webapp_user_label(user),
         building_id,
+        section_id,
     )
-    return web.json_response({"status": "ok", "updated": success, "building": building})
+    return web.json_response(
+        {
+            "status": "ok",
+            "updated": bool(updated_building or updated_section),
+            "building": building,
+            "section_id": section_id,
+        }
+    )
 
 
 async def webapp_notifications_handler(request: web.Request) -> web.Response:
@@ -604,19 +684,19 @@ async def webapp_vote_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Invalid vote payload"}, status=400)
 
     user_id = int(user["id"])
-    building_id = await get_subscriber_building(user_id)
-    if not building_id:
-        return web.json_response({"status": "error", "message": "Select building first"}, status=400)
+    building_id, section_id = await get_subscriber_building_and_section(user_id)
+    if not building_id or section_id not in VALID_SECTION_IDS:
+        return web.json_response({"status": "error", "message": "Select building and section first"}, status=400)
 
     if vote_type == "heating":
-        await vote_heating(user_id, value, building_id)
+        await vote_heating(user_id, value, building_id, section_id)
     else:
-        await vote_water(user_id, value, building_id)
+        await vote_water(user_id, value, building_id, section_id)
 
-    heating_stats = await get_heating_stats(building_id)
-    water_stats = await get_water_stats(building_id)
-    heating_vote = await get_user_vote(user_id, "heating")
-    water_vote = await get_user_vote(user_id, "water")
+    heating_stats = await get_heating_stats(building_id, section_id)
+    water_stats = await get_water_stats(building_id, section_id)
+    heating_vote = await get_user_vote(user_id, "heating", building_id, section_id)
+    water_vote = await get_user_vote(user_id, "water", building_id, section_id)
 
     webapp_logger.info(
         "User %s webapp: vote %s=%s",

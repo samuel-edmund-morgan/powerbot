@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS subscribers (
     light_notifications INTEGER DEFAULT 1,   -- Сповіщення про світло (1/0)
     alert_notifications INTEGER DEFAULT 1,   -- Сповіщення про тривоги (1/0)
     schedule_notifications INTEGER DEFAULT 1, -- Сповіщення про графіки (1/0)
-    building_id INTEGER DEFAULT NULL         -- ID будинку
+    building_id INTEGER DEFAULT NULL,        -- ID будинку
+    section_id INTEGER DEFAULT NULL          -- Номер секції (1..3)
 );
 
 -- Таблиця будинків
@@ -39,7 +40,9 @@ CREATE TABLE IF NOT EXISTS kv (
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_type TEXT NOT NULL,                -- 'up' або 'down'
-    timestamp TEXT NOT NULL                  -- Час події (ISO 8601)
+    timestamp TEXT NOT NULL,                 -- Час події (ISO 8601)
+    building_id INTEGER DEFAULT NULL,        -- ID будинку
+    section_id INTEGER DEFAULT NULL          -- Номер секції (1..3)
 );
 
 -- Загальні категорії сервісів
@@ -146,7 +149,8 @@ CREATE TABLE IF NOT EXISTS heating_votes (
     chat_id INTEGER PRIMARY KEY,
     has_heating INTEGER NOT NULL,            -- Є опалення (1/0)
     voted_at TEXT NOT NULL,                  -- Час голосування (ISO 8601)
-    building_id INTEGER DEFAULT NULL         -- ID будинку
+    building_id INTEGER DEFAULT NULL,        -- ID будинку
+    section_id INTEGER DEFAULT NULL          -- Номер секції (1..3)
 );
 
 -- Голосування за воду
@@ -154,7 +158,8 @@ CREATE TABLE IF NOT EXISTS water_votes (
     chat_id INTEGER PRIMARY KEY,
     has_water INTEGER NOT NULL,              -- Є вода (1/0)
     voted_at TEXT NOT NULL,                  -- Час голосування (ISO 8601)
-    building_id INTEGER DEFAULT NULL         -- ID будинку
+    building_id INTEGER DEFAULT NULL,        -- ID будинку
+    section_id INTEGER DEFAULT NULL          -- Номер секції (1..3)
 );
 
 -- Активні сповіщення (для видалення старих)
@@ -175,6 +180,18 @@ CREATE TABLE IF NOT EXISTS yasno_schedule_state (
     slots_hash TEXT DEFAULT NULL,
     updated_at TEXT DEFAULT NULL,
     PRIMARY KEY (building_id, queue_key, day_key)
+);
+
+-- Кеш стану графіків ЯСНО по секціях (v2)
+CREATE TABLE IF NOT EXISTS yasno_schedule_state_v2 (
+    building_id INTEGER NOT NULL,
+    section_id INTEGER NOT NULL,
+    queue_key TEXT NOT NULL,
+    day_key TEXT NOT NULL,
+    status TEXT DEFAULT NULL,
+    slots_hash TEXT DEFAULT NULL,
+    updated_at TEXT DEFAULT NULL,
+    PRIMARY KEY (building_id, section_id, queue_key, day_key)
 );
 
 -- Останнє повідомлення бота користувачу
@@ -205,7 +222,9 @@ CREATE TABLE IF NOT EXISTS shelter_likes (
 CREATE TABLE IF NOT EXISTS sensors (
     uuid TEXT PRIMARY KEY,                   -- Унікальний ідентифікатор сенсора
     building_id INTEGER NOT NULL,            -- FK на buildings
+    section_id INTEGER DEFAULT NULL,         -- Номер секції (1..3)
     name TEXT,                               -- Назва сенсора (опціонально)
+    comment TEXT DEFAULT NULL,               -- Опціональна примітка (квартира/контакт)
     last_heartbeat TEXT,                     -- Час останнього heartbeat (ISO 8601)
     created_at TEXT NOT NULL,                -- Час реєстрації (ISO 8601)
     is_active INTEGER DEFAULT 1,             -- Активний (1/0)
@@ -220,7 +239,32 @@ CREATE TABLE IF NOT EXISTS building_power_state (
     FOREIGN KEY (building_id) REFERENCES buildings(id)
 );
 
+-- Стан електропостачання по секціях (building_id + section_id)
+CREATE TABLE IF NOT EXISTS building_section_power_state (
+    building_id INTEGER NOT NULL,            -- FK на buildings
+    section_id INTEGER NOT NULL,             -- Номер секції (1..3)
+    is_up INTEGER DEFAULT 1,                 -- Є світло (1/0)
+    last_change TEXT,                        -- Час останньої зміни (ISO 8601)
+    PRIMARY KEY (building_id, section_id),
+    FOREIGN KEY (building_id) REFERENCES buildings(id)
+);
+
 -- Індекси бізнес-режиму
+CREATE INDEX IF NOT EXISTS idx_subscribers_building_section
+    ON subscribers (building_id, section_id);
+
+CREATE INDEX IF NOT EXISTS idx_sensors_building_section_active
+    ON sensors (building_id, section_id, is_active);
+
+CREATE INDEX IF NOT EXISTS idx_events_building_section_timestamp
+    ON events (building_id, section_id, timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_heating_votes_building_section
+    ON heating_votes (building_id, section_id);
+
+CREATE INDEX IF NOT EXISTS idx_water_votes_building_section
+    ON water_votes (building_id, section_id);
+
 CREATE INDEX IF NOT EXISTS idx_places_business_enabled_verified
     ON places (business_enabled, is_verified);
 

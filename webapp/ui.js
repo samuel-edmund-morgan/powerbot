@@ -93,6 +93,23 @@
     });
   };
 
+  const renderSections = (selectedId) => {
+    if (!elements.sectionSelect) return;
+    elements.sectionSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Оберіть секцію";
+    elements.sectionSelect.appendChild(placeholder);
+
+    [1, 2, 3].forEach((id) => {
+      const option = document.createElement("option");
+      option.value = String(id);
+      option.textContent = `${id} секція`;
+      if (selectedId && id === selectedId) option.selected = true;
+      elements.sectionSelect.appendChild(option);
+    });
+  };
+
   const renderPower = (power) => {
     if (!power || !power.building) {
       elements.powerStatus.textContent = "Будинок не обрано";
@@ -102,7 +119,7 @@
       return;
     }
 
-    const { is_up, sensors_online, sensors_total, last_change } = power;
+    const { is_up, sensors_online, sensors_total, last_change, section_id } = power;
     if (sensors_total === 0) {
       elements.powerStatus.textContent = "Сенсорів немає";
       elements.powerMeta.textContent = "Поки немає датчика для цього будинку.";
@@ -114,7 +131,8 @@
     const percent = Math.round((sensors_online / sensors_total) * 100);
     elements.powerMeter.style.width = `${percent}%`;
     elements.powerStatus.textContent = is_up ? "Світло є" : "Світла немає";
-    elements.powerMeta.textContent = `Сенсорів онлайн: ${sensors_online}/${sensors_total} · ${formatDate(last_change)}`;
+    const sectionText = section_id ? ` · секція ${section_id}` : "";
+    elements.powerMeta.textContent = `Сенсорів онлайн: ${sensors_online}/${sensors_total}${sectionText} · ${formatDate(last_change)}`;
     elements.heroStatus.textContent = is_up ? "Світло є" : "Світла немає";
   };
 
@@ -362,6 +380,7 @@
     setActiveView,
     showToast,
     renderBuildings,
+    renderSections,
     renderPower,
     renderSchedule,
     renderAlerts,

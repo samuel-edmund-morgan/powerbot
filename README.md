@@ -181,5 +181,5 @@ curl -v http://127.0.0.1:18081/api/v1/health
 ```bash
 curl -X POST http://new-england.morgan-dev.com:18081/api/v1/heartbeat \
   -H "Content-Type: application/json" \
-  -d '{"api_key":"<SENSOR_API_KEY>","building_id":1,"sensor_uuid":"esp32-newcastle-001"}'
+  -d '{"api_key":"<SENSOR_API_KEY>","building_id":1,"section_id":2,"sensor_uuid":"esp32-newcastle-001","comment":"кв. 123"}'
 ```
