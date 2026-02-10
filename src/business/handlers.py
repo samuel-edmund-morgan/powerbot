@@ -30,6 +30,7 @@ BTN_ADD_BUSINESS = "➕ Додати бізнес"
 BTN_CLAIM_BUSINESS = "🔗 Прив'язати бізнес"
 BTN_MY_BUSINESSES = "🏢 Мої бізнеси"
 BTN_PLANS = "💳 Плани"
+# Legacy admin-only buttons/callbacks (admin features moved to adminbot).
 BTN_MODERATION = "🛡 Модерація"
 BTN_ADMIN_TOKENS = "🔐 Коди прив'язки"
 BTN_CANCEL = "❌ Скасувати"
@@ -39,6 +40,7 @@ CB_MENU_ADD = "bmenu:add"
 CB_MENU_ATTACH = "bmenu:attach"
 CB_MENU_MINE = "bmenu:mine"
 CB_MENU_PLANS = "bmenu:plans"
+# Legacy admin-only menu callbacks (no longer shown in businessbot UI).
 CB_MENU_MOD = "bmenu:moderation"
 CB_MENU_TOKENS = "bmenu:tokens"
 CB_MENU_CANCEL = "bmenu:cancel"
@@ -135,10 +137,34 @@ def build_main_menu(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=BTN_PLANS, callback_data=CB_MENU_PLANS),
         ],
     ]
-    if cabinet_service.is_admin(user_id):
-        rows.append([InlineKeyboardButton(text=BTN_MODERATION, callback_data=CB_MENU_MOD)])
-        rows.append([InlineKeyboardButton(text=BTN_ADMIN_TOKENS, callback_data=CB_MENU_TOKENS)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(
+    (F.data == CB_MENU_MOD)
+    | (F.data == CB_MENU_TOKENS)
+    | F.data.startswith("bmod_")
+    | F.data.startswith("bm:")
+    | F.data.startswith("btok")
+)
+async def cb_legacy_admin_feature_moved(callback: CallbackQuery) -> None:
+    """Admin flows were moved out of business bot; keep stale buttons safe."""
+    try:
+        await callback.answer("Цю адмін‑функцію перенесено в адмін‑бот.", show_alert=True)
+    except Exception:
+        pass
+    if not callback.message:
+        return
+    user_id = callback.from_user.id if callback.from_user else callback.message.chat.id
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=INTRO_TEXT,
+        reply_markup=build_main_menu(user_id),
+        remove_reply_keyboard=True,
+    )
 
 
 def build_cancel_menu() -> InlineKeyboardMarkup:
@@ -564,7 +590,10 @@ async def notify_admins_about_owner_request(
         f"Source: <code>{source}</code>\n"
         f"Created: {owner_row['created_at']}"
     )
-    keyboard = build_moderation_keyboard(owner_row["id"])
+    # Business admin actions are handled in the separate admin bot now.
+    # We keep this notification so admins don't miss new requests.
+    text += "\n\n⚙️ Модерація: відкрий <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>."
+    keyboard = None
     for admin_id in cabinet_service.admin_ids:
         try:
             await message.bot.send_message(admin_id, text, reply_markup=keyboard)
@@ -994,118 +1023,44 @@ async def cb_menu_plans(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == CB_MENU_MOD)
 async def cb_menu_moderation(callback: CallbackQuery) -> None:
-    if callback.message:
-        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await show_moderation(callback.message, prefer_message_id=callback.message.message_id)
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_MENU_TOKENS)
 async def cb_menu_tokens(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if callback.message:
-        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await show_token_admin_menu(callback.message, prefer_message_id=callback.message.message_id)
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_TOK_MENU)
 async def cb_tok_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if callback.message:
-        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await show_token_admin_menu(callback.message, prefer_message_id=callback.message.message_id)
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_TOK_LIST)
 async def cb_tok_list(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if callback.message:
-        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await show_token_services_view(callback.message, page=0, prefer_message_id=callback.message.message_id)
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_TOK_GEN)
 async def cb_tok_gen(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if callback.message:
-        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await ui_render(
-            callback.message.bot,
-            chat_id=callback.message.chat.id,
-            prefer_message_id=callback.message.message_id,
-            text="♻️ <b>Генерація кодів</b>\n\nОберіть дію:",
-            reply_markup=build_token_generate_menu_keyboard(),
-        )
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_TOK_GEN_ALL)
 async def cb_tok_gen_all(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if callback.message:
-        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await ui_render(
-            callback.message.bot,
-            chat_id=callback.message.chat.id,
-            prefer_message_id=callback.message.message_id,
-            text=(
-                "⚠️ <b>Увага</b>\n\n"
-                "Ця дія згенерує <b>нові</b> коди для <b>всіх</b> закладів.\n"
-                "Усі раніше видані коди стануть неактивними.\n\n"
-                "Продовжити?"
-            ),
-            reply_markup=build_token_bulk_confirm_keyboard(),
-        )
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_TOK_GEN_ALL_CONFIRM)
 async def cb_tok_gen_all_confirm(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if not callback.message:
-        await callback.answer()
-        return
-    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-    if not cabinet_service.is_admin(callback.from_user.id):
-        await callback.answer("Доступ лише адміністратору.", show_alert=True)
-        return
-
-    await ui_render(
-        callback.message.bot,
-        chat_id=callback.message.chat.id,
-        prefer_message_id=callback.message.message_id,
-        text="⏳ Генерую коди для всіх закладів…",
-        reply_markup=None,
-    )
-    try:
-        result = await cabinet_service.bulk_rotate_claim_tokens_for_all_places(callback.from_user.id)
-    except Exception as error:
-        await ui_render(
-            callback.message.bot,
-            chat_id=callback.message.chat.id,
-            prefer_message_id=callback.message.message_id,
-            text=f"❌ Помилка генерації: {html.escape(str(error))}\n\nОберіть дію:",
-            reply_markup=build_token_admin_menu_keyboard(),
-        )
-        await callback.answer("Помилка", show_alert=True)
-        return
-
-    await ui_render(
-        callback.message.bot,
-        chat_id=callback.message.chat.id,
-        prefer_message_id=callback.message.message_id,
-        text=(
-            "✅ Готово.\n\n"
-            f"Закладів у базі: <b>{int(result.get('total_places') or 0)}</b>\n"
-            f"Кодів згенеровано: <b>{int(result.get('rotated') or 0)}</b>\n\n"
-            "Оберіть дію:"
-        ),
-        reply_markup=build_token_admin_menu_keyboard(),
-    )
-    await callback.answer("Готово")
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data == CB_MENU_NOOP)
@@ -1115,7 +1070,8 @@ async def cb_noop(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith(CB_TOKV_SVC_PAGE_PREFIX))
 async def cb_tokv_services_page(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1134,7 +1090,8 @@ async def cb_tokv_services_page(callback: CallbackQuery, state: FSMContext) -> N
 
 @router.callback_query(F.data.startswith(CB_TOKV_SVC_PICK_PREFIX))
 async def cb_tokv_service_pick(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1153,7 +1110,8 @@ async def cb_tokv_service_pick(callback: CallbackQuery, state: FSMContext) -> No
 
 @router.callback_query(F.data.startswith(CB_TOKV_PLACE_PAGE_PREFIX))
 async def cb_tokv_places_page(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1178,7 +1136,8 @@ async def cb_tokv_places_page(callback: CallbackQuery, state: FSMContext) -> Non
 
 @router.callback_query(F.data.startswith(CB_TOKV_PLACE_OPEN_PREFIX))
 async def cb_tokv_place_open(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1210,7 +1169,8 @@ async def cb_tokv_place_open(callback: CallbackQuery, state: FSMContext) -> None
 
 @router.callback_query(F.data.startswith(CB_TOKV_PLACE_ROTATE_PREFIX))
 async def cb_tokv_place_rotate(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1270,7 +1230,8 @@ async def cb_tokv_place_rotate(callback: CallbackQuery, state: FSMContext) -> No
 
 @router.callback_query(F.data.startswith(CB_TOKG_SVC_PAGE_PREFIX))
 async def cb_tokg_services_page(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1289,7 +1250,8 @@ async def cb_tokg_services_page(callback: CallbackQuery, state: FSMContext) -> N
 
 @router.callback_query(F.data.startswith(CB_TOKG_SVC_PICK_PREFIX))
 async def cb_tokg_service_pick(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1308,7 +1270,8 @@ async def cb_tokg_service_pick(callback: CallbackQuery, state: FSMContext) -> No
 
 @router.callback_query(F.data.startswith(CB_TOKG_PLACE_PAGE_PREFIX))
 async def cb_tokg_places_page(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1333,7 +1296,8 @@ async def cb_tokg_places_page(callback: CallbackQuery, state: FSMContext) -> Non
 
 @router.callback_query(F.data.startswith(CB_TOKG_PLACE_ROTATE_PREFIX))
 async def cb_tokg_place_rotate(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
     if not callback.message:
         await callback.answer()
         return
@@ -1995,257 +1959,60 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
 
 
 @router.message(Command("moderation"))
-@router.message(F.text == BTN_MODERATION)
 async def show_moderation(
     message: Message,
     *,
     index: int = 0,
     prefer_message_id: int | None = None,
 ) -> None:
-    admin_id = message.chat.id
+    # Admin features were moved to adminbot.
+    user_id = message.from_user.id if message.from_user else message.chat.id
     await try_delete_user_message(message)
-    try:
-        rows = await cabinet_service.list_pending_owner_requests(admin_id)
-    except AccessDeniedError as error:
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            prefer_message_id=prefer_message_id,
-            text=str(error) + "\n\n" + INTRO_TEXT,
-            reply_markup=build_main_menu(admin_id),
-        )
-        return
-
-    if not rows:
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            prefer_message_id=prefer_message_id,
-            text="Черга модерації порожня.\n\n" + INTRO_TEXT,
-            reply_markup=build_main_menu(admin_id),
-        )
-        return
-
-    safe_index = max(0, min(int(index), len(rows) - 1))
-    item = rows[safe_index]
-
-    user_label_raw = f"@{item['username']}" if item.get("username") else (item.get("first_name") or "unknown")
-    user_label = html.escape(str(user_label_raw))
-    place_name = html.escape(str(item.get("place_name") or "—"))
-    place_address = html.escape(str(item.get("place_address") or "—"))
-
-    text = (
-        "🛡 <b>Модерація</b>\n\n"
-        f"Request ID: <code>{item['owner_id']}</code>\n"
-        f"Place: <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
-        f"Address: {place_address}\n"
-        f"User: {user_label} / <code>{item['tg_user_id']}</code>\n"
-        f"Created: {item['created_at']}"
-    )
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
         prefer_message_id=prefer_message_id,
-        text=text,
-        reply_markup=build_moderation_queue_keyboard(item["owner_id"], index=safe_index, total=len(rows)),
+        text="⚙️ Модерацію перенесено в <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>.\n\n" + INTRO_TEXT,
+        reply_markup=build_main_menu(user_id),
+        remove_reply_keyboard=True,
+        force_new_message=True,
     )
 
 
 @router.callback_query(F.data.startswith(CB_MOD_PAGE_PREFIX))
 async def cb_moderation_page(callback: CallbackQuery) -> None:
-    if not callback.message:
-        await callback.answer()
-        return
-    try:
-        index = int(callback.data.removeprefix(CB_MOD_PAGE_PREFIX))
-    except Exception:
-        await callback.answer("Некоректна сторінка", show_alert=True)
-        return
-    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-    await show_moderation(callback.message, index=index, prefer_message_id=callback.message.message_id)
-    await callback.answer()
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data.startswith(CB_MOD_APPROVE_PREFIX))
 async def cb_moderation_approve(callback: CallbackQuery) -> None:
-    if not callback.message:
-        await callback.answer()
-        return
-    raw = callback.data.removeprefix(CB_MOD_APPROVE_PREFIX)
-    parts = [p for p in raw.split(":") if p]
-    try:
-        owner_id = int(parts[0])
-        index = int(parts[1]) if len(parts) > 1 else 0
-    except Exception:
-        await callback.answer("Некоректні дані", show_alert=True)
-        return
-
-    try:
-        updated = await cabinet_service.approve_owner_request(callback.from_user.id, owner_id)
-    except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await callback.answer(str(error), show_alert=True)
-        return
-
-    owner_msg = (
-        "✅ Твою заявку на керування бізнесом підтверджено.\n"
-        "Тепер доступні редагування і керування тарифом."
-    )
-    try:
-        await ui_render(
-            callback.bot,
-            chat_id=updated["tg_user_id"],
-            text=owner_msg + "\n\nОберіть дію:",
-            reply_markup=build_main_menu(updated["tg_user_id"]),
-            remove_reply_keyboard=True,
-        )
-    except Exception:
-        pass
-
-    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-    await show_moderation(callback.message, index=index, prefer_message_id=callback.message.message_id)
-    await callback.answer("Готово")
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data.startswith(CB_MOD_REJECT_PREFIX))
 async def cb_moderation_reject(callback: CallbackQuery) -> None:
-    if not callback.message:
-        await callback.answer()
-        return
-    raw = callback.data.removeprefix(CB_MOD_REJECT_PREFIX)
-    parts = [p for p in raw.split(":") if p]
-    try:
-        owner_id = int(parts[0])
-        index = int(parts[1]) if len(parts) > 1 else 0
-    except Exception:
-        await callback.answer("Некоректні дані", show_alert=True)
-        return
-
-    try:
-        updated = await cabinet_service.reject_owner_request(callback.from_user.id, owner_id)
-    except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await callback.answer(str(error), show_alert=True)
-        return
-
-    owner_msg = "❌ Твою заявку на керування бізнесом відхилено адміністратором."
-    try:
-        await ui_render(
-            callback.bot,
-            chat_id=updated["tg_user_id"],
-            text=owner_msg + "\n\nОберіть дію:",
-            reply_markup=build_main_menu(updated["tg_user_id"]),
-            remove_reply_keyboard=True,
-        )
-    except Exception:
-        pass
-
-    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-    await show_moderation(callback.message, index=index, prefer_message_id=callback.message.message_id)
-    await callback.answer("Готово")
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.callback_query(F.data.startswith("bm:"))
 async def cb_moderate_owner(callback: CallbackQuery) -> None:
-    payload = callback.data.split(":")
-    if len(payload) != 3:
-        await callback.answer("Некоректні дані", show_alert=True)
-        return
-    action = payload[1]
-    owner_id = int(payload[2])
-    try:
-        if action == "a":
-            updated = await cabinet_service.approve_owner_request(callback.from_user.id, owner_id)
-            action_label = "APPROVED"
-            owner_msg = (
-                "✅ Твою заявку на керування бізнесом підтверджено.\n"
-                "Тепер доступні редагування і керування тарифом."
-            )
-        elif action == "r":
-            updated = await cabinet_service.reject_owner_request(callback.from_user.id, owner_id)
-            action_label = "REJECTED"
-            owner_msg = "❌ Твою заявку на керування бізнесом відхилено адміністратором."
-        else:
-            await callback.answer("Невідома дія", show_alert=True)
-            return
-    except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await callback.answer(str(error), show_alert=True)
-        return
-
-    try:
-        await ui_render(
-            callback.bot,
-            chat_id=updated["tg_user_id"],
-            text=owner_msg + "\n\nОберіть дію:",
-            reply_markup=build_main_menu(updated["tg_user_id"]),
-            remove_reply_keyboard=True,
-        )
-    except Exception:
-        pass
-
-    base_text = callback.message.html_text or callback.message.text or "Owner request"
-    updated_text = f"{base_text}\n\n<b>{action_label}</b> by <code>{callback.from_user.id}</code>"
-    await callback.message.edit_text(updated_text, reply_markup=None)
-    await callback.answer("Готово")
+    # Admin features were moved to adminbot (legacy handler kept to avoid crashes).
+    return
 
 
 @router.message(Command("claim_token"))
 async def cmd_claim_token(message: Message) -> None:
+    # Admin features were moved to adminbot.
+    user_id = message.from_user.id if message.from_user else message.chat.id
     await try_delete_user_message(message)
-    text = (message.text or "").strip()
-    parts = text.split()
-    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)]])
-    if len(parts) < 2:
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            text="Використання: <code>/claim_token &lt;place_id&gt; [ttl_hours]</code>",
-            reply_markup=back_keyboard,
-        )
-        return
-    try:
-        place_id = int(parts[1])
-    except ValueError:
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            text="place_id має бути числом.",
-            reply_markup=back_keyboard,
-        )
-        return
-    ttl_hours = 72
-    if len(parts) >= 3:
-        try:
-            ttl_hours = int(parts[2])
-        except ValueError:
-            await ui_render(
-                message.bot,
-                chat_id=message.chat.id,
-                text="ttl_hours має бути числом.",
-                reply_markup=back_keyboard,
-            )
-            return
-    try:
-        result = await cabinet_service.create_claim_token(
-            admin_tg_user_id=message.from_user.id if message.from_user else message.chat.id,
-            place_id=place_id,
-            ttl_hours=ttl_hours,
-        )
-    except (ValidationError, NotFoundError, AccessDeniedError) as error:
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            text=str(error),
-            reply_markup=back_keyboard,
-        )
-        return
-    place_name = html.escape(str(result["place"]["name"]))
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
-        text=(
-            "🔐 Код прив'язки згенеровано.\n\n"
-            f"Place: <b>{place_name}</b>\n"
-            f"Token: <code>{result['token']}</code>\n"
-            f"Expires: {result['expires_at']}"
-        ),
-        reply_markup=back_keyboard,
+        text="⚙️ Коди прив'язки перенесено в <b>adminbot</b> → <b>Бізнес</b> → <b>Коди прив'язки</b>.\n\n" + INTRO_TEXT,
+        reply_markup=build_main_menu(user_id),
+        remove_reply_keyboard=True,
+        force_new_message=True,
     )

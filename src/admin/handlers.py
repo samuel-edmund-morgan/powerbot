@@ -29,12 +29,46 @@ from database import (
     default_section_for_building,
 )
 from admin.ui import escape, render, try_delete_user_message
+from business.repository import BusinessRepository
+from business.service import AccessDeniedError as BusinessAccessDeniedError
+from business.service import BusinessCabinetService
+from business.service import NotFoundError as BusinessNotFoundError
+from business.service import ValidationError as BusinessValidationError
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 JOBS_PAGE_SIZE = 10
 SENSORS_PAGE_SIZE = 8
+BIZ_SERVICES_PAGE_SIZE = 10
+BIZ_PLACES_PAGE_SIZE = 8
+CB_ADMIN_NOOP = "admin_noop"
+
+CB_BIZ_MENU = "admin_business"
+CB_BIZ_MOD = "abiz_mod"
+CB_BIZ_MOD_PAGE_PREFIX = "abiz_mod_page|"
+CB_BIZ_MOD_APPROVE_PREFIX = "abiz_mod_approve|"
+CB_BIZ_MOD_REJECT_PREFIX = "abiz_mod_reject|"
+
+CB_BIZ_TOK_MENU = "abiz_tok_menu"
+CB_BIZ_TOK_LIST = "abiz_tok_list"
+CB_BIZ_TOK_GEN = "abiz_tok_gen"
+CB_BIZ_TOK_GEN_ALL = "abiz_tok_gen_all"
+CB_BIZ_TOK_GEN_ALL_CONFIRM = "abiz_tok_gen_all_confirm"
+
+CB_BIZ_TOKV_SVC_PAGE_PREFIX = "abiz_tokv_sp|"
+CB_BIZ_TOKV_SVC_PICK_PREFIX = "abiz_tokv_s|"
+CB_BIZ_TOKV_PLACE_PAGE_PREFIX = "abiz_tokv_pp|"
+CB_BIZ_TOKV_PLACE_OPEN_PREFIX = "abiz_tokv_o|"
+CB_BIZ_TOKV_PLACE_ROTATE_PREFIX = "abiz_tokv_r|"
+
+CB_BIZ_TOKG_SVC_PAGE_PREFIX = "abiz_tokg_sp|"
+CB_BIZ_TOKG_SVC_PICK_PREFIX = "abiz_tokg_s|"
+CB_BIZ_TOKG_PLACE_PAGE_PREFIX = "abiz_tokg_pp|"
+CB_BIZ_TOKG_PLACE_ROTATE_PREFIX = "abiz_tokg_r|"
+
+business_service = BusinessCabinetService()
+business_repo = BusinessRepository()
 
 
 def is_admin(user_id: int) -> bool:
@@ -71,6 +105,7 @@ def _menu_keyboard(light_enabled: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📡 Сенсори", callback_data="admin_sensors"),
                 InlineKeyboardButton(text="👥 Підписники", callback_data="admin_subs"),
             ],
+            [InlineKeyboardButton(text="🏢 Бізнес", callback_data=CB_BIZ_MENU)],
             [InlineKeyboardButton(text="🧾 Черга задач", callback_data="admin_jobs")],
             [InlineKeyboardButton(text="🔄 Оновити", callback_data="admin_refresh")],
         ]
@@ -104,6 +139,13 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     await try_delete_user_message(message)
     await _render_main_menu(message.bot, message.chat.id, note=None)
+
+
+@router.callback_query(F.data == CB_ADMIN_NOOP)
+async def cb_admin_noop(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_refresh")
@@ -709,5 +751,899 @@ async def _render_jobs_page(bot: Bot, chat_id: int, *, offset: int, prefer_messa
         text=text,
         reply_markup=kb,
         prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+def _biz_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🛡 Модерація", callback_data=CB_BIZ_MOD),
+                InlineKeyboardButton(text="🔐 Коди прив'язки", callback_data=CB_BIZ_TOK_MENU),
+            ],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")],
+        ]
+    )
+
+
+async def _render_business_menu(bot: Bot, chat_id: int, *, prefer_message_id: int | None, note: str | None = None) -> None:
+    text = "🏢 <b>Бізнес</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += "Оберіть дію:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=_biz_menu_keyboard(),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_MENU)
+async def cb_business_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await state.clear()
+    await callback.answer()
+    await _render_business_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id)
+
+
+def _biz_moderation_keyboard(owner_id: int, *, index: int, total: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="✅ Approve",
+                callback_data=f"{CB_BIZ_MOD_APPROVE_PREFIX}{int(owner_id)}|{int(index)}",
+            ),
+            InlineKeyboardButton(
+                text="❌ Reject",
+                callback_data=f"{CB_BIZ_MOD_REJECT_PREFIX}{int(owner_id)}|{int(index)}",
+            ),
+        ]
+    ]
+    if total > 1:
+        nav: list[InlineKeyboardButton] = []
+        if index > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_MOD_PAGE_PREFIX}{index - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data=CB_ADMIN_NOOP))
+        if index < total - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_MOD_PAGE_PREFIX}{index + 1}",
+                )
+            )
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _render_business_moderation(bot: Bot, chat_id: int, *, index: int, prefer_message_id: int | None) -> None:
+    admin_id = int(chat_id)
+    try:
+        rows = await business_service.list_pending_owner_requests(admin_id)
+    except BusinessAccessDeniedError as error:
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note=f"❌ {escape(str(error))}")
+        return
+    except Exception:
+        logger.exception("Failed to load business moderation queue")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження модерації.")
+        return
+
+    if not rows:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+            ]
+        )
+        await render(
+            bot,
+            chat_id=chat_id,
+            text="🛡 <b>Модерація</b>\n\nЧерга модерації порожня.",
+            reply_markup=kb,
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    safe_index = max(0, min(int(index), len(rows) - 1))
+    item = rows[safe_index]
+
+    user_label_raw = f"@{item['username']}" if item.get("username") else (item.get("first_name") or "unknown")
+    user_label = escape(str(user_label_raw))
+    place_name = escape(str(item.get("place_name") or "—"))
+    place_address = escape(str(item.get("place_address") or "—"))
+
+    text = (
+        "🛡 <b>Модерація</b>\n\n"
+        f"Request ID: <code>{item['owner_id']}</code>\n"
+        f"Place: <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
+        f"Address: {place_address}\n"
+        f"User: {user_label} / <code>{item['tg_user_id']}</code>\n"
+        f"Created: {escape(str(item.get('created_at') or ''))}"
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=_biz_moderation_keyboard(int(item["owner_id"]), index=safe_index, total=len(rows)),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_MOD)
+async def cb_business_moderation(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_business_moderation(
+        callback.bot,
+        callback.message.chat.id,
+        index=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_MOD_PAGE_PREFIX))
+async def cb_business_moderation_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        index = int(callback.data.split("|", 1)[1])
+    except Exception:
+        index = 0
+    await _render_business_moderation(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _notify_owner_via_business_bot(owner_tg_user_id: int, text: str) -> None:
+    token = (CFG.business_bot_api_key or "").strip()
+    if not token:
+        return
+    bot = Bot(token=token)
+    try:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🏢 Відкрити бізнес‑кабінет", callback_data="bmenu:home")]]
+        )
+        await bot.send_message(chat_id=int(owner_tg_user_id), text=text, reply_markup=kb)
+    except Exception:
+        # Owner may block the bot or have not started it.
+        logger.exception("Failed to notify business owner %s", owner_tg_user_id)
+    finally:
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_MOD_APPROVE_PREFIX))
+async def cb_business_moderation_approve(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    raw = callback.data.split("|")
+    if len(raw) < 3:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        owner_id = int(raw[1])
+        index = int(raw[2])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await business_service.approve_owner_request(int(callback.from_user.id), owner_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to approve business owner request")
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    await _notify_owner_via_business_bot(
+        int(updated["tg_user_id"]),
+        "✅ Твою заявку на керування бізнесом підтверджено.\nТепер доступні редагування і керування тарифом.",
+    )
+
+    await callback.answer("✅ Approved")
+    await _render_business_moderation(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_MOD_REJECT_PREFIX))
+async def cb_business_moderation_reject(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    raw = callback.data.split("|")
+    if len(raw) < 3:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        owner_id = int(raw[1])
+        index = int(raw[2])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await business_service.reject_owner_request(int(callback.from_user.id), owner_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to reject business owner request")
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    await _notify_owner_via_business_bot(
+        int(updated["tg_user_id"]),
+        "❌ Твою заявку на керування бізнесом відхилено адміністратором.",
+    )
+
+    await callback.answer("✅ Rejected")
+    await _render_business_moderation(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+def _biz_tokens_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Список закладів", callback_data=CB_BIZ_TOK_LIST)],
+            [InlineKeyboardButton(text="♻️ Згенерувати коди", callback_data=CB_BIZ_TOK_GEN)],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+            [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+        ]
+    )
+
+
+async def _render_biz_tokens_menu(bot: Bot, chat_id: int, *, prefer_message_id: int | None, note: str | None = None) -> None:
+    text = "🔐 <b>Коди прив'язки</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += "Оберіть дію:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=_biz_tokens_menu_keyboard(),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_TOK_MENU)
+async def cb_biz_tok_menu(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_biz_tokens_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id)
+
+
+@router.callback_query(F.data == CB_BIZ_TOK_LIST)
+async def cb_biz_tok_list(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_biz_token_services(
+        callback.bot,
+        callback.message.chat.id,
+        page=0,
+        mode="view",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_TOK_GEN)
+async def cb_biz_tok_gen(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="♻️ Для всіх закладів", callback_data=CB_BIZ_TOK_GEN_ALL)],
+            [InlineKeyboardButton(text="🏢 Для закладу", callback_data=f"{CB_BIZ_TOKG_SVC_PAGE_PREFIX}0")],
+            [InlineKeyboardButton(text="« Коди прив'язки", callback_data=CB_BIZ_TOK_MENU)],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text="♻️ <b>Згенерувати коди</b>\n\nОберіть дію:",
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_TOK_GEN_ALL)
+async def cb_biz_tok_gen_all(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Так, згенерувати", callback_data=CB_BIZ_TOK_GEN_ALL_CONFIRM)],
+            [InlineKeyboardButton(text="« Назад", callback_data=CB_BIZ_TOK_GEN)],
+            [InlineKeyboardButton(text="« Коди прив'язки", callback_data=CB_BIZ_TOK_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text="⚠️ <b>Увага</b>\n\nЦе згенерує нові коди для <b>всіх</b> закладів.\nПродовжити?",
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_TOK_GEN_ALL_CONFIRM)
+async def cb_biz_tok_gen_all_confirm(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Генерую…")
+    try:
+        result = await business_service.bulk_rotate_claim_tokens_for_all_places(int(callback.from_user.id))
+    except Exception:
+        logger.exception("Failed to bulk rotate claim tokens")
+        await callback.answer("❌ Помилка", show_alert=True)
+        await _render_biz_tokens_menu(
+            callback.bot,
+            callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            note="❌ Не вдалося згенерувати коди.",
+        )
+        return
+
+    total_places = int(result.get("total_places") or 0)
+    rotated = int(result.get("rotated") or 0)
+    note = f"✅ Готово.\nЗгенеровано: <b>{rotated}</b> з <b>{total_places}</b>."
+    await _render_biz_tokens_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id, note=note)
+
+
+def _truncate_label(value: str, limit: int = 34) -> str:
+    clean = (value or "").strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _format_service_button(service: dict) -> str:
+    name = str(service.get("name") or "").strip() or f"ID {service.get('id')}"
+    count = service.get("place_count")
+    try:
+        count_int = int(count)
+    except Exception:
+        count_int = None
+    label = f"{name} ({count_int})" if count_int is not None else name
+    return _truncate_label(label, 30)
+
+
+async def _render_biz_token_services(
+    bot: Bot,
+    chat_id: int,
+    *,
+    page: int,
+    mode: str,
+    prefer_message_id: int | None,
+) -> None:
+    try:
+        services = await business_repo.list_services_with_place_counts()
+    except Exception:
+        logger.exception("Failed to list services for claim tokens")
+        await _render_biz_tokens_menu(
+            bot,
+            chat_id,
+            prefer_message_id=prefer_message_id,
+            note="❌ Не вдалося завантажити категорії.",
+        )
+        return
+
+    if not services:
+        await _render_biz_tokens_menu(
+            bot,
+            chat_id,
+            prefer_message_id=prefer_message_id,
+            note="Немає жодної категорії/закладів.",
+        )
+        return
+
+    total_pages = max(1, (len(services) + BIZ_SERVICES_PAGE_SIZE - 1) // BIZ_SERVICES_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * BIZ_SERVICES_PAGE_SIZE
+    chunk = services[start : start + BIZ_SERVICES_PAGE_SIZE]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    buffer: list[InlineKeyboardButton] = []
+    for svc in chunk:
+        label = _format_service_button(svc)
+        cb = (
+            f"{CB_BIZ_TOKV_SVC_PICK_PREFIX}{int(svc['id'])}|{safe_page}"
+            if mode == "view"
+            else f"{CB_BIZ_TOKG_SVC_PICK_PREFIX}{int(svc['id'])}|{safe_page}"
+        )
+        buffer.append(InlineKeyboardButton(text=label, callback_data=cb))
+        if len(buffer) >= 2:
+            rows.append(buffer)
+            buffer = []
+    if buffer:
+        rows.append(buffer)
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{(CB_BIZ_TOKV_SVC_PAGE_PREFIX if mode == 'view' else CB_BIZ_TOKG_SVC_PAGE_PREFIX)}{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{(CB_BIZ_TOKV_SVC_PAGE_PREFIX if mode == 'view' else CB_BIZ_TOKG_SVC_PAGE_PREFIX)}{safe_page + 1}",
+                )
+            )
+        rows.append(nav)
+
+    back_cb = CB_BIZ_TOK_MENU if mode == "view" else CB_BIZ_TOK_GEN
+    back_label = "« Коди прив'язки" if mode == "view" else "« Згенерувати коди"
+    rows.append([InlineKeyboardButton(text=back_label, callback_data=back_cb)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+
+    title = "📋 <b>Список закладів</b>" if mode == "view" else "🏢 <b>Згенерувати код для закладу</b>"
+    text = f"{title}\n\nОберіть категорію:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKV_SVC_PAGE_PREFIX))
+async def cb_biz_tokv_service_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_biz_token_services(
+        callback.bot,
+        callback.message.chat.id,
+        page=page,
+        mode="view",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKV_SVC_PICK_PREFIX))
+async def cb_biz_tokv_service_pick(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        await callback.answer("❌ Некоректна категорія", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        service_page = int(parts[2])
+    except Exception:
+        service_id = 0
+        service_page = 0
+    await _render_biz_token_places(
+        callback.bot,
+        callback.message.chat.id,
+        service_id=service_id,
+        place_page=0,
+        service_page=service_page,
+        mode="view",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _render_biz_token_places(
+    bot: Bot,
+    chat_id: int,
+    *,
+    service_id: int,
+    place_page: int,
+    service_page: int,
+    mode: str,
+    prefer_message_id: int | None,
+) -> None:
+    try:
+        total = await business_repo.count_places_by_service(int(service_id))
+        total_pages = max(1, (total + BIZ_PLACES_PAGE_SIZE - 1) // BIZ_PLACES_PAGE_SIZE)
+        safe_page = max(0, min(int(place_page), total_pages - 1))
+        offset = safe_page * BIZ_PLACES_PAGE_SIZE
+        places = await business_repo.list_places_by_service(
+            int(service_id),
+            limit=BIZ_PLACES_PAGE_SIZE,
+            offset=offset,
+        )
+    except Exception:
+        logger.exception("Failed to list places for service %s", service_id)
+        await _render_biz_token_services(
+            bot,
+            chat_id,
+            page=service_page,
+            mode=mode,
+            prefer_message_id=prefer_message_id,
+        )
+        return
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for p in places:
+        pid = int(p.get("id") or 0)
+        label = _truncate_label(str(p.get("name") or f"ID {pid}"), 38)
+        if mode == "view":
+            cb = f"{CB_BIZ_TOKV_PLACE_OPEN_PREFIX}{pid}|{int(service_id)}|{safe_page}|{int(service_page)}"
+        else:
+            cb = f"{CB_BIZ_TOKG_PLACE_ROTATE_PREFIX}{pid}|{int(service_id)}|{safe_page}|{int(service_page)}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{(CB_BIZ_TOKV_PLACE_PAGE_PREFIX if mode == 'view' else CB_BIZ_TOKG_PLACE_PAGE_PREFIX)}{int(service_id)}|{safe_page - 1}|{int(service_page)}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{(CB_BIZ_TOKV_PLACE_PAGE_PREFIX if mode == 'view' else CB_BIZ_TOKG_PLACE_PAGE_PREFIX)}{int(service_id)}|{safe_page + 1}|{int(service_page)}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="« Категорії",
+                callback_data=f"{(CB_BIZ_TOKV_SVC_PAGE_PREFIX if mode == 'view' else CB_BIZ_TOKG_SVC_PAGE_PREFIX)}{int(service_page)}",
+            )
+        ]
+    )
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+
+    title = "📋 <b>Список закладів</b>" if mode == "view" else "🏢 <b>Згенерувати код</b>"
+    text = f"{title}\n\nОберіть заклад:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKV_PLACE_PAGE_PREFIX))
+async def cb_biz_tokv_place_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 4:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        place_page = int(parts[2])
+        service_page = int(parts[3])
+    except Exception:
+        service_id = 0
+        place_page = 0
+        service_page = 0
+    await _render_biz_token_places(
+        callback.bot,
+        callback.message.chat.id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        mode="view",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKV_PLACE_OPEN_PREFIX))
+async def cb_biz_tokv_place_open(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳")
+    parts = callback.data.split("|")
+    if len(parts) < 5:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[1])
+        service_id = int(parts[2])
+        place_page = int(parts[3])
+        service_page = int(parts[4])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        result = await business_service.get_or_create_active_claim_token_for_place(int(callback.from_user.id), place_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to get claim token for place %s", place_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    place = result.get("place") or {}
+    token_row = result.get("token_row") or {}
+    name = escape(str(place.get("name") or f"ID {place_id}"))
+    token = escape(str(token_row.get("token") or "—"))
+    expires_at = escape(str(token_row.get("expires_at") or "—"))
+
+    text = (
+        "🔐 <b>Код прив'язки</b>\n\n"
+        f"Заклад: <b>{name}</b>\n"
+        f"Place ID: <code>{place_id}</code>\n\n"
+        f"Token: <code>{token}</code>\n"
+        f"Expires: <code>{expires_at}</code>"
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="♻️ Згенерувати новий",
+                    callback_data=f"{CB_BIZ_TOKV_PLACE_ROTATE_PREFIX}{place_id}|{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Заклади",
+                    callback_data=f"{CB_BIZ_TOKV_PLACE_PAGE_PREFIX}{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Коди прив'язки", callback_data=CB_BIZ_TOK_MENU)],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKV_PLACE_ROTATE_PREFIX))
+async def cb_biz_tokv_place_rotate(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Генерую…")
+    parts = callback.data.split("|")
+    if len(parts) < 5:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[1])
+        service_id = int(parts[2])
+        place_page = int(parts[3])
+        service_page = int(parts[4])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        rotated = await business_service.rotate_claim_token_for_place(int(callback.from_user.id), place_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to rotate claim token for place %s", place_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    name = escape(str((rotated.get("place") or {}).get("name") or f"ID {place_id}"))
+    token = escape(str(rotated.get("token") or "—"))
+    expires_at = escape(str(rotated.get("expires_at") or "—"))
+
+    text = (
+        "✅ <b>Новий код згенеровано</b>\n\n"
+        f"Заклад: <b>{name}</b>\n"
+        f"Place ID: <code>{place_id}</code>\n\n"
+        f"Token: <code>{token}</code>\n"
+        f"Expires: <code>{expires_at}</code>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="« Заклади",
+                    callback_data=f"{CB_BIZ_TOKV_PLACE_PAGE_PREFIX}{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Коди прив'язки", callback_data=CB_BIZ_TOK_MENU)],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKG_SVC_PAGE_PREFIX))
+async def cb_biz_tokg_service_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_biz_token_services(
+        callback.bot,
+        callback.message.chat.id,
+        page=page,
+        mode="gen",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKG_SVC_PICK_PREFIX))
+async def cb_biz_tokg_service_pick(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        await callback.answer("❌ Некоректна категорія", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        service_page = int(parts[2])
+    except Exception:
+        service_id = 0
+        service_page = 0
+    await _render_biz_token_places(
+        callback.bot,
+        callback.message.chat.id,
+        service_id=service_id,
+        place_page=0,
+        service_page=service_page,
+        mode="gen",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKG_PLACE_PAGE_PREFIX))
+async def cb_biz_tokg_place_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 4:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        place_page = int(parts[2])
+        service_page = int(parts[3])
+    except Exception:
+        service_id = 0
+        place_page = 0
+        service_page = 0
+    await _render_biz_token_places(
+        callback.bot,
+        callback.message.chat.id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        mode="gen",
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_TOKG_PLACE_ROTATE_PREFIX))
+async def cb_biz_tokg_place_rotate(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Генерую…")
+    parts = callback.data.split("|")
+    if len(parts) < 5:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[1])
+        service_id = int(parts[2])
+        place_page = int(parts[3])
+        service_page = int(parts[4])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        rotated = await business_service.rotate_claim_token_for_place(int(callback.from_user.id), place_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to rotate claim token for place %s", place_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    name = escape(str((rotated.get("place") or {}).get("name") or f"ID {place_id}"))
+    token = escape(str(rotated.get("token") or "—"))
+    expires_at = escape(str(rotated.get("expires_at") or "—"))
+
+    text = (
+        "✅ <b>Новий код згенеровано</b>\n\n"
+        f"Заклад: <b>{name}</b>\n"
+        f"Place ID: <code>{place_id}</code>\n\n"
+        f"Token: <code>{token}</code>\n"
+        f"Expires: <code>{expires_at}</code>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="« Заклади",
+                    callback_data=f"{CB_BIZ_TOKG_PLACE_PAGE_PREFIX}{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Згенерувати коди", callback_data=CB_BIZ_TOK_GEN)],
+            [InlineKeyboardButton(text="« Коди прив'язки", callback_data=CB_BIZ_TOK_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
         force_new_message=True,
     )
