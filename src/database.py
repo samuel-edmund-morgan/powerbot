@@ -1601,7 +1601,7 @@ async def get_all_general_services() -> list[dict]:
             SELECT s.id, s.name
               FROM general_services s
              WHERE EXISTS (
-                   SELECT 1 FROM places p WHERE p.service_id = s.id
+                   SELECT 1 FROM places p WHERE p.service_id = s.id AND p.is_published = 1
              )
              ORDER BY s.name
             """
@@ -1687,7 +1687,7 @@ async def get_places_by_service(service_id: int) -> list[dict]:
     """Отримати всі заклади певної категорії."""
     async with open_db() as db:
         async with db.execute(
-            "SELECT id, service_id, name, description, address, keywords FROM places WHERE service_id=? ORDER BY name",
+            "SELECT id, service_id, name, description, address, keywords FROM places WHERE service_id=? AND is_published=1 ORDER BY name",
             (service_id,)
         ) as cur:
             rows = await cur.fetchall()
@@ -1704,6 +1704,7 @@ async def get_all_places() -> list[dict]:
             """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords, s.name as service_name
                FROM places p
                JOIN general_services s ON p.service_id = s.id
+               WHERE p.is_published = 1
                ORDER BY s.name, p.name"""
         ) as cur:
             rows = await cur.fetchall()
@@ -1727,6 +1728,7 @@ async def get_all_places_with_likes() -> list[dict]:
                    FROM place_likes
                    GROUP BY place_id
                ) l ON p.id = l.place_id
+               WHERE p.is_published = 1
                ORDER BY s.name, p.name"""
         ) as cur:
             rows = await cur.fetchall()
@@ -1781,7 +1783,7 @@ async def search_places(query: str) -> list[dict]:
                         {match_score_expr} as match_score
                  FROM places p
                  JOIN general_services s ON p.service_id = s.id
-                 WHERE {where_clause}
+                 WHERE p.is_published = 1 AND ({where_clause})
                  ORDER BY match_score DESC, likes_count DESC, p.name
                  LIMIT 20"""
 
@@ -1837,7 +1839,7 @@ async def search_places_by_service(query: str, service_id: int) -> list[dict]:
                         {match_score_expr} as match_score
                  FROM places p
                  JOIN general_services s ON p.service_id = s.id
-                 WHERE p.service_id = ? AND ({where_clause})
+                 WHERE p.service_id = ? AND p.is_published = 1 AND ({where_clause})
                  ORDER BY match_score DESC, likes_count DESC, p.name
                  LIMIT 20"""
 
@@ -1860,7 +1862,7 @@ async def get_place(place_id: int) -> dict | None:
     """Отримати заклад за ID."""
     async with open_db() as db:
         async with db.execute(
-            "SELECT id, service_id, name, description, address, keywords FROM places WHERE id=?",
+            "SELECT id, service_id, name, description, address, keywords FROM places WHERE id=? AND is_published=1",
             (place_id,)
         ) as cur:
             row = await cur.fetchone()
@@ -1930,7 +1932,7 @@ async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
                    FROM place_likes 
                    GROUP BY place_id
                ) l ON p.id = l.place_id
-               WHERE p.service_id = ?
+               WHERE p.service_id = ? AND p.is_published = 1
                ORDER BY likes_count DESC, p.name ASC""",
             (service_id,)
         ) as cur:

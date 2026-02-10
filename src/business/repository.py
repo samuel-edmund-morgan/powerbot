@@ -363,11 +363,21 @@ class BusinessRepository:
                 db,
                 """INSERT INTO places(
                        service_id, name, description, address, keywords,
+                       is_published,
                        is_verified, verified_tier, verified_until, business_enabled
-                   ) VALUES(?, ?, ?, ?, ?, 0, NULL, NULL, 0)""",
+                   ) VALUES(?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0)""",
                 (service_id, name, description, address, keywords),
             )
             return int(cursor.lastrowid)
+
+    async def set_place_published(self, place_id: int, *, is_published: int) -> None:
+        """Toggle whether a place is visible in the resident catalog."""
+        async with open_business_db() as db:
+            await execute_write_with_retry(
+                db,
+                "UPDATE places SET is_published=? WHERE id=?",
+                (1 if int(is_published) else 0, int(place_id)),
+            )
 
     async def upsert_owner_request(
         self,

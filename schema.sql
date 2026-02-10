@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS places (
     description TEXT,                        -- Опис
     address TEXT,                            -- Адреса
     keywords TEXT DEFAULT NULL,              -- Ключові слова для пошуку
+    is_published INTEGER NOT NULL DEFAULT 1, -- Показувати мешканцям у каталозі (1/0)
     is_verified INTEGER DEFAULT 0,           -- Verified-статус для бізнес-режиму
     verified_tier TEXT DEFAULT NULL,         -- Рівень підписки (light/pro/partner)
     verified_until TEXT DEFAULT NULL,        -- Дата завершення Verified (ISO 8601)
@@ -290,6 +291,9 @@ CREATE INDEX IF NOT EXISTS idx_water_votes_building_section
 
 CREATE INDEX IF NOT EXISTS idx_places_business_enabled_verified
     ON places (business_enabled, is_verified);
+
+CREATE INDEX IF NOT EXISTS idx_places_service_published
+    ON places (service_id, is_published);
 
 CREATE INDEX IF NOT EXISTS idx_places_verified_tier
     ON places (verified_tier);
