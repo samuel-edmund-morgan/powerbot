@@ -939,7 +939,84 @@ class BusinessRepository:
                 SELECT bs.place_id, bs.tier, bs.status, bs.starts_at, bs.expires_at,
                        bs.created_at, bs.updated_at,
                        p.name AS place_name, p.address AS place_address,
-                       p.business_enabled, p.is_published, p.is_verified, p.verified_tier, p.verified_until
+                       p.business_enabled, p.is_published, p.is_verified, p.verified_tier, p.verified_until,
+                       (
+                         SELECT bo.tg_user_id
+                           FROM business_owners bo
+                          WHERE bo.place_id = bs.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_tg_user_id,
+                       (
+                         SELECT bo.status
+                           FROM business_owners bo
+                          WHERE bo.place_id = bs.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_status,
+                       (
+                         SELECT bo.created_at
+                           FROM business_owners bo
+                          WHERE bo.place_id = bs.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_created_at,
+                       (
+                         SELECT s.username
+                           FROM business_owners bo
+                           LEFT JOIN subscribers s ON s.chat_id = bo.tg_user_id
+                          WHERE bo.place_id = bs.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_username,
+                       (
+                         SELECT s.first_name
+                           FROM business_owners bo
+                           LEFT JOIN subscribers s ON s.chat_id = bo.tg_user_id
+                          WHERE bo.place_id = bs.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_first_name
                   FROM business_subscriptions bs
                   JOIN places p ON p.id = bs.place_id
                  ORDER BY

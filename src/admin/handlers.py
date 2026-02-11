@@ -850,12 +850,34 @@ def _subscription_tier_title(raw: str | None) -> str:
     return tier or "Free"
 
 
+def _owner_status_title(raw: str | None) -> str:
+    status = (raw or "").strip().lower()
+    if status == "approved":
+        return "✅ Підтверджено"
+    if status == "pending":
+        return "🕓 Очікує модерації"
+    if status == "rejected":
+        return "❌ Відхилено"
+    return f"⚫ {status or 'невідомо'}"
+
+
 def _subscription_visibility_title(is_published: int | bool | None) -> str:
     return "✅ Опубліковано" if int(is_published or 0) == 1 else "📝 Чернетка"
 
 
 def _subscription_verified_title(is_verified: int | bool | None) -> str:
     return "✅ Verified" if int(is_verified or 0) == 1 else "—"
+
+
+def _format_tg_contact(*, tg_user_id: int | None, username: str | None, first_name: str | None) -> str:
+    uid = int(tg_user_id or 0)
+    uname = str(username or "").strip()
+    fname = str(first_name or "").strip()
+    label = f"@{uname}" if uname else (fname or "невідомо")
+    safe_label = escape(label)
+    if uid > 0:
+        return f'<a href="tg://user?id={uid}">{safe_label}</a> / <code>{uid}</code>'
+    return safe_label
 
 
 async def _render_business_subscriptions(
@@ -917,10 +939,17 @@ async def _render_business_subscriptions(
         expires_at = escape(str(row.get("expires_at") or "—"))
         visibility = _subscription_visibility_title(row.get("is_published"))
         verified = _subscription_verified_title(row.get("is_verified"))
+        owner_contact = _format_tg_contact(
+            tg_user_id=row.get("owner_tg_user_id"),
+            username=row.get("owner_username"),
+            first_name=row.get("owner_first_name"),
+        )
+        owner_status = _owner_status_title(str(row.get("owner_status") or ""))
         lines.append(
             f"• <b>{place_name}</b> <code>#{place_id}</code>\n"
             f"  Тариф: <code>{tier}</code> | Стан: {status}\n"
             f"  Діє до: <code>{expires_at}</code>\n"
+            f"  Власник: {owner_contact} ({owner_status})\n"
             f"  {visibility} | {verified}"
         )
         lines.append("")
@@ -987,7 +1016,7 @@ async def cb_business_subscriptions_export(callback: CallbackQuery) -> None:
         return
 
     lines: list[str] = [
-        "place_id\tplace_name\ttier\tstatus\texpires_at\tis_published\tis_verified\tbusiness_enabled\tverified_tier\tverified_until\tupdated_at"
+        "place_id\tplace_name\ttier\tstatus\texpires_at\towner_tg_user_id\towner_username\towner_first_name\towner_status\towner_created_at\tis_published\tis_verified\tbusiness_enabled\tverified_tier\tverified_until\tupdated_at"
     ]
     for row in all_rows:
         place_id = int(row.get("place_id") or 0)
@@ -995,6 +1024,11 @@ async def cb_business_subscriptions_export(callback: CallbackQuery) -> None:
         tier = str(row.get("tier") or "free")
         status = str(row.get("status") or "inactive")
         expires_at = str(row.get("expires_at") or "")
+        owner_tg_user_id = int(row.get("owner_tg_user_id") or 0)
+        owner_username = str(row.get("owner_username") or "").replace("\t", " ").replace("\n", " ").strip()
+        owner_first_name = str(row.get("owner_first_name") or "").replace("\t", " ").replace("\n", " ").strip()
+        owner_status = str(row.get("owner_status") or "")
+        owner_created_at = str(row.get("owner_created_at") or "")
         is_published = int(row.get("is_published") or 0)
         is_verified = int(row.get("is_verified") or 0)
         business_enabled = int(row.get("business_enabled") or 0)
@@ -1002,8 +1036,9 @@ async def cb_business_subscriptions_export(callback: CallbackQuery) -> None:
         verified_until = str(row.get("verified_until") or "")
         updated_at = str(row.get("updated_at") or "")
         lines.append(
-            f"{place_id}\t{place_name}\t{tier}\t{status}\t{expires_at}\t{is_published}\t"
-            f"{is_verified}\t{business_enabled}\t{verified_tier}\t{verified_until}\t{updated_at}"
+            f"{place_id}\t{place_name}\t{tier}\t{status}\t{expires_at}\t"
+            f"{owner_tg_user_id}\t{owner_username}\t{owner_first_name}\t{owner_status}\t{owner_created_at}\t"
+            f"{is_published}\t{is_verified}\t{business_enabled}\t{verified_tier}\t{verified_until}\t{updated_at}"
         )
 
     payload = "\n".join(lines).encode("utf-8")
@@ -1259,18 +1294,21 @@ async def _render_business_moderation(bot: Bot, chat_id: int, *, index: int, pre
     safe_index = max(0, min(int(index), len(rows) - 1))
     item = rows[safe_index]
 
-    user_label_raw = f"@{item['username']}" if item.get("username") else (item.get("first_name") or "unknown")
-    user_label = escape(str(user_label_raw))
+    user_contact = _format_tg_contact(
+        tg_user_id=item.get("tg_user_id"),
+        username=item.get("username"),
+        first_name=item.get("first_name"),
+    )
     place_name = escape(str(item.get("place_name") or "—"))
     place_address = escape(str(item.get("place_address") or "—"))
 
     text = (
         "🛡 <b>Модерація</b>\n\n"
-        f"Request ID: <code>{item['owner_id']}</code>\n"
-        f"Place: <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
-        f"Address: {place_address}\n"
-        f"User: {user_label} / <code>{item['tg_user_id']}</code>\n"
-        f"Created: {escape(str(item.get('created_at') or ''))}"
+        f"Заявка: <code>{item['owner_id']}</code>\n"
+        f"Заклад: <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
+        f"Адреса: {place_address}\n"
+        f"Власник: {user_contact}\n"
+        f"Створено: {escape(str(item.get('created_at') or ''))}"
     )
     await render(
         bot,
@@ -2563,16 +2601,15 @@ async def _render_biz_place_detail(
 
     if pending_owner:
         owner_id = int(pending_owner.get("owner_id") or 0)
-        owner_tg_user_id = int(pending_owner.get("tg_user_id") or 0)
-        owner_label = (
-            f"@{pending_owner.get('username')}"
-            if pending_owner.get("username")
-            else str(pending_owner.get("first_name") or "unknown")
+        owner_contact = _format_tg_contact(
+            tg_user_id=pending_owner.get("tg_user_id"),
+            username=pending_owner.get("username"),
+            first_name=pending_owner.get("first_name"),
         )
         text += (
             "\n\n🛡 Pending owner request:\n"
             f"request: <code>{owner_id}</code>\n"
-            f"user: <b>{escape(owner_label)}</b> / <code>{owner_tg_user_id}</code>\n"
+            f"user: {owner_contact}\n"
             f"created: <code>{escape(str(pending_owner.get('created_at') or ''))}</code>"
         )
 
