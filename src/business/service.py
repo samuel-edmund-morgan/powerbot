@@ -672,6 +672,207 @@ class BusinessCabinetService:
         )
         return place
 
+    async def admin_create_service(self, admin_tg_user_id: int, service_name: str) -> dict[str, Any]:
+        self._require_admin(admin_tg_user_id)
+        clean_name = str(service_name or "").strip()
+        if not clean_name:
+            raise ValidationError("Назва категорії не може бути порожньою.")
+        if len(clean_name) > 80:
+            raise ValidationError("Назва категорії занадто довга.")
+        try:
+            result = await self.repository.create_service_if_missing(clean_name)
+        except sqlite3.IntegrityError:
+            raise ValidationError("Категорія з такою назвою вже існує.")
+        return result
+
+    async def admin_rename_service(
+        self,
+        admin_tg_user_id: int,
+        service_id: int,
+        service_name: str,
+    ) -> dict[str, Any]:
+        self._require_admin(admin_tg_user_id)
+        clean_name = str(service_name or "").strip()
+        if not clean_name:
+            raise ValidationError("Назва категорії не може бути порожньою.")
+        if len(clean_name) > 80:
+            raise ValidationError("Назва категорії занадто довга.")
+
+        service = await self.repository.get_service(int(service_id))
+        if not service:
+            raise NotFoundError("Категорію не знайдено.")
+        try:
+            updated = await self.repository.rename_service(int(service_id), clean_name)
+        except sqlite3.IntegrityError:
+            raise ValidationError("Категорія з такою назвою вже існує.")
+        if not updated:
+            raise RuntimeError("Не вдалося оновити назву категорії.")
+        return {"id": int(service_id), "name": clean_name}
+
+    async def admin_create_place(
+        self,
+        admin_tg_user_id: int,
+        *,
+        service_id: int,
+        name: str,
+        description: str,
+        building_id: int,
+        address_details: str = "",
+        is_published: int = 1,
+    ) -> dict[str, Any]:
+        self._require_admin(admin_tg_user_id)
+        service = await self.repository.get_service(int(service_id))
+        if not service:
+            raise ValidationError("Категорію не знайдено.")
+        building = await self.repository.get_building(int(building_id))
+        if not building:
+            raise ValidationError("Будинок не знайдено.")
+
+        clean_name = str(name or "").strip()
+        clean_description = str(description or "").strip()
+        clean_details = str(address_details or "").strip()
+        if not clean_name:
+            raise ValidationError("Назва закладу не може бути порожньою.")
+        if len(clean_name) > 120:
+            raise ValidationError("Назва закладу занадто довга.")
+        if len(clean_description) > 1200:
+            raise ValidationError("Опис занадто довгий.")
+        if len(clean_details) > 300:
+            raise ValidationError("Деталі адреси занадто довгі.")
+
+        building_label = f"{building['name']} ({building['address']})"
+        address = building_label if not clean_details else f"{building_label}, {clean_details}"
+
+        place_id = await self.repository.create_place(
+            service_id=int(service_id),
+            name=clean_name,
+            description=clean_description,
+            address=address,
+        )
+        await self.repository.ensure_subscription(place_id)
+        if int(is_published):
+            await self.repository.set_place_published(place_id, is_published=1)
+        await self.repository.write_audit_log(
+            place_id=place_id,
+            actor_tg_user_id=int(admin_tg_user_id),
+            action="admin_place_created",
+            payload_json=_to_json(
+                {
+                    "service_id": int(service_id),
+                    "service_name": str(service.get("name") or ""),
+                    "building_id": int(building_id),
+                    "address": address,
+                    "is_published": 1 if int(is_published) else 0,
+                }
+            ),
+        )
+        place = await self.repository.get_place(place_id)
+        if not place:
+            raise RuntimeError("Не вдалося прочитати створений заклад.")
+        return place
+
+    async def admin_update_place_field(
+        self,
+        admin_tg_user_id: int,
+        *,
+        place_id: int,
+        field: str,
+        value: str,
+    ) -> dict[str, Any]:
+        self._require_admin(admin_tg_user_id)
+        allowed_fields = {"name", "description", "address"}
+        normalized_field = str(field or "").strip().lower()
+        if normalized_field not in allowed_fields:
+            raise ValidationError("Поле недоступне для редагування.")
+        clean_value = str(value or "").strip()
+        if not clean_value:
+            raise ValidationError("Нове значення не може бути порожнім.")
+        if len(clean_value) > 1200:
+            raise ValidationError("Значення занадто довге.")
+        if normalized_field == "name" and len(clean_value) > 120:
+            raise ValidationError("Назва закладу занадто довга.")
+        if normalized_field == "address" and len(clean_value) > 300:
+            raise ValidationError("Адреса занадто довга.")
+
+        updated_place = await self.repository.update_place_profile_field(
+            place_id=int(place_id),
+            field=normalized_field,
+            value=clean_value,
+        )
+        if not updated_place:
+            raise NotFoundError("Заклад не знайдено.")
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(admin_tg_user_id),
+            action="admin_place_profile_updated",
+            payload_json=_to_json({"field": normalized_field, "value": clean_value}),
+        )
+        return updated_place
+
+    async def admin_set_subscription_tier(
+        self,
+        admin_tg_user_id: int,
+        *,
+        place_id: int,
+        tier: str,
+        months: int = 1,
+    ) -> dict[str, Any]:
+        self._require_admin(admin_tg_user_id)
+        place = await self.repository.get_place(int(place_id))
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+
+        normalized_tier = str(tier or "").strip().lower()
+        if normalized_tier not in SUPPORTED_TIERS:
+            raise ValidationError("Невідомий тариф.")
+        safe_months = max(1, min(int(months), 12))
+        now = _utc_now()
+
+        if normalized_tier == "free":
+            sub_status = "inactive"
+            starts_at = None
+            expires_at = None
+            is_verified = 0
+            verified_tier = None
+            verified_until = None
+        else:
+            sub_status = "active"
+            starts_at = now.isoformat()
+            expires_at = (now + timedelta(days=30 * safe_months)).isoformat()
+            is_verified = 1
+            verified_tier = normalized_tier
+            verified_until = expires_at
+
+        subscription = await self.repository.update_subscription(
+            place_id=int(place_id),
+            tier=normalized_tier,
+            status=sub_status,
+            starts_at=starts_at,
+            expires_at=expires_at,
+        )
+        await self.repository.update_place_business_flags(
+            int(place_id),
+            business_enabled=1,
+            is_verified=is_verified,
+            verified_tier=verified_tier,
+            verified_until=verified_until,
+        )
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(admin_tg_user_id),
+            action="admin_subscription_set",
+            payload_json=_to_json(
+                {
+                    "tier": normalized_tier,
+                    "status": sub_status,
+                    "months": safe_months,
+                    "starts_at": starts_at,
+                    "expires_at": expires_at,
+                }
+            ),
+        )
+        return subscription
+
     async def update_place_field(
         self,
         tg_user_id: int,

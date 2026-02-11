@@ -90,6 +90,23 @@ CB_BIZ_PLACES_DELETE_PREFIX = "abiz_places_del|"
 CB_BIZ_PLACES_DELETE_CONFIRM_PREFIX = "abiz_places_delc|"
 CB_BIZ_PLACES_REJECT_OWNER_PREFIX = "abiz_places_ro|"
 CB_BIZ_PLACES_REJECT_OWNER_CONFIRM_PREFIX = "abiz_places_roc|"
+CB_BIZ_PLACES_EDIT_MENU_PREFIX = "abiz_places_edit|"
+CB_BIZ_PLACES_EDIT_FIELD_PREFIX = "abiz_places_editf|"
+CB_BIZ_PLACES_EDIT_BUILDING_PREFIX = "abiz_places_editb|"
+CB_BIZ_PLACES_PROMO_MENU_PREFIX = "abiz_places_promo_m|"
+CB_BIZ_PLACES_PROMO_SET_PREFIX = "abiz_places_promo_s|"
+
+CB_BIZ_CATEGORIES_MENU = "abiz_categories"
+CB_BIZ_CATEGORIES_PAGE_PREFIX = "abiz_categories_p|"
+CB_BIZ_CATEGORY_OPEN_PREFIX = "abiz_category_o|"
+CB_BIZ_CATEGORY_RENAME_PREFIX = "abiz_category_r|"
+CB_BIZ_CATEGORY_ADD = "abiz_category_add"
+
+CB_BIZ_CREATE_PLACE_MENU = "abiz_create_place"
+CB_BIZ_CREATE_SVC_PAGE_PREFIX = "abiz_create_sp|"
+CB_BIZ_CREATE_SVC_PICK_PREFIX = "abiz_create_s|"
+CB_BIZ_CREATE_BUILDING_PICK_PREFIX = "abiz_create_b|"
+CB_BIZ_CREATE_PROMO_PREFIX = "abiz_create_promo|"
 
 business_service = BusinessCabinetService()
 business_repo = BusinessRepository()
@@ -158,6 +175,25 @@ class BroadcastState(StatesGroup):
 
 class BizPlacesSearchState(StatesGroup):
     waiting_query = State()
+
+
+class BizCategoryCreateState(StatesGroup):
+    waiting_name = State()
+
+
+class BizCategoryRenameState(StatesGroup):
+    waiting_name = State()
+
+
+class BizPlaceCreateState(StatesGroup):
+    waiting_name = State()
+    waiting_description = State()
+    waiting_address_details = State()
+
+
+class BizPlaceEditState(StatesGroup):
+    waiting_value = State()
+    waiting_address_details = State()
 
 
 @router.message(Command("start"))
@@ -793,6 +829,10 @@ def _biz_menu_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="🏢 Заклади", callback_data=CB_BIZ_PLACES_MENU),
                 InlineKeyboardButton(text="💳 Підписки", callback_data=CB_BIZ_SUBS),
+            ],
+            [
+                InlineKeyboardButton(text="➕ Додати заклад", callback_data=CB_BIZ_CREATE_PLACE_MENU),
+                InlineKeyboardButton(text="🗂 Категорії", callback_data=CB_BIZ_CATEGORIES_MENU),
             ],
             [InlineKeyboardButton(text="📒 Аудит", callback_data=CB_BIZ_AUDIT)],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")],
@@ -2088,6 +2128,771 @@ async def cb_biz_tokg_place_rotate(callback: CallbackQuery) -> None:
 
 
 # =========================
+# Business: Categories + Admin Create Place
+# =========================
+
+
+def _format_building_label(building: dict) -> str:
+    return _truncate_label(f"{building.get('name', '—')} ({building.get('address', '—')})", 34)
+
+
+def _full_building_address(building: dict, details: str) -> str:
+    base = f"{building.get('name', '—')} ({building.get('address', '—')})"
+    clean_details = str(details or "").strip()
+    return base if not clean_details else f"{base}, {clean_details}"
+
+
+async def _render_biz_categories(
+    bot: Bot,
+    chat_id: int,
+    *,
+    page: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
+    try:
+        services = await business_repo.list_services()
+    except Exception:
+        logger.exception("Failed to load business categories")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження категорій.")
+        return
+
+    if not services:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="➕ Додати категорію", callback_data=CB_BIZ_CATEGORY_ADD)],
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+            ]
+        )
+        text = "🗂 <b>Категорії</b>\n\n"
+        if note:
+            text += f"{note}\n\n"
+        text += "Категорій ще немає."
+        await render(
+            bot,
+            chat_id=chat_id,
+            text=text,
+            reply_markup=kb,
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    total_pages = max(1, (len(services) + BIZ_SERVICES_PAGE_SIZE - 1) // BIZ_SERVICES_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * BIZ_SERVICES_PAGE_SIZE
+    chunk = services[start : start + BIZ_SERVICES_PAGE_SIZE]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    buffer: list[InlineKeyboardButton] = []
+    for svc in chunk:
+        try:
+            places_count = await business_repo.count_places_by_service(int(svc["id"]))
+        except Exception:
+            places_count = 0
+        label = _truncate_label(f"{svc['name']} ({places_count})", 30)
+        buffer.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"{CB_BIZ_CATEGORY_OPEN_PREFIX}{int(svc['id'])}|{safe_page}",
+            )
+        )
+        if len(buffer) >= 2:
+            rows.append(buffer)
+            buffer = []
+    if buffer:
+        rows.append(buffer)
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_CATEGORIES_PAGE_PREFIX}{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_CATEGORIES_PAGE_PREFIX}{safe_page + 1}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text="➕ Додати категорію", callback_data=CB_BIZ_CATEGORY_ADD)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+
+    text = "🗂 <b>Категорії</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += "Оберіть категорію:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+async def _render_biz_category_detail(
+    bot: Bot,
+    chat_id: int,
+    *,
+    service_id: int,
+    page: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
+    service = await business_repo.get_service(int(service_id))
+    if not service:
+        await _render_biz_categories(
+            bot,
+            chat_id,
+            page=page,
+            prefer_message_id=prefer_message_id,
+            note="❌ Категорію не знайдено.",
+        )
+        return
+    try:
+        places_count = await business_repo.count_places_by_service(int(service_id))
+    except Exception:
+        places_count = 0
+
+    text = "🗂 <b>Категорія</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += (
+        f"ID: <code>{int(service_id)}</code>\n"
+        f"Назва: <b>{escape(str(service.get('name') or '—'))}</b>\n"
+        f"Закладів: <b>{int(places_count)}</b>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Перейменувати", callback_data=f"{CB_BIZ_CATEGORY_RENAME_PREFIX}{int(service_id)}|{int(page)}")],
+            [InlineKeyboardButton(text="➕ Додати заклад у цю категорію", callback_data=f"{CB_BIZ_CREATE_SVC_PICK_PREFIX}{int(service_id)}|{int(page)}")],
+            [InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_CATEGORIES_PAGE_PREFIX}{int(page)}")],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_CATEGORIES_MENU)
+async def cb_biz_categories_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await state.clear()
+    await callback.answer()
+    await _render_biz_categories(callback.bot, callback.message.chat.id, page=0, prefer_message_id=callback.message.message_id)
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CATEGORIES_PAGE_PREFIX))
+async def cb_biz_categories_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_biz_categories(callback.bot, callback.message.chat.id, page=page, prefer_message_id=callback.message.message_id)
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CATEGORY_OPEN_PREFIX))
+async def cb_biz_category_open(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳")
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        page = int(parts[2])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    await _render_biz_category_detail(
+        callback.bot,
+        callback.message.chat.id,
+        service_id=service_id,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_CATEGORY_ADD)
+async def cb_biz_category_add(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await state.set_state(BizCategoryCreateState.waiting_name)
+    text = (
+        "🗂 <b>Нова категорія</b>\n\n"
+        "Надішліть назву категорії.\n"
+        "Приклад: <code>Кав'ярні</code>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+            [InlineKeyboardButton(text="« Категорії", callback_data=CB_BIZ_CATEGORIES_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(BizCategoryCreateState.waiting_name)
+async def msg_biz_category_create_name(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    name = str(message.text or "").strip()
+    if not name:
+        await _render_biz_categories(
+            message.bot,
+            message.chat.id,
+            page=0,
+            prefer_message_id=None,
+            note="❌ Порожня назва категорії.",
+        )
+        await state.clear()
+        return
+    try:
+        result = await business_service.admin_create_service(int(message.from_user.id), name)
+    except (BusinessValidationError, BusinessAccessDeniedError) as error:
+        await _render_biz_categories(
+            message.bot,
+            message.chat.id,
+            page=0,
+            prefer_message_id=None,
+            note=f"❌ {escape(str(error))}",
+        )
+        await state.clear()
+        return
+    except Exception:
+        logger.exception("Failed to create business category")
+        await _render_biz_categories(
+            message.bot,
+            message.chat.id,
+            page=0,
+            prefer_message_id=None,
+            note="❌ Помилка створення категорії.",
+        )
+        await state.clear()
+        return
+
+    await state.clear()
+    note = (
+        f"✅ Додано категорію <b>{escape(result['name'])}</b>."
+        if result.get("created")
+        else f"ℹ️ Категорія <b>{escape(result['name'])}</b> вже існує."
+    )
+    await _render_biz_categories(message.bot, message.chat.id, page=0, prefer_message_id=None, note=note)
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CATEGORY_RENAME_PREFIX))
+async def cb_biz_category_rename(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        page = int(parts[2])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    service = await business_repo.get_service(service_id)
+    if not service:
+        await callback.answer("Категорію не знайдено", show_alert=True)
+        return
+    await state.set_state(BizCategoryRenameState.waiting_name)
+    await state.update_data(biz_category_service_id=service_id, biz_category_page=page)
+    text = (
+        "✏️ <b>Перейменування категорії</b>\n\n"
+        f"Поточна назва: <b>{escape(str(service.get('name') or '—'))}</b>\n\n"
+        "Надішліть нову назву."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+            [InlineKeyboardButton(text="« Категорія", callback_data=f"{CB_BIZ_CATEGORY_OPEN_PREFIX}{service_id}|{page}")],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(BizCategoryRenameState.waiting_name)
+async def msg_biz_category_rename_name(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    data = await state.get_data()
+    service_id = int(data.get("biz_category_service_id") or 0)
+    page = int(data.get("biz_category_page") or 0)
+    name = str(message.text or "").strip()
+    if not service_id:
+        await state.clear()
+        await _render_biz_categories(
+            message.bot,
+            message.chat.id,
+            page=page,
+            prefer_message_id=None,
+            note="❌ Категорію не вибрано.",
+        )
+        return
+    try:
+        result = await business_service.admin_rename_service(int(message.from_user.id), service_id, name)
+    except (BusinessValidationError, BusinessAccessDeniedError, BusinessNotFoundError) as error:
+        await state.clear()
+        await _render_biz_category_detail(
+            message.bot,
+            message.chat.id,
+            service_id=service_id,
+            page=page,
+            prefer_message_id=None,
+            note=f"❌ {escape(str(error))}",
+        )
+        return
+    except Exception:
+        logger.exception("Failed to rename category %s", service_id)
+        await state.clear()
+        await _render_biz_category_detail(
+            message.bot,
+            message.chat.id,
+            service_id=service_id,
+            page=page,
+            prefer_message_id=None,
+            note="❌ Помилка оновлення категорії.",
+        )
+        return
+    await state.clear()
+    await _render_biz_category_detail(
+        message.bot,
+        message.chat.id,
+        service_id=service_id,
+        page=page,
+        prefer_message_id=None,
+        note=f"✅ Назву оновлено: <b>{escape(result['name'])}</b>",
+    )
+
+
+async def _render_biz_create_place_service_picker(
+    bot: Bot,
+    chat_id: int,
+    *,
+    page: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
+    try:
+        services = await business_repo.list_services()
+    except Exception:
+        logger.exception("Failed to load services for place create")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження категорій.")
+        return
+
+    if not services:
+        await _render_biz_categories(
+            bot,
+            chat_id,
+            page=0,
+            prefer_message_id=prefer_message_id,
+            note="Спочатку додайте хоча б одну категорію.",
+        )
+        return
+
+    total_pages = max(1, (len(services) + BIZ_SERVICES_PAGE_SIZE - 1) // BIZ_SERVICES_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    start = safe_page * BIZ_SERVICES_PAGE_SIZE
+    chunk = services[start : start + BIZ_SERVICES_PAGE_SIZE]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    buffer: list[InlineKeyboardButton] = []
+    for svc in chunk:
+        buffer.append(
+            InlineKeyboardButton(
+                text=_truncate_label(str(svc.get("name") or f"ID {svc.get('id')}"), 30),
+                callback_data=f"{CB_BIZ_CREATE_SVC_PICK_PREFIX}{int(svc['id'])}|{safe_page}",
+            )
+        )
+        if len(buffer) >= 2:
+            rows.append(buffer)
+            buffer = []
+    if buffer:
+        rows.append(buffer)
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_CREATE_SVC_PAGE_PREFIX}{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_CREATE_SVC_PAGE_PREFIX}{safe_page + 1}",
+                )
+            )
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text="🗂 Категорії", callback_data=CB_BIZ_CATEGORIES_MENU)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    text = "➕ <b>Створення закладу</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += "Оберіть категорію:"
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+async def _render_biz_create_building_picker(
+    bot: Bot,
+    chat_id: int,
+    *,
+    service_page: int,
+    prefer_message_id: int | None,
+) -> None:
+    buildings = await business_repo.list_buildings()
+    rows: list[list[InlineKeyboardButton]] = []
+    for b in buildings:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_format_building_label(b),
+                    callback_data=f"{CB_BIZ_CREATE_BUILDING_PICK_PREFIX}{int(b['id'])}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_CREATE_SVC_PAGE_PREFIX}{int(service_page)}")])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    await render(
+        bot,
+        chat_id=chat_id,
+        text="📍 <b>Оберіть будинок</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+def _build_create_promo_keyboard(place_id: int, service_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎁 Light (1 міс)", callback_data=f"{CB_BIZ_CREATE_PROMO_PREFIX}{place_id}|{service_id}|light"),
+                InlineKeyboardButton(text="🎁 Pro (1 міс)", callback_data=f"{CB_BIZ_CREATE_PROMO_PREFIX}{place_id}|{service_id}|pro"),
+            ],
+            [
+                InlineKeyboardButton(text="🎁 Partner (1 міс)", callback_data=f"{CB_BIZ_CREATE_PROMO_PREFIX}{place_id}|{service_id}|partner"),
+                InlineKeyboardButton(text="Без промо", callback_data=f"{CB_BIZ_CREATE_PROMO_PREFIX}{place_id}|{service_id}|free"),
+            ],
+            [InlineKeyboardButton(text="🏢 Відкрити заклад", callback_data=f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}all|{place_id}|{service_id}|0|0")],
+            [InlineKeyboardButton(text="➕ Додати ще заклад", callback_data=CB_BIZ_CREATE_PLACE_MENU)],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_CREATE_PLACE_MENU)
+async def cb_biz_create_place_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await state.clear()
+    await callback.answer()
+    await _render_biz_create_place_service_picker(
+        callback.bot,
+        callback.message.chat.id,
+        page=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CREATE_SVC_PAGE_PREFIX))
+async def cb_biz_create_place_service_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_biz_create_place_service_picker(
+        callback.bot,
+        callback.message.chat.id,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CREATE_SVC_PICK_PREFIX))
+async def cb_biz_create_place_service_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        service_id = int(parts[1])
+        service_page = int(parts[2])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    service = await business_repo.get_service(service_id)
+    if not service:
+        await callback.answer("Категорію не знайдено", show_alert=True)
+        return
+
+    await state.set_state(BizPlaceCreateState.waiting_name)
+    await state.update_data(
+        biz_create_service_id=service_id,
+        biz_create_service_page=service_page,
+        biz_create_service_name=str(service.get("name") or ""),
+    )
+    text = (
+        "➕ <b>Створення закладу</b>\n\n"
+        f"Категорія: <b>{escape(str(service.get('name') or '—'))}</b>\n\n"
+        "Надішліть назву закладу."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+            [InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_CREATE_SVC_PAGE_PREFIX}{service_page}")],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(BizPlaceCreateState.waiting_name)
+async def msg_biz_create_place_name(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    name = str(message.text or "").strip()
+    if not name:
+        await _render_business_menu(message.bot, message.chat.id, prefer_message_id=None, note="❌ Порожня назва закладу.")
+        await state.clear()
+        return
+    await state.update_data(biz_create_place_name=name)
+    await state.set_state(BizPlaceCreateState.waiting_description)
+    text = (
+        "➕ <b>Створення закладу</b>\n\n"
+        f"Назва: <b>{escape(name)}</b>\n\n"
+        "Надішліть короткий опис закладу.\n"
+        "Якщо опис не потрібен — надішліть <code>-</code>."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")]])
+    await render(message.bot, chat_id=message.chat.id, text=text, reply_markup=kb, force_new_message=True)
+
+
+@router.message(BizPlaceCreateState.waiting_description)
+async def msg_biz_create_place_description(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    description = str(message.text or "").strip()
+    if description in {"-", "—"}:
+        description = ""
+    await state.update_data(biz_create_description=description)
+    data = await state.get_data()
+    service_page = int(data.get("biz_create_service_page") or 0)
+    await state.set_state(BizPlaceCreateState.waiting_address_details)
+    await _render_biz_create_building_picker(
+        message.bot,
+        message.chat.id,
+        service_page=service_page,
+        prefer_message_id=None,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CREATE_BUILDING_PICK_PREFIX))
+async def cb_biz_create_place_building_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        building_id = int(callback.data.split("|", 1)[1])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    building = await business_repo.get_building(building_id)
+    if not building:
+        await callback.answer("Будинок не знайдено", show_alert=True)
+        return
+    await state.update_data(biz_create_building_id=building_id)
+    building_title = _full_building_address(building, "")
+    text = (
+        "📍 <b>Деталізація адреси</b>\n\n"
+        f"Будинок: <b>{escape(building_title)}</b>\n\n"
+        "Надішліть деталі адреси.\n"
+        "Приклад: <code>зі сторони Бермінгема, -1 поверх</code>\n"
+        "Якщо без деталей — надішліть <code>-</code>."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")]])
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(BizPlaceCreateState.waiting_address_details)
+async def msg_biz_create_place_address_details(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    details = str(message.text or "").strip()
+    if details in {"-", "—"}:
+        details = ""
+    data = await state.get_data()
+    service_id = int(data.get("biz_create_service_id") or 0)
+    name = str(data.get("biz_create_place_name") or "")
+    description = str(data.get("biz_create_description") or "")
+    building_id = int(data.get("biz_create_building_id") or 0)
+
+    if not service_id or not name or not building_id:
+        await state.clear()
+        await _render_business_menu(message.bot, message.chat.id, prefer_message_id=None, note="❌ Дані створення втрачені. Спробуй ще раз.")
+        return
+    try:
+        place = await business_service.admin_create_place(
+            int(message.from_user.id),
+            service_id=service_id,
+            name=name,
+            description=description,
+            building_id=building_id,
+            address_details=details,
+            is_published=1,
+        )
+    except (BusinessValidationError, BusinessAccessDeniedError, BusinessNotFoundError) as error:
+        await state.clear()
+        await _render_business_menu(message.bot, message.chat.id, prefer_message_id=None, note=f"❌ {escape(str(error))}")
+        return
+    except Exception:
+        logger.exception("Failed to create place from admin")
+        await state.clear()
+        await _render_business_menu(message.bot, message.chat.id, prefer_message_id=None, note="❌ Помилка створення закладу.")
+        return
+
+    await state.clear()
+    place_id = int(place.get("id") or 0)
+    service_id = int(place.get("service_id") or service_id)
+    text = (
+        "✅ <b>Заклад створено</b>\n\n"
+        f"Назва: <b>{escape(str(place.get('name') or name))}</b>\n"
+        f"Адреса: {escape(str(place.get('address') or '—'))}\n\n"
+        "За потреби відразу признач промо‑підписку на 1 місяць:"
+    )
+    await render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=_build_create_promo_keyboard(place_id, service_id),
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_CREATE_PROMO_PREFIX))
+async def cb_biz_create_place_promo(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳")
+    parts = callback.data.split("|")
+    if len(parts) < 4:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[1])
+        service_id = int(parts[2])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    tier = str(parts[3] or "free").strip().lower()
+    note = "ℹ️ Промо не застосовано."
+    if tier != "free":
+        try:
+            await business_service.admin_set_subscription_tier(
+                int(callback.from_user.id),
+                place_id=place_id,
+                tier=tier,
+                months=1,
+            )
+            note = f"✅ Промо‑тариф <b>{escape(_subscription_tier_title(tier))}</b> активовано на 1 місяць."
+        except (BusinessValidationError, BusinessAccessDeniedError, BusinessNotFoundError) as error:
+            note = f"❌ {escape(str(error))}"
+        except Exception:
+            logger.exception("Failed to apply promo tier after place create")
+            note = "❌ Не вдалося застосувати промо‑тариф."
+
+    await _render_biz_place_detail(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code="all",
+        place_id=place_id,
+        service_id=service_id,
+        place_page=0,
+        service_page=0,
+        prefer_message_id=callback.message.message_id,
+        note=note,
+    )
+
+
+# =========================
 # Business: Places (Publish/Drafts)
 # =========================
 
@@ -2631,6 +3436,24 @@ async def _render_biz_place_detail(
                 )
             ]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="✏️ Редагувати",
+                callback_data=(
+                    f"{CB_BIZ_PLACES_EDIT_MENU_PREFIX}{filter_code}|{int(place_id)}|"
+                    f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                ),
+            ),
+            InlineKeyboardButton(
+                text="🎁 Промо (1 міс)",
+                callback_data=(
+                    f"{CB_BIZ_PLACES_PROMO_MENU_PREFIX}{filter_code}|{int(place_id)}|"
+                    f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                ),
+            ),
+        ]
+    )
 
     rows.append([InlineKeyboardButton(text="« Заклади", callback_data=f"{CB_BIZ_PLACES_PLACE_PAGE_PREFIX}{filter_code}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
     rows.append([InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{int(service_page)}")])
@@ -2675,6 +3498,591 @@ async def cb_biz_places_place_open(callback: CallbackQuery) -> None:
         place_page=place_page,
         service_page=service_page,
         prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _render_biz_place_edit_menu(
+    bot: Bot,
+    chat_id: int,
+    *,
+    filter_code: str,
+    place_id: int,
+    service_id: int,
+    place_page: int,
+    service_page: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
+    place = await business_repo.get_place(int(place_id))
+    if not place:
+        await _render_biz_places_list(
+            bot,
+            chat_id,
+            filter_code=filter_code,
+            service_id=service_id,
+            place_page=place_page,
+            service_page=service_page,
+            prefer_message_id=prefer_message_id,
+        )
+        return
+
+    text = "✏️ <b>Редагування закладу</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += (
+        f"Заклад: <b>{escape(str(place.get('name') or f'ID {int(place_id)}'))}</b>\n"
+        "Що хочете змінити?"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Назва",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_EDIT_FIELD_PREFIX}name|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+                InlineKeyboardButton(
+                    text="📝 Опис",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_EDIT_FIELD_PREFIX}description|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📍 Адреса",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_EDIT_FIELD_PREFIX}address|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                )
+            ],
+            [InlineKeyboardButton(text="« Заклади", callback_data=f"{CB_BIZ_PLACES_PLACE_PAGE_PREFIX}{filter_code}|{int(service_id)}|{int(place_page)}|{int(service_page)}")],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+async def _render_biz_place_edit_building_picker(
+    bot: Bot,
+    chat_id: int,
+    *,
+    filter_code: str,
+    place_id: int,
+    service_id: int,
+    place_page: int,
+    service_page: int,
+    prefer_message_id: int | None,
+) -> None:
+    buildings = await business_repo.list_buildings()
+    rows: list[list[InlineKeyboardButton]] = []
+    for building in buildings:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_format_building_label(building),
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_EDIT_BUILDING_PREFIX}{int(building['id'])}|{filter_code}|"
+                        f"{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="« Назад",
+                callback_data=(
+                    f"{CB_BIZ_PLACES_EDIT_MENU_PREFIX}{filter_code}|{int(place_id)}|"
+                    f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                ),
+            )
+        ]
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text="📍 <b>Оберіть будинок</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+async def _render_biz_place_promo_menu(
+    bot: Bot,
+    chat_id: int,
+    *,
+    filter_code: str,
+    place_id: int,
+    service_id: int,
+    place_page: int,
+    service_page: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
+    place = await business_repo.get_place(int(place_id))
+    if not place:
+        await _render_biz_places_list(
+            bot,
+            chat_id,
+            filter_code=filter_code,
+            service_id=service_id,
+            place_page=place_page,
+            service_page=service_page,
+            prefer_message_id=prefer_message_id,
+        )
+        return
+    subscription = await business_repo.ensure_subscription(int(place_id))
+    tier = _subscription_tier_title(str(subscription.get("tier") or "free"))
+    status = _subscription_status_title(str(subscription.get("status") or "inactive"))
+    expires_at = escape(str(subscription.get("expires_at") or "—"))
+
+    text = "🎁 <b>Промо‑підписка (1 місяць)</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += (
+        f"Заклад: <b>{escape(str(place.get('name') or f'ID {int(place_id)}'))}</b>\n"
+        f"Поточний тариф: <b>{escape(tier)}</b>\n"
+        f"Статус: {status}\n"
+        f"До: <code>{expires_at}</code>\n\n"
+        "Оберіть тариф, який застосувати на 1 місяць:"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Light",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_PROMO_SET_PREFIX}light|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+                InlineKeyboardButton(
+                    text="Pro",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_PROMO_SET_PREFIX}pro|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Partner",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_PROMO_SET_PREFIX}partner|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+                InlineKeyboardButton(
+                    text="Free",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_PROMO_SET_PREFIX}free|{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{int(place_id)}|"
+                        f"{int(service_id)}|{int(place_page)}|{int(service_page)}"
+                    ),
+                )
+            ],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_EDIT_MENU_PREFIX))
+async def cb_biz_places_edit_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await state.clear()
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    await _render_biz_place_edit_menu(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_EDIT_FIELD_PREFIX))
+async def cb_biz_places_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 7:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    field = str(parts[1] or "").strip().lower()
+    filter_code = parts[2]
+    try:
+        place_id = int(parts[3])
+        service_id = int(parts[4])
+        place_page = int(parts[5])
+        service_page = int(parts[6])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    if field not in {"name", "description", "address"}:
+        await callback.answer("❌ Поле недоступне", show_alert=True)
+        return
+
+    if field == "address":
+        await state.clear()
+        await _render_biz_place_edit_building_picker(
+            callback.bot,
+            callback.message.chat.id,
+            filter_code=filter_code,
+            place_id=place_id,
+            service_id=service_id,
+            place_page=place_page,
+            service_page=service_page,
+            prefer_message_id=callback.message.message_id,
+        )
+        return
+
+    await state.set_state(BizPlaceEditState.waiting_value)
+    await state.update_data(
+        biz_edit_place_field=field,
+        biz_edit_place_filter=filter_code,
+        biz_edit_place_id=place_id,
+        biz_edit_service_id=service_id,
+        biz_edit_place_page=place_page,
+        biz_edit_service_page=service_page,
+    )
+    field_title = "назву" if field == "name" else "опис"
+    text = (
+        "✏️ <b>Редагування закладу</b>\n\n"
+        f"Надішліть нову {field_title}."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_EDIT_MENU_PREFIX}{filter_code}|{place_id}|{service_id}|"
+                        f"{place_page}|{service_page}"
+                    ),
+                )
+            ],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_EDIT_BUILDING_PREFIX))
+async def cb_biz_places_edit_building_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 7:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        building_id = int(parts[1])
+        filter_code = parts[2]
+        place_id = int(parts[3])
+        service_id = int(parts[4])
+        place_page = int(parts[5])
+        service_page = int(parts[6])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    building = await business_repo.get_building(building_id)
+    if not building:
+        await callback.answer("Будинок не знайдено", show_alert=True)
+        return
+
+    await state.set_state(BizPlaceEditState.waiting_address_details)
+    await state.update_data(
+        biz_edit_place_field="address",
+        biz_edit_place_filter=filter_code,
+        biz_edit_place_id=place_id,
+        biz_edit_service_id=service_id,
+        biz_edit_place_page=place_page,
+        biz_edit_service_page=service_page,
+        biz_edit_place_building_id=building_id,
+    )
+    text = (
+        "📍 <b>Нова адреса</b>\n\n"
+        f"Будинок: <b>{escape(_full_building_address(building, ''))}</b>\n\n"
+        "Надішліть деталізацію адреси.\n"
+        "Приклад: <code>зі сторони Бермінгема, -1 поверх</code>\n"
+        "Якщо без деталей — надішліть <code>-</code>."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_EDIT_MENU_PREFIX}{filter_code}|{place_id}|{service_id}|"
+                        f"{place_page}|{service_page}"
+                    ),
+                )
+            ],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(BizPlaceEditState.waiting_value)
+async def msg_biz_place_edit_value(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    value = str(message.text or "").strip()
+    data = await state.get_data()
+    field = str(data.get("biz_edit_place_field") or "").strip().lower()
+    filter_code = str(data.get("biz_edit_place_filter") or "all")
+    place_id = int(data.get("biz_edit_place_id") or 0)
+    service_id = int(data.get("biz_edit_service_id") or 0)
+    place_page = int(data.get("biz_edit_place_page") or 0)
+    service_page = int(data.get("biz_edit_service_page") or 0)
+
+    if not place_id or field not in {"name", "description"}:
+        await state.clear()
+        await _render_business_menu(message.bot, message.chat.id, prefer_message_id=None, note="❌ Сесія редагування втрачена.")
+        return
+
+    try:
+        await business_service.admin_update_place_field(
+            int(message.from_user.id),
+            place_id=place_id,
+            field=field,
+            value=value,
+        )
+        note = "✅ Дані закладу оновлено."
+    except (BusinessValidationError, BusinessAccessDeniedError, BusinessNotFoundError) as error:
+        note = f"❌ {escape(str(error))}"
+    except Exception:
+        logger.exception("Failed to update place field from admin UI")
+        note = "❌ Помилка оновлення."
+    finally:
+        await state.clear()
+
+    await _render_biz_place_detail(
+        message.bot,
+        message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=None,
+        note=note,
+    )
+
+
+@router.message(BizPlaceEditState.waiting_address_details)
+async def msg_biz_place_edit_address_details(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    details = str(message.text or "").strip()
+    if details in {"-", "—"}:
+        details = ""
+    data = await state.get_data()
+    filter_code = str(data.get("biz_edit_place_filter") or "all")
+    place_id = int(data.get("biz_edit_place_id") or 0)
+    service_id = int(data.get("biz_edit_service_id") or 0)
+    place_page = int(data.get("biz_edit_place_page") or 0)
+    service_page = int(data.get("biz_edit_service_page") or 0)
+    building_id = int(data.get("biz_edit_place_building_id") or 0)
+    if not place_id or not building_id:
+        await state.clear()
+        await _render_business_menu(message.bot, message.chat.id, prefer_message_id=None, note="❌ Сесія редагування втрачена.")
+        return
+
+    building = await business_repo.get_building(building_id)
+    if not building:
+        await state.clear()
+        await _render_biz_place_detail(
+            message.bot,
+            message.chat.id,
+            filter_code=filter_code,
+            place_id=place_id,
+            service_id=service_id,
+            place_page=place_page,
+            service_page=service_page,
+            prefer_message_id=None,
+            note="❌ Будинок не знайдено.",
+        )
+        return
+    address = _full_building_address(building, details)
+    try:
+        await business_service.admin_update_place_field(
+            int(message.from_user.id),
+            place_id=place_id,
+            field="address",
+            value=address,
+        )
+        note = "✅ Адресу оновлено."
+    except (BusinessValidationError, BusinessAccessDeniedError, BusinessNotFoundError) as error:
+        note = f"❌ {escape(str(error))}"
+    except Exception:
+        logger.exception("Failed to update place address from admin UI")
+        note = "❌ Помилка оновлення адреси."
+    finally:
+        await state.clear()
+
+    await _render_biz_place_detail(
+        message.bot,
+        message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=None,
+        note=note,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_PROMO_MENU_PREFIX))
+async def cb_biz_places_promo_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await state.clear()
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    await _render_biz_place_promo_menu(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_PROMO_SET_PREFIX))
+async def cb_biz_places_promo_set(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳")
+    parts = callback.data.split("|")
+    if len(parts) < 7:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    tier = str(parts[1] or "").strip().lower()
+    filter_code = parts[2]
+    try:
+        place_id = int(parts[3])
+        service_id = int(parts[4])
+        place_page = int(parts[5])
+        service_page = int(parts[6])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        await business_service.admin_set_subscription_tier(
+            int(callback.from_user.id),
+            place_id=place_id,
+            tier=tier,
+            months=1,
+        )
+        note = f"✅ Встановлено тариф <b>{escape(_subscription_tier_title(tier))}</b> на 1 місяць."
+    except (BusinessValidationError, BusinessAccessDeniedError, BusinessNotFoundError) as error:
+        note = f"❌ {escape(str(error))}"
+    except Exception:
+        logger.exception("Failed to set promo tier from admin UI")
+        note = "❌ Не вдалося оновити тариф."
+
+    await _render_biz_place_detail(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+        note=note,
     )
 
 
