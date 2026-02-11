@@ -178,6 +178,10 @@ fi
 echo "Running business payments smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_payments.py"
 
+# Automated smoke: sqlite concurrent writes (3 writers + retry/backoff).
+echo "Running sqlite concurrency smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_sqlite_concurrency.py"
+
 # Optional: mini app health if endpoint exists.
 curl -s http://127.0.0.1:18082/api/v1/webapp/health >/dev/null || true
 
