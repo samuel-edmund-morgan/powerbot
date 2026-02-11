@@ -25,10 +25,20 @@ from database import db_get, db_set
 logger = logging.getLogger(__name__)
 
 _KV_KEY_LAST_UI_MESSAGE = "business_ui:last_message_id:{chat_id}"
+_KV_KEY_LAST_INVOICE_MESSAGE = "business_ui:last_invoice_message_id:{chat_id}"
+_KV_KEY_INVOICE_BY_EXTERNAL = "business_ui:invoice_message_id:{chat_id}:{external_id}"
 
 
 def _kv_key(chat_id: int) -> str:
     return _KV_KEY_LAST_UI_MESSAGE.format(chat_id=int(chat_id))
+
+
+def _kv_invoice_last_key(chat_id: int) -> str:
+    return _KV_KEY_LAST_INVOICE_MESSAGE.format(chat_id=int(chat_id))
+
+
+def _kv_invoice_ext_key(chat_id: int, external_id: str) -> str:
+    return _KV_KEY_INVOICE_BY_EXTERNAL.format(chat_id=int(chat_id), external_id=str(external_id).strip())
 
 
 async def bind_ui_message_id(chat_id: int, message_id: int) -> None:
@@ -59,6 +69,90 @@ async def get_ui_message_id(chat_id: int) -> int | None:
     except Exception:
         return None
     return value if value > 0 else None
+
+
+def _parse_message_id(raw: str | None) -> int | None:
+    if not raw:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+async def bind_invoice_message_id(chat_id: int, message_id: int, *, external_id: str | None = None) -> None:
+    if not chat_id or not message_id:
+        return
+    try:
+        await db_set(_kv_invoice_last_key(chat_id), str(int(message_id)))
+        if external_id:
+            await db_set(_kv_invoice_ext_key(chat_id, external_id), str(int(message_id)))
+    except Exception:
+        logger.exception("Failed to bind business invoice message id for chat %s", chat_id)
+
+
+async def get_last_invoice_message_id(chat_id: int) -> int | None:
+    if not chat_id:
+        return None
+    try:
+        raw = await db_get(_kv_invoice_last_key(chat_id))
+    except Exception:
+        logger.exception("Failed to load last invoice message id for chat %s", chat_id)
+        return None
+    return _parse_message_id(raw)
+
+
+async def get_invoice_message_id_by_external(chat_id: int, external_id: str) -> int | None:
+    if not chat_id or not external_id:
+        return None
+    try:
+        raw = await db_get(_kv_invoice_ext_key(chat_id, external_id))
+    except Exception:
+        logger.exception("Failed to load invoice message id by external_id for chat %s", chat_id)
+        return None
+    return _parse_message_id(raw)
+
+
+async def clear_invoice_binding(chat_id: int, *, external_id: str | None = None) -> None:
+    if not chat_id:
+        return
+    try:
+        await db_set(_kv_invoice_last_key(chat_id), "")
+        if external_id:
+            await db_set(_kv_invoice_ext_key(chat_id, external_id), "")
+    except Exception:
+        logger.exception("Failed to clear business invoice binding for chat %s", chat_id)
+
+
+async def try_delete_last_invoice_message(bot: Bot, *, chat_id: int) -> bool:
+    last_id = await get_last_invoice_message_id(chat_id)
+    if not last_id:
+        return False
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=int(last_id))
+    except Exception:
+        return False
+    await clear_invoice_binding(chat_id)
+    return True
+
+
+async def try_delete_invoice_message_by_external(bot: Bot, *, chat_id: int, external_id: str) -> bool:
+    msg_id = await get_invoice_message_id_by_external(chat_id, external_id)
+    if not msg_id:
+        return False
+    last_id = await get_last_invoice_message_id(chat_id)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=int(msg_id))
+    except Exception:
+        return False
+    try:
+        await db_set(_kv_invoice_ext_key(chat_id, external_id), "")
+        if last_id and int(last_id) == int(msg_id):
+            await db_set(_kv_invoice_last_key(chat_id), "")
+    except Exception:
+        logger.exception("Failed to clear invoice binding by external_id for chat %s", chat_id)
+    return True
 
 
 async def _try_edit(
