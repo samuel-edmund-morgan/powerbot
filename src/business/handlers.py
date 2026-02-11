@@ -5,8 +5,7 @@ from __future__ import annotations
 import html
 import logging
 
-from aiogram import Bot, F, Router
-from aiogram.enums import ParseMode
+from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -16,7 +15,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from config import CFG
+from database import create_admin_job
 
 from business.service import (
     AccessDeniedError,
@@ -580,42 +579,30 @@ async def notify_admins_about_owner_request(
     place_row: dict | None,
     source: str,
 ) -> None:
-    place_name_raw = place_row["name"] if place_row else f"place_id={owner_row['place_id']}"
-    place_name = html.escape(str(place_name_raw))
+    place_name_raw = str(place_row["name"]) if place_row and place_row.get("name") else f"place_id={owner_row['place_id']}"
     if message.from_user:
-        from_label_raw = message.from_user.username or message.from_user.full_name
+        from_label_raw = str(message.from_user.username or message.from_user.full_name)
     else:
         from_label_raw = str(owner_row["tg_user_id"])
-    from_label = html.escape(str(from_label_raw))
-    source_safe = html.escape(str(source))
-    created_at_safe = html.escape(str(owner_row.get("created_at") or ""))
-    text = (
-        "🛎 Нова заявка власника бізнесу\n\n"
-        f"Request ID: <code>{owner_row['id']}</code>\n"
-        f"Place: <b>{place_name}</b> (ID: <code>{owner_row['place_id']}</code>)\n"
-        f"Telegram user: <code>{owner_row['tg_user_id']}</code>\n"
-        f"From: {from_label}\n"
-        f"Source: <code>{source_safe}</code>\n"
-        f"Created: {created_at_safe}"
-    )
-    text += "\n\n⚙️ Модерація: відкрий <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>."
-    admin_bot_token = (CFG.admin_bot_api_key or "").strip()
-    if not admin_bot_token:
-        logger.warning("Skip owner request admin notification: ADMIN_BOT_API_KEY is empty.")
-        return
 
-    admin_bot = Bot(token=admin_bot_token)
+    payload = {
+        "request_id": int(owner_row["id"]),
+        "place_id": int(owner_row["place_id"]),
+        "place_name": place_name_raw,
+        "owner_tg_user_id": int(owner_row["tg_user_id"]),
+        "from_label": from_label_raw,
+        "source": str(source),
+        "created_at": str(owner_row.get("created_at") or ""),
+    }
+
     try:
-        for admin_id in cabinet_service.admin_ids:
-            try:
-                await admin_bot.send_message(int(admin_id), text, parse_mode=ParseMode.HTML)
-            except Exception:
-                logger.exception("Failed to send owner request notification to admin %s via adminbot", admin_id)
-    finally:
-        try:
-            await admin_bot.session.close()
-        except Exception:
-            pass
+        await create_admin_job("admin_owner_request_alert", payload, created_by=int(owner_row["tg_user_id"]))
+    except Exception:
+        logger.exception(
+            "Failed to enqueue admin_owner_request_alert for request_id=%s place_id=%s",
+            owner_row.get("id"),
+            owner_row.get("place_id"),
+        )
 
 
 async def send_main_menu(message: Message, user_id: int) -> None:
