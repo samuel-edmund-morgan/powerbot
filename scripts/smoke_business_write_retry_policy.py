@@ -17,7 +17,26 @@ from pathlib import Path
 import re
 
 
-REPO_FILE = Path("src/business/repository.py")
+def _resolve_repo_file() -> Path:
+    candidates = []
+    try:
+        candidates.append(Path(__file__).resolve().parents[1] / "src/business/repository.py")
+    except Exception:
+        pass
+    candidates.extend(
+        [
+            Path.cwd() / "src/business/repository.py",
+            Path("/app/src/business/repository.py"),
+        ]
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    # Keep the first candidate for a clearer error message.
+    return candidates[0] if candidates else Path("src/business/repository.py")
+
+
+REPO_FILE = _resolve_repo_file()
 
 # Methods that intentionally use manual transactions + explicit retry loops.
 ALLOWED_DIRECT_DML_FUNCS = {
