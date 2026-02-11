@@ -496,6 +496,14 @@ class BusinessCabinetService:
         )
         return updated
 
+    async def get_pending_owner_request_for_place(
+        self,
+        admin_tg_user_id: int,
+        place_id: int,
+    ) -> dict[str, Any] | None:
+        self._require_admin(admin_tg_user_id)
+        return await self.repository.get_pending_owner_request_for_place(int(place_id))
+
     async def set_place_published(
         self,
         admin_tg_user_id: int,
