@@ -77,6 +77,7 @@ CB_BIZ_AUDIT_PAGE_PREFIX = "abiz_audit_page|"
 
 CB_BIZ_PLACES_MENU = "abiz_places"
 CB_BIZ_PLACES_FILTER_PREFIX = "abiz_places_f|"
+CB_BIZ_PLACES_SEARCH_PREFIX = "abiz_places_search|"
 CB_BIZ_PLACES_SVC_PAGE_PREFIX = "abiz_places_sp|"
 CB_BIZ_PLACES_SVC_PICK_PREFIX = "abiz_places_s|"
 CB_BIZ_PLACES_PLACE_PAGE_PREFIX = "abiz_places_pp|"
@@ -150,6 +151,10 @@ async def _render_main_menu(bot, chat_id: int, *, prefer_message_id: int | None 
 class BroadcastState(StatesGroup):
     waiting_text = State()
     confirm = State()
+
+
+class BizPlacesSearchState(StatesGroup):
+    waiting_query = State()
 
 
 @router.message(Command("start"))
@@ -1972,6 +1977,10 @@ _BIZ_PLACES_FILTER_TITLES = {
 }
 
 
+def _biz_places_filter_title(filter_code: str) -> str:
+    return str(_BIZ_PLACES_FILTER_TITLES.get(str(filter_code or "").strip().lower(), filter_code or "all"))
+
+
 def _biz_places_filter_to_is_published(filter_code: str) -> int | None:
     code = str(filter_code or "").strip().lower()
     if code == "pub":
@@ -2086,10 +2095,11 @@ async def _render_biz_places_services(
             )
         rows.append(nav)
 
+    rows.append([InlineKeyboardButton(text="🔎 Пошук", callback_data=f"{CB_BIZ_PLACES_SEARCH_PREFIX}{filter_code}")])
     rows.append([InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)])
     rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
 
-    title = _BIZ_PLACES_FILTER_TITLES.get(filter_code, filter_code)
+    title = _biz_places_filter_title(filter_code)
     text = f"🏢 <b>Заклади</b>\n\nФільтр: <b>{escape(str(title))}</b>\nОберіть категорію:"
     await render(
         bot,
@@ -2136,6 +2146,138 @@ async def cb_biz_places_service_page(callback: CallbackQuery) -> None:
         filter_code=filter_code,
         page=page,
         prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_SEARCH_PREFIX))
+async def cb_biz_places_search_prompt(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    filter_code = callback.data.split("|", 1)[1] if "|" in callback.data else "all"
+    title = escape(_biz_places_filter_title(filter_code))
+    await state.set_state(BizPlacesSearchState.waiting_query)
+    await state.update_data(biz_places_search_filter=filter_code)
+    text = (
+        "🔎 <b>Пошук закладу</b>\n\n"
+        f"Фільтр: <b>{title}</b>\n\n"
+        "Надішліть <code>place_id</code> або частину назви/адреси.\n"
+        "Приклад: <code>123</code> або <code>coffee</code>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="« До закладів", callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}{filter_code}")],
+            [InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(BizPlacesSearchState.waiting_query)
+async def msg_biz_places_search_query(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    await try_delete_user_message(message)
+    query = str(message.text or "").strip()
+    data = await state.get_data()
+    filter_code = str(data.get("biz_places_search_filter") or "all")
+    is_published = _biz_places_filter_to_is_published(filter_code)
+    title = escape(_biz_places_filter_title(filter_code))
+
+    if not query:
+        text = (
+            "🔎 <b>Пошук закладу</b>\n\n"
+            f"Фільтр: <b>{title}</b>\n\n"
+            "❌ Порожній запит. Надішліть <code>place_id</code> або частину назви/адреси."
+        )
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« До закладів", callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}{filter_code}")],
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+            ]
+        )
+        await render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=text,
+            reply_markup=kb,
+            force_new_message=True,
+        )
+        return
+
+    try:
+        places = await business_repo.search_places_filtered(query, is_published=is_published, limit=20)
+    except Exception:
+        logger.exception("Failed to search places for query=%r filter=%s", query, filter_code)
+        await state.clear()
+        await _render_biz_places_filters(
+            message.bot,
+            message.chat.id,
+            prefer_message_id=None,
+            note="❌ Не вдалося виконати пошук.",
+        )
+        return
+
+    await state.clear()
+
+    if not places:
+        text = (
+            "🔎 <b>Пошук закладу</b>\n\n"
+            f"Фільтр: <b>{title}</b>\n"
+            f"Запит: <code>{escape(query)}</code>\n\n"
+            "Нічого не знайдено."
+        )
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔁 Новий пошук", callback_data=f"{CB_BIZ_PLACES_SEARCH_PREFIX}{filter_code}")],
+                [InlineKeyboardButton(text="« До закладів", callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}{filter_code}")],
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+            ]
+        )
+        await render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=text,
+            reply_markup=kb,
+            force_new_message=True,
+        )
+        return
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for place in places:
+        place_id = int(place.get("id") or 0)
+        service_id = int(place.get("service_id") or 0)
+        published = int(place.get("is_published") or 0) == 1
+        prefix = "✅" if published else "📝"
+        label = _truncate_label(f"{prefix} {place.get('name') or f'ID {place_id}'}", 40)
+        cb = f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{place_id}|{service_id}|0|0"
+        rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
+
+    rows.append([InlineKeyboardButton(text="🔁 Новий пошук", callback_data=f"{CB_BIZ_PLACES_SEARCH_PREFIX}{filter_code}")])
+    rows.append([InlineKeyboardButton(text="« До закладів", callback_data=f"{CB_BIZ_PLACES_FILTER_PREFIX}{filter_code}")])
+    rows.append([InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)])
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+
+    text = (
+        "🔎 <b>Результати пошуку</b>\n\n"
+        f"Фільтр: <b>{title}</b>\n"
+        f"Запит: <code>{escape(query)}</code>\n"
+        f"Знайдено: <b>{len(places)}</b>"
+    )
+    await render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        force_new_message=True,
     )
 
 
@@ -2200,11 +2342,12 @@ async def _render_biz_places_list(
             )
         rows.append(nav)
 
+    rows.append([InlineKeyboardButton(text="🔎 Пошук", callback_data=f"{CB_BIZ_PLACES_SEARCH_PREFIX}{filter_code}")])
     rows.append([InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{int(service_page)}")])
     rows.append([InlineKeyboardButton(text="« Фільтр", callback_data=CB_BIZ_PLACES_MENU)])
     rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
 
-    title = _BIZ_PLACES_FILTER_TITLES.get(filter_code, filter_code)
+    title = _biz_places_filter_title(filter_code)
     text = f"🏢 <b>Заклади</b>\n\nФільтр: <b>{escape(str(title))}</b>\nОберіть заклад:"
     await render(
         bot,
