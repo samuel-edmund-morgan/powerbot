@@ -22,11 +22,27 @@ if [[ -z "${RAW_LOGS}" ]]; then
 fi
 
 FILTERED_LOGS="${RAW_LOGS}"
+
+has_rg=0
+if command -v rg >/dev/null 2>&1; then
+  has_rg=1
+fi
+
 for pattern in "${WHITELIST_PATTERNS[@]}"; do
-  FILTERED_LOGS="$(printf '%s\n' "${FILTERED_LOGS}" | rg -v --passthru "${pattern}" || true)"
+  if [[ "${has_rg}" == "1" ]]; then
+    FILTERED_LOGS="$(printf '%s\n' "${FILTERED_LOGS}" | rg -v "${pattern}" || true)"
+  else
+    FILTERED_LOGS="$(printf '%s\n' "${FILTERED_LOGS}" | grep -Ev "${pattern}" || true)"
+  fi
 done
 
-if printf '%s\n' "${FILTERED_LOGS}" | rg -n "${BAD_PATTERNS}" >/tmp/powerbot_bad_log_lines.txt; then
+if [[ "${has_rg}" == "1" ]]; then
+  printf '%s\n' "${FILTERED_LOGS}" | rg -n "${BAD_PATTERNS}" >/tmp/powerbot_bad_log_lines.txt || true
+else
+  printf '%s\n' "${FILTERED_LOGS}" | grep -En "${BAD_PATTERNS}" >/tmp/powerbot_bad_log_lines.txt || true
+fi
+
+if [[ -s /tmp/powerbot_bad_log_lines.txt ]]; then
   echo "Log health gate FAILED. Suspicious lines:"
   cat /tmp/powerbot_bad_log_lines.txt
   exit 1
