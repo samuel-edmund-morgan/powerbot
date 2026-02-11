@@ -188,6 +188,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_c
 echo "Running business reject->unpublished smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_reject_unpublished.py"
 
+# Automated smoke: moderation approve publishes place and enables business flags.
+echo "Running business approve->publish smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_approve_publish.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
