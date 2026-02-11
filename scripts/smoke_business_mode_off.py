@@ -15,12 +15,23 @@ Run:
 from __future__ import annotations
 
 import os
+import sys
 from copy import deepcopy
+from pathlib import Path
 
 
 # Force disabled mode before importing project modules.
 os.environ["BUSINESS_MODE"] = "0"
 os.environ["BUSINESS_BOT_API_KEY"] = ""
+
+# Support execution via stdin inside container and local file execution.
+for candidate in (
+    Path.cwd() / "src",   # repo root local
+    Path("/app/src"),     # container
+):
+    if candidate.exists():
+        sys.path.insert(0, str(candidate))
+        break
 
 from config import is_business_bot_enabled, is_business_mode_enabled  # noqa: E402
 from business import get_business_service, is_business_feature_enabled  # noqa: E402
@@ -54,4 +65,3 @@ if __name__ == "__main__":
     import asyncio
 
     asyncio.run(_main())
-
