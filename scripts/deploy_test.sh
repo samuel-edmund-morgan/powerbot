@@ -196,6 +196,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_a
 echo "Running business visibility publish-gate smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_visibility_publish_gate.py"
 
+# Automated smoke: admin owner-request alert deep-link/jump UI helpers.
+echo "Running admin owner-request alert deep-link smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_owner_alert_deeplink.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"

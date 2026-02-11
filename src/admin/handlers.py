@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -50,6 +51,7 @@ SENSORS_FREEZE_ALL_DEFAULT_SEC = 6 * 3600
 CB_BIZ_MENU = "admin_business"
 CB_BIZ_MOD = "abiz_mod"
 CB_BIZ_MOD_PAGE_PREFIX = "abiz_mod_page|"
+CB_BIZ_MOD_JUMP_PREFIX = "abiz_mod_jump|"
 CB_BIZ_MOD_APPROVE_PREFIX = "abiz_mod_approve|"
 CB_BIZ_MOD_REJECT_PREFIX = "abiz_mod_reject|"
 
@@ -198,11 +200,26 @@ class BizPlaceEditState(StatesGroup):
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext) -> None:
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject | None = None) -> None:
     if not await _require_admin_message(message):
         return
     await state.clear()
     await try_delete_user_message(message)
+    args = str(command.args or "").strip() if command else ""
+    if args.startswith("bmod_"):
+        try:
+            owner_id = int(args.split("_", 1)[1])
+        except Exception:
+            owner_id = 0
+        if owner_id > 0:
+            await _render_business_moderation(
+                message.bot,
+                message.chat.id,
+                index=0,
+                owner_id=owner_id,
+                prefer_message_id=None,
+            )
+            return
     await _render_main_menu(message.bot, message.chat.id, note=None)
 
 
@@ -1381,7 +1398,14 @@ def _biz_moderation_keyboard(owner_id: int, *, index: int, total: int) -> Inline
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _render_business_moderation(bot: Bot, chat_id: int, *, index: int, prefer_message_id: int | None) -> None:
+async def _render_business_moderation(
+    bot: Bot,
+    chat_id: int,
+    *,
+    index: int,
+    owner_id: int | None = None,
+    prefer_message_id: int | None = None,
+) -> None:
     admin_id = int(chat_id)
     try:
         rows = await business_service.list_pending_owner_requests(admin_id)
@@ -1410,7 +1434,19 @@ async def _render_business_moderation(bot: Bot, chat_id: int, *, index: int, pre
         )
         return
 
-    safe_index = max(0, min(int(index), len(rows) - 1))
+    notice = ""
+    if owner_id:
+        found_index = next(
+            (idx for idx, row in enumerate(rows) if int(row.get("owner_id") or 0) == int(owner_id)),
+            None,
+        )
+        if found_index is not None:
+            safe_index = int(found_index)
+        else:
+            safe_index = max(0, min(int(index), len(rows) - 1))
+            notice = f"⚠️ Заявку <code>{owner_id}</code> не знайдено в pending-черзі."
+    else:
+        safe_index = max(0, min(int(index), len(rows) - 1))
     item = rows[safe_index]
 
     user_contact = _format_tg_contact(
@@ -1421,8 +1457,10 @@ async def _render_business_moderation(bot: Bot, chat_id: int, *, index: int, pre
     place_name = escape(str(item.get("place_name") or "—"))
     place_address = escape(str(item.get("place_address") or "—"))
 
-    text = (
-        "🛡 <b>Модерація</b>\n\n"
+    text = "🛡 <b>Модерація</b>\n\n"
+    if notice:
+        text += f"{notice}\n\n"
+    text += (
         f"Заявка: <code>{item['owner_id']}</code>\n"
         f"Заклад: <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
         f"Адреса: {place_address}\n"
@@ -1465,6 +1503,24 @@ async def cb_business_moderation_page(callback: CallbackQuery) -> None:
         callback.bot,
         callback.message.chat.id,
         index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_MOD_JUMP_PREFIX))
+async def cb_business_moderation_jump(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        owner_id = int(callback.data.split("|", 1)[1])
+    except Exception:
+        owner_id = 0
+    await _render_business_moderation(
+        callback.bot,
+        callback.message.chat.id,
+        index=0,
+        owner_id=owner_id if owner_id > 0 else None,
         prefer_message_id=callback.message.message_id,
     )
 
