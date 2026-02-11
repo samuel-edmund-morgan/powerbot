@@ -108,10 +108,10 @@ OWNERSHIP_TITLES = {
 }
 
 SUBSCRIPTION_TITLES = {
-    "active": "🟢 Active",
-    "inactive": "⚪ Inactive",
-    "past_due": "🟠 Past Due",
-    "canceled": "🔴 Canceled",
+    "active": "🟢 Активна",
+    "inactive": "⚪ Неактивна",
+    "past_due": "🟠 Потрібне продовження",
+    "canceled": "🔴 Скасована",
 }
 
 
@@ -191,7 +191,7 @@ def build_category_keyboard(
     rows: list[list[InlineKeyboardButton]] = []
     buffer: list[InlineKeyboardButton] = []
     for svc in services:
-        title = (svc.get("name") or "").strip() or f"ID {svc.get('id')}"
+        title = (svc.get("name") or "").strip() or "Без назви категорії"
         buffer.append(
             InlineKeyboardButton(
                 text=title,
@@ -236,8 +236,8 @@ def _format_building_display(building: dict) -> str:
     name = str(building.get("name") or "").strip()
     addr = str(building.get("address") or "").strip()
     if not addr or addr == "-":
-        return name or f"ID {building.get('id')}"
-    return f"{name} ({addr})" if name else f"ID {building.get('id')}"
+        return name or "Будинок"
+    return f"{name} ({addr})" if name else f"Будинок ({addr})"
 
 
 def build_building_keyboard(buildings: list[dict]) -> InlineKeyboardMarkup:
@@ -290,7 +290,7 @@ def build_token_generate_menu_keyboard() -> InlineKeyboardMarkup:
 
 
 def _format_service_button(service: dict) -> str:
-    name = str(service.get("name") or "").strip() or f"ID {service.get('id')}"
+    name = str(service.get("name") or "").strip() or "Без назви категорії"
     count = service.get("place_count")
     if count is None:
         return _truncate_label(name, 30)
@@ -356,7 +356,7 @@ def build_token_places_keyboard(
     buttons: list[list[InlineKeyboardButton]] = []
     for item in places:
         place_id = int(item.get("id") or 0)
-        name = str(item.get("name") or f"ID {place_id}")
+        name = str(item.get("name") or "").strip() or "Заклад без назви"
         label = _truncate_label(name, 38)
         buttons.append(
             [
@@ -403,7 +403,7 @@ def build_my_businesses_keyboard(
         owner_status = str(item.get("ownership_status") or "")
         status_icon = {"approved": "✅", "pending": "🕓", "rejected": "❌"}.get(owner_status, "•")
         verified_icon = "✅" if item.get("is_verified") else ""
-        name = str(item.get("place_name") or f"ID {item.get('place_id')}")
+        name = str(item.get("place_name") or "").strip() or "Заклад без назви"
         label = _truncate_label(f"{status_icon}{verified_icon} {name}".strip(), 38)
         buttons.append(
             [
@@ -450,7 +450,7 @@ def build_plans_list_keyboard(
 ) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
     for item in rows:
-        name = str(item.get("place_name") or f"ID {item.get('place_id')}")
+        name = str(item.get("place_name") or "").strip() or "Заклад без назви"
         label = _truncate_label(f"💳 {name}".strip(), 38)
         buttons.append([InlineKeyboardButton(text=label, callback_data=f"bp_menu:{int(item['place_id'])}:plans")])
 
@@ -470,8 +470,8 @@ def build_plans_list_keyboard(
 def build_moderation_queue_keyboard(owner_id: int, *, index: int, total: int) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text="✅ Approve", callback_data=f"{CB_MOD_APPROVE_PREFIX}{owner_id}:{index}"),
-            InlineKeyboardButton(text="❌ Reject", callback_data=f"{CB_MOD_REJECT_PREFIX}{owner_id}:{index}"),
+            InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"{CB_MOD_APPROVE_PREFIX}{owner_id}:{index}"),
+            InlineKeyboardButton(text="❌ Відхилити", callback_data=f"{CB_MOD_REJECT_PREFIX}{owner_id}:{index}"),
         ]
     ]
     if total > 1:
@@ -573,8 +573,8 @@ def build_moderation_keyboard(owner_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Approve", callback_data=f"bm:a:{owner_id}"),
-                InlineKeyboardButton(text="❌ Reject", callback_data=f"bm:r:{owner_id}"),
+                InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"bm:a:{owner_id}"),
+                InlineKeyboardButton(text="❌ Відхилити", callback_data=f"bm:r:{owner_id}"),
             ]
         ]
     )
@@ -586,16 +586,16 @@ def format_business_card(item: dict) -> str:
     owner_status = OWNERSHIP_TITLES.get(item["ownership_status"], item["ownership_status"])
     sub_status = SUBSCRIPTION_TITLES.get(item["subscription_status"], item["subscription_status"])
     tier = PLAN_TITLES.get(item["tier"], item["tier"])
-    verified = "✅ Verified" if item["is_verified"] else "—"
+    verified = "✅ Активна" if item["is_verified"] else "—"
     expires = item["subscription_expires_at"] or "—"
     return (
-        f"🏢 <b>{place_name}</b> (ID: <code>{item['place_id']}</code>)\n"
+        f"🏢 <b>{place_name}</b>\n"
         f"📍 {place_address}\n"
-        f"📌 Статус власника: {owner_status}\n"
-        f"💳 План: <b>{tier}</b>\n"
-        f"🔁 Підписка: {sub_status}\n"
-        f"✅ Verified: {verified}\n"
-        f"⏳ Paid до: {expires}"
+        f"📌 Статус доступу: {owner_status}\n"
+        f"💳 Тариф: <b>{tier}</b>\n"
+        f"🔁 Стан підписки: {sub_status}\n"
+        f"🏅 Верифікація: {verified}\n"
+        f"⏳ Активно до: {expires}"
     )
 
 
@@ -605,7 +605,7 @@ async def notify_admins_about_owner_request(
     place_row: dict | None,
     source: str,
 ) -> None:
-    place_name_raw = str(place_row["name"]) if place_row and place_row.get("name") else f"place_id={owner_row['place_id']}"
+    place_name_raw = str(place_row["name"]) if place_row and place_row.get("name") else "Невідомий заклад"
     if message.from_user:
         from_label_raw = str(message.from_user.username or message.from_user.full_name)
     else:
@@ -725,7 +725,7 @@ async def send_edit_building_picker(
         message.bot,
         chat_id=message.chat.id,
         prefer_message_id=prefer_message_id,
-        text=f"Оберіть будинок для нової адреси (place_id=<code>{int(place_id)}</code>):",
+        text="Оберіть будинок для нової адреси:",
         reply_markup=build_edit_building_keyboard(buildings, place_id),
     )
 
@@ -879,7 +879,7 @@ async def show_token_places_view(
         limit=TOKEN_PLACES_PAGE_SIZE,
         offset=offset,
     )
-    service_label = html.escape(str(service.get("name") or service_id))
+    service_label = html.escape(str(service.get("name") or "Категорія"))
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
@@ -929,7 +929,7 @@ async def show_token_places_generate(
         limit=TOKEN_PLACES_PAGE_SIZE,
         offset=offset,
     )
-    service_label = html.escape(str(service.get("name") or service_id))
+    service_label = html.escape(str(service.get("name") or "Категорія"))
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
@@ -972,13 +972,13 @@ async def show_token_details_view(
 
     place = result["place"]
     token_row = result["token_row"] or {}
-    place_name = html.escape(str(place.get("name") or place_id))
+    place_name = html.escape(str(place.get("name") or "Заклад"))
     token = html.escape(str(token_row.get("token") or "—"))
     expires_at = html.escape(str(token_row.get("expires_at") or "—"))
 
     text = (
         "🔐 <b>Код прив'язки</b>\n\n"
-        f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Заклад: <b>{place_name}</b>\n"
         f"Код: <code>{token}</code>\n"
         f"Діє до: {expires_at}\n\n"
         "Важливо: старий код стає неактивним після генерації нового."
@@ -1275,12 +1275,12 @@ async def cb_tokv_place_rotate(callback: CallbackQuery, state: FSMContext) -> No
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
         await callback.answer(str(error), show_alert=True)
         return
-    place_name = html.escape(str(rotated["place"].get("name") or place_id))
+    place_name = html.escape(str(rotated["place"].get("name") or "Заклад"))
     token = html.escape(str(rotated.get("token") or "—"))
     expires_at = html.escape(str(rotated.get("expires_at") or "—"))
     text = (
         "✅ Новий код згенеровано.\n\n"
-        f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Заклад: <b>{place_name}</b>\n"
         f"Код: <code>{token}</code>\n"
         f"Діє до: {expires_at}"
     )
@@ -1402,12 +1402,12 @@ async def cb_tokg_place_rotate(callback: CallbackQuery, state: FSMContext) -> No
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
         await callback.answer(str(error), show_alert=True)
         return
-    place_name = html.escape(str(rotated["place"].get("name") or place_id))
+    place_name = html.escape(str(rotated["place"].get("name") or "Заклад"))
     token = html.escape(str(rotated.get("token") or "—"))
     expires_at = html.escape(str(rotated.get("expires_at") or "—"))
     text = (
         "✅ Новий код згенеровано.\n\n"
-        f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Заклад: <b>{place_name}</b>\n"
         f"Код: <code>{token}</code>\n"
         f"Діє до: {expires_at}\n\n"
         "Видай цей код власнику, щоб він міг прив'язати існуючий бізнес."
@@ -1642,13 +1642,12 @@ async def add_business_address_details(message: Message, state: FSMContext) -> N
     await state.clear()
     place = result["place"] or {}
     owner = result["owner"]
-    place_name = html.escape(str(place.get("name") or owner["place_id"]))
+    place_name = html.escape(str(place.get("name") or "Ваш заклад"))
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
         text=(
             "✅ Заявку створено.\n\n"
-            f"ID заявки: <code>{owner['id']}</code>\n"
             f"Заклад: <b>{place_name}</b>\n"
             "Статус: очікує модерації адміном.\n\n"
             "Оберіть дію:"
@@ -1701,13 +1700,12 @@ async def process_claim_token(message: Message, state: FSMContext, token: str) -
     await state.clear()
     owner = result["owner"]
     place = result["place"] or {}
-    place_name = html.escape(str(place.get("name") or owner["place_id"]))
+    place_name = html.escape(str(place.get("name") or "Ваш заклад"))
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
         text=(
             "✅ Код прив'язки прийнято.\n\n"
-            f"Заявка: <code>{owner['id']}</code>\n"
             f"Заклад: <b>{place_name}</b>\n"
             "Статус: очікує модерації адміном.\n\n"
             "Оберіть дію:"
@@ -1821,7 +1819,7 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     is_allowed = await cabinet_service.repository.is_approved_owner(user_id, place_id)
     if not is_allowed:
-        await callback.answer("Доступ лише для підтвердженого owner.", show_alert=True)
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
         return
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
@@ -1829,7 +1827,7 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
             callback.message.bot,
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
-            text=f"Що редагуємо для place_id=<code>{place_id}</code>?",
+            text="Що хочеш змінити?",
             reply_markup=build_edit_fields_keyboard(place_id),
         )
     await callback.answer()
@@ -1845,7 +1843,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     field = payload[2]
     is_allowed = await cabinet_service.repository.is_approved_owner(callback.from_user.id, place_id)
     if not is_allowed:
-        await callback.answer("Доступ лише для підтвердженого owner.", show_alert=True)
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
         return
     if field == "address":
         await state.set_state(EditPlaceStates.waiting_address_building)
@@ -1876,7 +1874,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             callback.message.bot,
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
-            text=f"Надішли нову {field_label} для place_id=<code>{place_id}</code>.",
+            text=f"Надішли нову {field_label}.",
             reply_markup=keyboard,
         )
     await callback.answer()
@@ -1901,7 +1899,7 @@ async def cb_edit_building_pick(callback: CallbackQuery, state: FSMContext) -> N
 
     is_allowed = await cabinet_service.repository.is_approved_owner(callback.from_user.id, place_id)
     if not is_allowed:
-        await callback.answer("Доступ лише для підтвердженого owner.", show_alert=True)
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
         return
 
     building = await cabinet_service.repository.get_building(building_id)
@@ -2105,7 +2103,7 @@ async def cb_plan_menu(callback: CallbackQuery) -> None:
         await callback.answer("Недостатньо прав.", show_alert=True)
         return
     back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
-    place_name = html.escape(str(item.get("place_name") or place_id))
+    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         await ui_render(
@@ -2147,7 +2145,7 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
 
     rows = await cabinet_service.list_user_businesses(callback.from_user.id)
     item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
-    place_name = html.escape(str(item.get("place_name") if item else place_id))
+    place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
     back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
 
     await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
