@@ -133,7 +133,7 @@ async def render(
         except Exception:
             pass
 
-    if not CFG.single_message_mode:
+    if not CFG.business_bot_single_message_mode:
         if remove_reply_keyboard:
             await _remove_legacy_reply_keyboard()
         msg = await bot.send_message(
@@ -209,7 +209,7 @@ async def render(
 
 async def try_delete_user_message(message: Message) -> None:
     """Best-effort delete user input in SINGLE_MESSAGE_MODE to keep chat clean."""
-    if not CFG.single_message_mode:
+    if not CFG.business_bot_single_message_mode:
         return
     if not message.from_user or message.from_user.is_bot:
         return

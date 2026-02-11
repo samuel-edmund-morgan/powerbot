@@ -91,6 +91,8 @@ CB_TOKG_SVC_PICK_PREFIX = "btokg_s:"
 CB_TOKG_SVC_PAGE_PREFIX = "btokg_sp:"
 CB_TOKG_PLACE_PAGE_PREFIX = "btokg_pp:"
 CB_TOKG_PLACE_ROTATE_PREFIX = "btokg_r:"
+CB_EDIT_BUILDING_PICK_PREFIX = "bebld:"
+CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -127,6 +129,8 @@ class ClaimStates(StatesGroup):
 
 class EditPlaceStates(StatesGroup):
     waiting_value = State()
+    waiting_address_building = State()
+    waiting_address_details = State()
 
 
 def build_main_menu(user_id: int) -> InlineKeyboardMarkup:
@@ -512,6 +516,28 @@ def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def build_edit_building_keyboard(buildings: list[dict], place_id: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buffer: list[InlineKeyboardButton] = []
+    for b in buildings:
+        label = _format_building_display(b)
+        buffer.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"{CB_EDIT_BUILDING_PICK_PREFIX}{int(place_id)}:{int(b['id'])}",
+            )
+        )
+        if len(buffer) >= BUILDING_ROW_WIDTH:
+            rows.append(buffer)
+            buffer = []
+    if buffer:
+        rows.append(buffer)
+
+    rows.append([InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"be:{int(place_id)}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def build_plan_keyboard(
     place_id: int,
     current_tier: str,
@@ -674,6 +700,55 @@ async def send_building_picker(
         prefer_message_id=prefer_message_id,
         text="Оберіть будинок:",
         reply_markup=build_building_keyboard(buildings),
+    )
+
+
+async def send_edit_building_picker(
+    message: Message,
+    state: FSMContext,
+    *,
+    place_id: int,
+    prefer_message_id: int | None = None,
+) -> None:
+    buildings = await cabinet_service.repository.list_buildings()
+    if not buildings:
+        await state.clear()
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text="Немає списку будинків. Напиши адміністратору.\n\n" + INTRO_TEXT,
+            reply_markup=build_main_menu(message.from_user.id if message.from_user else message.chat.id),
+        )
+        return
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text=f"Оберіть будинок для нової адреси (place_id=<code>{int(place_id)}</code>):",
+        reply_markup=build_edit_building_keyboard(buildings, place_id),
+    )
+
+
+async def render_place_card_updated(message: Message, *, place_id: int, note_text: str) -> None:
+    rows = await cabinet_service.list_user_businesses(message.chat.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item:
+        await send_main_menu(message, message.chat.id)
+        return
+    keyboard_rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"be:{place_id}"),
+            InlineKeyboardButton(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}"),
+        ],
+        [InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)],
+        [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+    ]
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=f"{note_text}\n\n{format_business_card(item)}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
     )
 
 
@@ -1772,6 +1847,20 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     if not is_allowed:
         await callback.answer("Доступ лише для підтвердженого owner.", show_alert=True)
         return
+    if field == "address":
+        await state.set_state(EditPlaceStates.waiting_address_building)
+        await state.update_data(place_id=place_id, field=field)
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            await send_edit_building_picker(
+                callback.message,
+                state,
+                place_id=place_id,
+                prefer_message_id=callback.message.message_id,
+            )
+        await callback.answer()
+        return
+
     field_label = {"name": "назву", "description": "опис", "address": "адресу"}.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
@@ -1791,6 +1880,140 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             reply_markup=keyboard,
         )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_EDIT_BUILDING_PICK_PREFIX))
+async def cb_edit_building_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if await state.get_state() != EditPlaceStates.waiting_address_building.state:
+        await callback.answer("Це меню вже неактуальне. Натисни /start.", show_alert=True)
+        return
+    raw = callback.data.removeprefix(CB_EDIT_BUILDING_PICK_PREFIX)
+    parts = raw.split(":")
+    if len(parts) != 2:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[0])
+        building_id = int(parts[1])
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+
+    is_allowed = await cabinet_service.repository.is_approved_owner(callback.from_user.id, place_id)
+    if not is_allowed:
+        await callback.answer("Доступ лише для підтвердженого owner.", show_alert=True)
+        return
+
+    building = await cabinet_service.repository.get_building(building_id)
+    if not building:
+        await callback.answer("Будинок не знайдено", show_alert=True)
+        return
+
+    building_label = _format_building_display(building)
+    await state.update_data(place_id=place_id, field="address", building_id=building_id, building_label=building_label)
+    await state.set_state(EditPlaceStates.waiting_address_details)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+            [InlineKeyboardButton(text="⬅️ Змінити будинок", callback_data=f"{CB_EDIT_BUILDING_CHANGE_PREFIX}{place_id}")],
+            [InlineKeyboardButton(text="« Назад", callback_data=f"be:{place_id}")],
+        ]
+    )
+    if callback.message:
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=(
+                f"Будинок: <b>{html.escape(building_label)}</b>\n"
+                "Додай деталі адреси (орієнтир/поверх/під'їзд) або надішли '-' якщо без деталей."
+            ),
+            reply_markup=keyboard,
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_EDIT_BUILDING_CHANGE_PREFIX))
+async def cb_edit_building_change(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_EDIT_BUILDING_CHANGE_PREFIX)
+    try:
+        place_id = int(raw)
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    await state.set_state(EditPlaceStates.waiting_address_building)
+    await state.update_data(place_id=place_id, field="address")
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await send_edit_building_picker(
+        callback.message,
+        state,
+        place_id=place_id,
+        prefer_message_id=callback.message.message_id,
+    )
+    await callback.answer()
+
+
+@router.message(EditPlaceStates.waiting_address_building, F.text)
+async def edit_place_address_building_text(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    place_id = int(data.get("place_id") or 0)
+    await try_delete_user_message(message)
+    if place_id <= 0:
+        await state.clear()
+        await send_main_menu(message, message.chat.id)
+        return
+    await send_edit_building_picker(message, state, place_id=place_id)
+
+
+@router.message(EditPlaceStates.waiting_address_details, F.text)
+async def edit_place_address_details(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    place_id = int(data.get("place_id") or 0)
+    details = message.text.strip()
+    if details == "-":
+        details = ""
+
+    building_label = str(data.get("building_label") or "").strip()
+    if not building_label:
+        await state.set_state(EditPlaceStates.waiting_address_building)
+        await send_edit_building_picker(message, state, place_id=place_id)
+        return
+
+    address = building_label
+    if details:
+        address = f"{building_label}, {details}".strip(", ")
+
+    try:
+        await cabinet_service.update_place_field(
+            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+            place_id=place_id,
+            field="address",
+            value=address,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+                [InlineKeyboardButton(text="⬅️ Змінити будинок", callback_data=f"{CB_EDIT_BUILDING_CHANGE_PREFIX}{place_id}")],
+                [InlineKeyboardButton(text="« Назад", callback_data=f"be:{place_id}")],
+            ]
+        )
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=keyboard,
+        )
+        return
+
+    await try_delete_user_message(message)
+    await state.clear()
+    await render_place_card_updated(message, place_id=place_id, note_text="✅ Картку оновлено.")
 
 
 @router.message(EditPlaceStates.waiting_value, F.text)
@@ -1815,26 +2038,7 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
         return
     await try_delete_user_message(message)
     await state.clear()
-    rows = await cabinet_service.list_user_businesses(message.chat.id)
-    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
-    if not item:
-        await send_main_menu(message, message.chat.id)
-        return
-
-    keyboard_rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"be:{place_id}"),
-            InlineKeyboardButton(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}"),
-        ],
-        [InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)],
-        [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
-    ]
-    await ui_render(
-        message.bot,
-        chat_id=message.chat.id,
-        text="✅ Картку оновлено.\n\n" + format_business_card(item),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
-    )
+    await render_place_card_updated(message, place_id=place_id, note_text="✅ Картку оновлено.")
 
 
 @router.message(Command("plans"))

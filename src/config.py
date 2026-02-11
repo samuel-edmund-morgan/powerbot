@@ -74,6 +74,7 @@ class Config:
     # Business mode
     business_mode: bool
     business_bot_api_key: str
+    business_bot_single_message_mode: bool
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -223,6 +224,7 @@ CFG = Config(
     admin_bot_single_message_mode=parse_bool(os.getenv("ADMIN_BOT_SINGLE_MESSAGE_MODE", "1")),
     business_mode=parse_bool(os.getenv("BUSINESS_MODE", "0")),
     business_bot_api_key=os.getenv("BUSINESS_BOT_API_KEY", "").strip().strip('"').strip("'"),
+    business_bot_single_message_mode=parse_bool(os.getenv("BUSINESS_BOT_SINGLE_MESSAGE_MODE", "1")),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу
