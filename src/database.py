@@ -667,13 +667,16 @@ async def init_db():
 
 async def db_set(k: str, v: str):
     """Зберегти значення за ключем."""
-    async with open_db() as db:
-        await db.execute(
-            "INSERT INTO kv(k,v) VALUES(?,?) "
-            "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-            (k, v),
-        )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                "INSERT INTO kv(k,v) VALUES(?,?) "
+                "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                (k, v),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def db_get(k: str) -> str | None:
@@ -954,18 +957,21 @@ async def add_subscriber(
     Додати підписника з інформацією про користувача.
     Якщо підписник вже існує — оновлює інформацію.
     """
-    now = datetime.now().isoformat()
-    async with open_db() as db:
-        await db.execute(
-            """INSERT INTO subscribers(chat_id, username, first_name, subscribed_at) 
-               VALUES(?, ?, ?, ?)
-               ON CONFLICT(chat_id) DO UPDATE SET 
-                   username=excluded.username,
-                   first_name=excluded.first_name,
-                   subscribed_at=COALESCE(subscribers.subscribed_at, excluded.subscribed_at)""",
-            (chat_id, username, first_name, now)
-        )
-        await db.commit()
+    async def _op() -> None:
+        now = datetime.now().isoformat()
+        async with open_db() as db:
+            await db.execute(
+                """INSERT INTO subscribers(chat_id, username, first_name, subscribed_at) 
+                   VALUES(?, ?, ?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET 
+                       username=excluded.username,
+                       first_name=excluded.first_name,
+                       subscribed_at=COALESCE(subscribers.subscribed_at, excluded.subscribed_at)""",
+                (chat_id, username, first_name, now)
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 # ============ Функції для роботи з будинками ============
@@ -1094,9 +1100,12 @@ async def get_subscribers_by_building(building_id: int = None) -> list[int] | di
 
 async def remove_subscriber(chat_id: int):
     """Видалити підписника."""
-    async with open_db() as db:
-        await db.execute("DELETE FROM subscribers WHERE chat_id=?", (chat_id,))
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute("DELETE FROM subscribers WHERE chat_id=?", (chat_id,))
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def list_subscribers_full() -> list[dict]:
@@ -1171,12 +1180,15 @@ async def set_quiet_hours(chat_id: int, start_hour: int | None, end_hour: int | 
     Встановити тихі години для користувача.
     start_hour, end_hour: години (0-23), або None для вимкнення.
     """
-    async with open_db() as db:
-        await db.execute(
-            "UPDATE subscribers SET quiet_start=?, quiet_end=? WHERE chat_id=?",
-            (start_hour, end_hour, chat_id),
-        )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                "UPDATE subscribers SET quiet_start=?, quiet_end=? WHERE chat_id=?",
+                (start_hour, end_hour, chat_id),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def get_quiet_hours(chat_id: int) -> tuple[int | None, int | None]:
@@ -1228,32 +1240,41 @@ async def get_subscribers_for_notification(current_hour: int) -> list[int]:
 
 async def set_light_notifications(chat_id: int, enabled: bool):
     """Увімкнути/вимкнути сповіщення про світло."""
-    async with open_db() as db:
-        await db.execute(
-            "UPDATE subscribers SET light_notifications=? WHERE chat_id=?",
-            (1 if enabled else 0, chat_id),
-        )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                "UPDATE subscribers SET light_notifications=? WHERE chat_id=?",
+                (1 if enabled else 0, chat_id),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def set_alert_notifications(chat_id: int, enabled: bool):
     """Увімкнути/вимкнути сповіщення про тривоги."""
-    async with open_db() as db:
-        await db.execute(
-            "UPDATE subscribers SET alert_notifications=? WHERE chat_id=?",
-            (1 if enabled else 0, chat_id),
-        )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                "UPDATE subscribers SET alert_notifications=? WHERE chat_id=?",
+                (1 if enabled else 0, chat_id),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def set_schedule_notifications(chat_id: int, enabled: bool):
     """Увімкнути/вимкнути сповіщення про графіки ЯСНО."""
-    async with open_db() as db:
-        await db.execute(
-            "UPDATE subscribers SET schedule_notifications=? WHERE chat_id=?",
-            (1 if enabled else 0, chat_id),
-        )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                "UPDATE subscribers SET schedule_notifications=? WHERE chat_id=?",
+                (1 if enabled else 0, chat_id),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def get_notification_settings(chat_id: int) -> dict:
@@ -1569,37 +1590,46 @@ async def get_last_events(
 
 async def add_general_service(name: str) -> int:
     """Додати категорію послуг. Повертає ID."""
-    async with open_db() as db:
-        cursor = await db.execute(
-            "INSERT INTO general_services(name) VALUES(?)",
-            (name,)
-        )
-        await db.commit()
-        return cursor.lastrowid
+    async def _op() -> int:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "INSERT INTO general_services(name) VALUES(?)",
+                (name,)
+            )
+            await db.commit()
+            return int(cursor.lastrowid)
+
+    return await _with_sqlite_retry(_op)
 
 
 async def edit_general_service(service_id: int, name: str) -> bool:
     """Редагувати назву категорії. Повертає True якщо успішно."""
-    async with open_db() as db:
-        cursor = await db.execute(
-            "UPDATE general_services SET name=? WHERE id=?",
-            (name, service_id)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "UPDATE general_services SET name=? WHERE id=?",
+                (name, service_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def delete_general_service(service_id: int) -> bool:
     """Видалити категорію. Повертає True якщо успішно."""
-    async with open_db() as db:
-        # Спочатку видаляємо всі заклади цієї категорії
-        await db.execute("DELETE FROM places WHERE service_id=?", (service_id,))
-        cursor = await db.execute(
-            "DELETE FROM general_services WHERE id=?",
-            (service_id,)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            # Спочатку видаляємо всі заклади цієї категорії
+            await db.execute("DELETE FROM places WHERE service_id=?", (service_id,))
+            cursor = await db.execute(
+                "DELETE FROM general_services WHERE id=?",
+                (service_id,)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_all_general_services() -> list[dict]:
@@ -1637,59 +1667,74 @@ async def get_general_service(service_id: int) -> dict | None:
 async def add_place(service_id: int, name: str, description: str, address: str, keywords: str = None) -> int:
     """Додати заклад. Повертає ID."""
     merged_keywords = build_keywords(name, description, keywords)
-    async with open_db() as db:
-        cursor = await db.execute(
-            "INSERT INTO places(service_id, name, description, address, keywords) VALUES(?, ?, ?, ?, ?)",
-            (service_id, name, description, address, merged_keywords)
-        )
-        await db.commit()
-        return cursor.lastrowid
+    async def _op() -> int:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "INSERT INTO places(service_id, name, description, address, keywords) VALUES(?, ?, ?, ?, ?)",
+                (service_id, name, description, address, merged_keywords)
+            )
+            await db.commit()
+            return int(cursor.lastrowid)
+
+    return await _with_sqlite_retry(_op)
 
 
 async def edit_place(place_id: int, service_id: int, name: str, description: str, address: str, keywords: str = None) -> bool:
     """Редагувати заклад. Повертає True якщо успішно."""
     merged_keywords = build_keywords(name, description, keywords)
-    async with open_db() as db:
-        cursor = await db.execute(
-            "UPDATE places SET service_id=?, name=?, description=?, address=?, keywords=? WHERE id=?",
-            (service_id, name, description, address, merged_keywords, place_id)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "UPDATE places SET service_id=?, name=?, description=?, address=?, keywords=? WHERE id=?",
+                (service_id, name, description, address, merged_keywords, place_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def refresh_places_keywords() -> None:
     """Перебудувати keywords для всіх закладів (name + description + keywords)."""
-    async with open_db() as db:
-        async with db.execute("SELECT id, name, description, keywords FROM places") as cur:
-            rows = await cur.fetchall()
-        for row in rows:
-            place_id, name, description, keywords = row
-            merged = build_keywords(name, description, keywords)
-            await db.execute("UPDATE places SET keywords=? WHERE id=?", (merged, place_id))
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            async with db.execute("SELECT id, name, description, keywords FROM places") as cur:
+                rows = await cur.fetchall()
+            for row in rows:
+                place_id, name, description, keywords = row
+                merged = build_keywords(name, description, keywords)
+                await db.execute("UPDATE places SET keywords=? WHERE id=?", (merged, place_id))
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def update_place_keywords(place_id: int, keywords: str) -> bool:
     """Оновити тільки ключові слова закладу."""
-    async with open_db() as db:
-        cursor = await db.execute(
-            "UPDATE places SET keywords=? WHERE id=?",
-            (keywords, place_id)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "UPDATE places SET keywords=? WHERE id=?",
+                (keywords, place_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def delete_place(place_id: int) -> bool:
     """Видалити заклад. Повертає True якщо успішно."""
-    async with open_db() as db:
-        cursor = await db.execute(
-            "DELETE FROM places WHERE id=?",
-            (place_id,)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "DELETE FROM places WHERE id=?",
+                (place_id,)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_places_by_service(service_id: int) -> list[dict]:
@@ -1884,28 +1929,35 @@ async def get_place(place_id: int) -> dict | None:
 
 async def like_place(place_id: int, chat_id: int) -> bool:
     """Поставити лайк закладу. Повертає True якщо лайк додано, False якщо вже був."""
-    now = datetime.now().isoformat()
-    async with open_db() as db:
-        try:
-            await db.execute(
-                "INSERT INTO place_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
-                (place_id, chat_id, now)
-            )
-            await db.commit()
-            return True
-        except Exception:
-            return False
+    async def _op() -> bool:
+        now = datetime.now().isoformat()
+        async with open_db() as db:
+            try:
+                await db.execute(
+                    "INSERT INTO place_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
+                    (place_id, chat_id, now)
+                )
+                await db.commit()
+                return True
+            except (sqlite3.IntegrityError, aiosqlite.IntegrityError):
+                # Duplicate like (PRIMARY KEY place_id+chat_id): not an error for caller.
+                return False
+
+    return await _with_sqlite_retry(_op)
 
 
 async def unlike_place(place_id: int, chat_id: int) -> bool:
     """Забрати лайк із закладу. Повертає True якщо лайк видалено."""
-    async with open_db() as db:
-        cursor = await db.execute(
-            "DELETE FROM place_likes WHERE place_id=? AND chat_id=?",
-            (place_id, chat_id)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "DELETE FROM place_likes WHERE place_id=? AND chat_id=?",
+                (place_id, chat_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def has_liked_place(place_id: int, chat_id: int) -> bool:
@@ -2004,28 +2056,35 @@ async def get_shelter_places_with_likes() -> list[dict]:
 
 async def like_shelter(place_id: int, chat_id: int) -> bool:
     """Поставити лайк укриттю. Повертає True якщо лайк додано, False якщо вже був."""
-    now = datetime.now().isoformat()
-    async with open_db() as db:
-        try:
-            await db.execute(
-                "INSERT INTO shelter_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
-                (place_id, chat_id, now)
-            )
-            await db.commit()
-            return True
-        except Exception:
-            return False
+    async def _op() -> bool:
+        now = datetime.now().isoformat()
+        async with open_db() as db:
+            try:
+                await db.execute(
+                    "INSERT INTO shelter_likes(place_id, chat_id, liked_at) VALUES(?, ?, ?)",
+                    (place_id, chat_id, now)
+                )
+                await db.commit()
+                return True
+            except (sqlite3.IntegrityError, aiosqlite.IntegrityError):
+                # Duplicate like (PRIMARY KEY place_id+chat_id): not an error for caller.
+                return False
+
+    return await _with_sqlite_retry(_op)
 
 
 async def unlike_shelter(place_id: int, chat_id: int) -> bool:
     """Забрати лайк із укриття. Повертає True якщо лайк видалено."""
-    async with open_db() as db:
-        cursor = await db.execute(
-            "DELETE FROM shelter_likes WHERE place_id=? AND chat_id=?",
-            (place_id, chat_id)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                "DELETE FROM shelter_likes WHERE place_id=? AND chat_id=?",
+                (place_id, chat_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def has_liked_shelter(place_id: int, chat_id: int) -> bool:
