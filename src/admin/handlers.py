@@ -45,6 +45,7 @@ BIZ_PLACES_PAGE_SIZE = 8
 BIZ_SUBS_PAGE_SIZE = 8
 BIZ_AUDIT_PAGE_SIZE = 8
 CB_ADMIN_NOOP = "admin_noop"
+SENSORS_FREEZE_ALL_DEFAULT_SEC = 6 * 3600
 
 CB_BIZ_MENU = "admin_business"
 CB_BIZ_MOD = "abiz_mod"
@@ -447,7 +448,14 @@ async def cb_sensor_unfreeze(callback: CallbackQuery) -> None:
     )
 
 
-async def _render_sensors_page(bot: Bot, chat_id: int, *, offset: int, prefer_message_id: int | None) -> None:
+async def _render_sensors_page(
+    bot: Bot,
+    chat_id: int,
+    *,
+    offset: int,
+    prefer_message_id: int | None,
+    note: str | None = None,
+) -> None:
     sensors = await get_all_active_sensors()
     now = datetime.now()
     timeout = timedelta(seconds=CFG.sensor_timeout)
@@ -477,8 +485,10 @@ async def _render_sensors_page(bot: Bot, chat_id: int, *, offset: int, prefer_me
         offset = max(0, total - (total % SENSORS_PAGE_SIZE or SENSORS_PAGE_SIZE))
 
     page = sensors[offset : offset + SENSORS_PAGE_SIZE]
-    text = (
-        "📡 <b>Сенсори</b>\n\n"
+    text = "📡 <b>Сенсори</b>\n\n"
+    if note:
+        text += f"{note}\n\n"
+    text += (
         f"Показано: <b>{offset + 1}..{offset + len(page)}</b> з <b>{total}</b>\n"
         "Натисніть сенсор, щоб відкрити.\n\n"
         "Позначки: 🧊 = заморожено (щоб прошивати без фейкових сповіщень)."
@@ -522,6 +532,18 @@ async def _render_sensors_page(bot: Bot, chat_id: int, *, offset: int, prefer_me
         )
     if nav:
         rows.append(nav)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="🧊 Заморозити всі (6 год)",
+                callback_data=f"admin_sensors_freeze_all|{SENSORS_FREEZE_ALL_DEFAULT_SEC}",
+            ),
+            InlineKeyboardButton(
+                text="✅ Розморозити всі",
+                callback_data="admin_sensors_unfreeze_all",
+            ),
+        ]
+    )
     rows.append([InlineKeyboardButton(text="🔄 Оновити", callback_data=f"admin_sensors_page|{offset}")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")])
 
@@ -533,6 +555,63 @@ async def _render_sensors_page(bot: Bot, chat_id: int, *, offset: int, prefer_me
         reply_markup=kb,
         prefer_message_id=prefer_message_id,
         force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith("admin_sensors_freeze_all|"))
+async def cb_sensors_freeze_all(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    try:
+        seconds = int(callback.data.split("|", 1)[1])
+    except Exception:
+        seconds = SENSORS_FREEZE_ALL_DEFAULT_SEC
+
+    if seconds < 60 or seconds > 7 * 24 * 3600:
+        await callback.answer("❌ Некоректна тривалість", show_alert=True)
+        return
+
+    await callback.answer("⏳ Ставлю в чергу…")
+    job_id = await create_admin_job(
+        "sensors_freeze_all",
+        {"seconds": int(seconds)},
+        created_by=int(callback.from_user.id),
+    )
+    hours = round(seconds / 3600, 2)
+    note = (
+        "✅ Додано в чергу: <b>Заморозити всі сенсори</b>\n"
+        f"Тривалість: <b>{hours} год</b>\n"
+        f"Job: <code>#{job_id}</code>"
+    )
+    await _render_sensors_page(
+        callback.bot,
+        callback.message.chat.id,
+        offset=0,
+        prefer_message_id=callback.message.message_id,
+        note=note,
+    )
+
+
+@router.callback_query(F.data == "admin_sensors_unfreeze_all")
+async def cb_sensors_unfreeze_all(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Ставлю в чергу…")
+    job_id = await create_admin_job(
+        "sensors_unfreeze_all",
+        {},
+        created_by=int(callback.from_user.id),
+    )
+    note = (
+        "✅ Додано в чергу: <b>Розморозити всі сенсори</b>\n"
+        f"Job: <code>#{job_id}</code>"
+    )
+    await _render_sensors_page(
+        callback.bot,
+        callback.message.chat.id,
+        offset=0,
+        prefer_message_id=callback.message.message_id,
+        note=note,
     )
 
 
