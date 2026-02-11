@@ -42,6 +42,8 @@ JOBS_PAGE_SIZE = 10
 SENSORS_PAGE_SIZE = 8
 BIZ_SERVICES_PAGE_SIZE = 10
 BIZ_PLACES_PAGE_SIZE = 8
+BIZ_SUBS_PAGE_SIZE = 8
+BIZ_AUDIT_PAGE_SIZE = 8
 CB_ADMIN_NOOP = "admin_noop"
 
 CB_BIZ_MENU = "admin_business"
@@ -66,6 +68,12 @@ CB_BIZ_TOKG_SVC_PAGE_PREFIX = "abiz_tokg_sp|"
 CB_BIZ_TOKG_SVC_PICK_PREFIX = "abiz_tokg_s|"
 CB_BIZ_TOKG_PLACE_PAGE_PREFIX = "abiz_tokg_pp|"
 CB_BIZ_TOKG_PLACE_ROTATE_PREFIX = "abiz_tokg_r|"
+
+CB_BIZ_SUBS = "abiz_subs"
+CB_BIZ_SUBS_PAGE_PREFIX = "abiz_subs_page|"
+
+CB_BIZ_AUDIT = "abiz_audit"
+CB_BIZ_AUDIT_PAGE_PREFIX = "abiz_audit_page|"
 
 CB_BIZ_PLACES_MENU = "abiz_places"
 CB_BIZ_PLACES_FILTER_PREFIX = "abiz_places_f|"
@@ -774,7 +782,11 @@ def _biz_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🛡 Модерація", callback_data=CB_BIZ_MOD),
                 InlineKeyboardButton(text="🔐 Коди прив'язки", callback_data=CB_BIZ_TOK_MENU),
             ],
-            [InlineKeyboardButton(text="🏢 Заклади", callback_data=CB_BIZ_PLACES_MENU)],
+            [
+                InlineKeyboardButton(text="🏢 Заклади", callback_data=CB_BIZ_PLACES_MENU),
+                InlineKeyboardButton(text="💳 Підписки", callback_data=CB_BIZ_SUBS),
+            ],
+            [InlineKeyboardButton(text="📒 Аудит", callback_data=CB_BIZ_AUDIT)],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")],
         ]
     )
@@ -802,6 +814,292 @@ async def cb_business_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.answer()
     await _render_business_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id)
+
+
+def _subscription_status_title(raw: str | None) -> str:
+    status = (raw or "").strip().lower()
+    if status == "active":
+        return "🟢 active"
+    if status == "past_due":
+        return "🟠 past_due"
+    if status == "canceled":
+        return "🔴 canceled"
+    if status == "inactive":
+        return "⚪ inactive"
+    return f"⚫ {status or 'unknown'}"
+
+
+async def _render_business_subscriptions(
+    bot: Bot,
+    chat_id: int,
+    *,
+    page: int,
+    prefer_message_id: int | None,
+) -> None:
+    admin_id = int(chat_id)
+    offset = max(0, int(page)) * BIZ_SUBS_PAGE_SIZE
+    try:
+        rows, total = await business_service.list_all_subscriptions_admin(
+            admin_id,
+            limit=BIZ_SUBS_PAGE_SIZE,
+            offset=offset,
+        )
+    except BusinessAccessDeniedError as error:
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note=f"❌ {escape(str(error))}")
+        return
+    except Exception:
+        logger.exception("Failed to load business subscriptions")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження підписок.")
+        return
+
+    if total <= 0:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+            ]
+        )
+        await render(
+            bot,
+            chat_id=chat_id,
+            text="💳 <b>Підписки</b>\n\nНаразі немає даних.",
+            reply_markup=kb,
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    total_pages = max(1, (int(total) + BIZ_SUBS_PAGE_SIZE - 1) // BIZ_SUBS_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    # Re-fetch if page was clamped.
+    if safe_page != int(page):
+        rows, _ = await business_service.list_all_subscriptions_admin(
+            admin_id,
+            limit=BIZ_SUBS_PAGE_SIZE,
+            offset=safe_page * BIZ_SUBS_PAGE_SIZE,
+        )
+
+    lines = [
+        "💳 <b>Підписки</b>",
+        "",
+        f"Всього: <b>{int(total)}</b>",
+        "",
+    ]
+    for row in rows:
+        place_id = int(row.get("place_id") or 0)
+        name = escape(str(row.get("place_name") or f"ID {place_id}"))
+        tier = escape(str(row.get("tier") or "free"))
+        status = _subscription_status_title(str(row.get("status") or "inactive"))
+        expires_at = escape(str(row.get("expires_at") or "—"))
+        published = "✅pub" if int(row.get("is_published") or 0) == 1 else "📝draft"
+        verified = "✅verified" if int(row.get("is_verified") or 0) == 1 else "—"
+        lines.append(
+            f"• <code>{place_id}</code> <b>{name}</b>\n"
+            f"  tier=<code>{tier}</code> {status}\n"
+            f"  exp=<code>{expires_at}</code> {published} {verified}"
+        )
+        lines.append("")
+
+    kb_rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_SUBS_PAGE_PREFIX}{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_SUBS_PAGE_PREFIX}{safe_page + 1}",
+                )
+            )
+        kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    kb_rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+    await render(
+        bot,
+        chat_id=chat_id,
+        text="\n".join(lines).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_SUBS)
+async def cb_business_subscriptions(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_business_subscriptions(
+        callback.bot,
+        callback.message.chat.id,
+        page=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_SUBS_PAGE_PREFIX))
+async def cb_business_subscriptions_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_business_subscriptions(
+        callback.bot,
+        callback.message.chat.id,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+def _audit_action_short(action: str | None) -> str:
+    raw = (action or "").strip()
+    return raw if raw else "unknown"
+
+
+async def _render_business_audit(
+    bot: Bot,
+    chat_id: int,
+    *,
+    page: int,
+    prefer_message_id: int | None,
+) -> None:
+    admin_id = int(chat_id)
+    offset = max(0, int(page)) * BIZ_AUDIT_PAGE_SIZE
+    try:
+        rows, total = await business_service.list_audit_logs_admin(
+            admin_id,
+            limit=BIZ_AUDIT_PAGE_SIZE,
+            offset=offset,
+            place_id=None,
+        )
+    except BusinessAccessDeniedError as error:
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note=f"❌ {escape(str(error))}")
+        return
+    except Exception:
+        logger.exception("Failed to load business audit logs")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження аудиту.")
+        return
+
+    if total <= 0:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+            ]
+        )
+        await render(
+            bot,
+            chat_id=chat_id,
+            text="📒 <b>Аудит</b>\n\nЛог порожній.",
+            reply_markup=kb,
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    total_pages = max(1, (int(total) + BIZ_AUDIT_PAGE_SIZE - 1) // BIZ_AUDIT_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    if safe_page != int(page):
+        rows, _ = await business_service.list_audit_logs_admin(
+            admin_id,
+            limit=BIZ_AUDIT_PAGE_SIZE,
+            offset=safe_page * BIZ_AUDIT_PAGE_SIZE,
+            place_id=None,
+        )
+
+    lines = [
+        "📒 <b>Аудит</b>",
+        "",
+        f"Записів: <b>{int(total)}</b>",
+        "",
+    ]
+    for row in rows:
+        aid = int(row.get("id") or 0)
+        place_id = int(row.get("place_id") or 0)
+        place_name = escape(str(row.get("place_name") or f"ID {place_id}"))
+        actor = row.get("actor_tg_user_id")
+        actor_txt = f"<code>{int(actor)}</code>" if actor is not None else "system"
+        action = escape(_audit_action_short(str(row.get("action") or "")))
+        created_at = escape(str(row.get("created_at") or "—"))
+        payload = str(row.get("payload_json") or "")
+        payload_short = escape(payload[:160] + ("…" if len(payload) > 160 else ""))
+        lines.append(
+            f"• <code>#{aid}</code> {action}\n"
+            f"  place=<code>{place_id}</code> <b>{place_name}</b>\n"
+            f"  by={actor_txt} at <code>{created_at}</code>\n"
+            f"  payload: <code>{payload_short or '—'}</code>"
+        )
+        lines.append("")
+
+    kb_rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_AUDIT_PAGE_PREFIX}{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_AUDIT_PAGE_PREFIX}{safe_page + 1}",
+                )
+            )
+        kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    kb_rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+    await render(
+        bot,
+        chat_id=chat_id,
+        text="\n".join(lines).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_AUDIT)
+async def cb_business_audit(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_business_audit(
+        callback.bot,
+        callback.message.chat.id,
+        page=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_AUDIT_PAGE_PREFIX))
+async def cb_business_audit_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_business_audit(
+        callback.bot,
+        callback.message.chat.id,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
 
 
 def _biz_moderation_keyboard(owner_id: int, *, index: int, total: int) -> InlineKeyboardMarkup:

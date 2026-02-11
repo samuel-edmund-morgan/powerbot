@@ -408,6 +408,31 @@ class BusinessCabinetService:
         self._require_admin(admin_tg_user_id)
         return await self.repository.list_pending_owner_requests()
 
+    async def list_all_subscriptions_admin(
+        self,
+        admin_tg_user_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        self._require_admin(admin_tg_user_id)
+        rows = await self.repository.list_all_business_subscriptions(limit=limit, offset=offset)
+        total = await self.repository.count_all_business_subscriptions()
+        return rows, total
+
+    async def list_audit_logs_admin(
+        self,
+        admin_tg_user_id: int,
+        *,
+        limit: int,
+        offset: int,
+        place_id: int | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        self._require_admin(admin_tg_user_id)
+        rows = await self.repository.list_business_audit_logs(limit=limit, offset=offset, place_id=place_id)
+        total = await self.repository.count_business_audit_logs(place_id=place_id)
+        return rows, total
+
     async def approve_owner_request(self, admin_tg_user_id: int, owner_id: int) -> dict[str, Any]:
         self._require_admin(admin_tg_user_id)
         owner = await self.repository.get_owner_request(owner_id)
