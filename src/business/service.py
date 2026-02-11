@@ -199,6 +199,131 @@ class BusinessCabinetService:
             raise ValidationError("Для цього тарифу ще не налаштована ціна.")
         return normalized_tier, amount_stars
 
+    async def _payment_intent_exists(
+        self,
+        *,
+        provider: str,
+        external_payment_id: str,
+        place_id: int,
+    ) -> bool:
+        if not external_payment_id:
+            return False
+        existing = await self.repository.get_payment_events_by_external_id(
+            provider=str(provider),
+            external_payment_id=str(external_payment_id),
+        )
+        return any(
+            int(row.get("place_id") or 0) == int(place_id) and str(row.get("event_type") or "") == "invoice_created"
+            for row in existing
+        )
+
+    async def apply_payment_event(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        tier: str,
+        provider: str,
+        intent_external_payment_id: str,
+        payment_external_id: str | None,
+        event_type: str,
+        amount_stars: int,
+        source: str = "card",
+        currency: str = "XTR",
+        status: str = "processed",
+        expires_at: str | None = None,
+        raw_payload_json: str | None = None,
+        audit_extra: dict[str, Any] | None = None,
+        write_non_success_audit: bool = True,
+    ) -> dict[str, Any]:
+        """Apply canonical payment event and update business state idempotently."""
+        normalized_event = str(event_type or "").strip().lower()
+        if normalized_event not in {
+            "invoice_created",
+            "pre_checkout_ok",
+            "payment_succeeded",
+            "payment_failed",
+            "payment_canceled",
+            "refund",
+        }:
+            raise ValidationError("Непідтримуваний тип платіжної події.")
+
+        payment_event_external_id = str(payment_external_id or "").strip() or str(intent_external_payment_id or "").strip()
+        if not payment_event_external_id:
+            raise ValidationError("Некоректний ідентифікатор платежу.")
+
+        inserted = await self.repository.create_payment_event(
+            place_id=int(place_id),
+            provider=str(provider),
+            external_payment_id=payment_event_external_id,
+            event_type=normalized_event,
+            amount_stars=int(amount_stars),
+            currency=str(currency or "XTR"),
+            status=str(status or "processed"),
+            raw_payload_json=raw_payload_json,
+            processed_at=_utc_now().isoformat(),
+        )
+        if not inserted:
+            return {
+                "applied": False,
+                "duplicate": True,
+                "event_type": normalized_event,
+                "place_id": int(place_id),
+                "tier": str(tier).strip().lower(),
+                "source": str(source or "card"),
+                "payment_external_id": payment_event_external_id,
+                "external_payment_id": str(intent_external_payment_id or ""),
+                "subscription": None,
+            }
+
+        subscription: dict[str, Any] | None = None
+        if normalized_event == "payment_succeeded":
+            success_audit_extra: dict[str, Any] = {
+                "provider": str(provider),
+                "intent_external_payment_id": str(intent_external_payment_id or ""),
+                "payment_external_id": payment_event_external_id,
+                "amount_stars": int(amount_stars),
+                "source": str(source or "card"),
+            }
+            if audit_extra:
+                success_audit_extra.update(audit_extra)
+            subscription = await self._activate_paid_subscription(
+                tg_user_id=int(tg_user_id),
+                place_id=int(place_id),
+                tier=str(tier).strip().lower(),
+                expires_at=expires_at,
+                audit_extra=success_audit_extra,
+            )
+        elif write_non_success_audit and normalized_event in {"payment_failed", "payment_canceled", "refund"}:
+            non_success_payload: dict[str, Any] = {
+                "provider": str(provider),
+                "intent_external_payment_id": str(intent_external_payment_id or ""),
+                "payment_external_id": payment_event_external_id,
+                "tier": str(tier).strip().lower(),
+                "amount_stars": int(amount_stars),
+                "source": str(source or "card"),
+            }
+            if audit_extra:
+                non_success_payload.update(audit_extra)
+            await self.repository.write_audit_log(
+                place_id=int(place_id),
+                actor_tg_user_id=int(tg_user_id),
+                action=normalized_event,
+                payload_json=_to_json(non_success_payload),
+            )
+
+        return {
+            "applied": True,
+            "duplicate": False,
+            "event_type": normalized_event,
+            "place_id": int(place_id),
+            "tier": str(tier).strip().lower(),
+            "source": str(source or "card"),
+            "payment_external_id": payment_event_external_id,
+            "external_payment_id": str(intent_external_payment_id or ""),
+            "subscription": subscription,
+        }
+
     async def create_payment_intent(
         self,
         *,
@@ -1065,15 +1190,11 @@ class BusinessCabinetService:
         if not external_payment_id:
             raise ValidationError("Сесія оплати не знайдена. Спробуй ще раз.")
 
-        existing = await self.repository.get_payment_events_by_external_id(
+        if not await self._payment_intent_exists(
             provider=PAYMENT_PROVIDER_MOCK,
             external_payment_id=external_payment_id,
-        )
-        has_invoice = any(
-            int(row.get("place_id") or 0) == int(place_id) and str(row.get("event_type") or "") == "invoice_created"
-            for row in existing
-        )
-        if not has_invoice:
+            place_id=int(place_id),
+        ):
             raise ValidationError("Сесія оплати застаріла або не знайдена. Запусти оплату ще раз.")
 
         normalized_result = str(result).strip().lower()
@@ -1091,12 +1212,16 @@ class BusinessCabinetService:
             "fail": "failed",
         }
         event_type = event_type_map[normalized_result]
-        inserted = await self.repository.create_payment_event(
+        outcome = await self.apply_payment_event(
+            tg_user_id=int(tg_user_id),
             place_id=int(place_id),
+            tier=normalized_tier,
             provider=PAYMENT_PROVIDER_MOCK,
-            external_payment_id=external_payment_id,
+            intent_external_payment_id=str(external_payment_id),
+            payment_external_id=str(external_payment_id),
             event_type=event_type,
-            amount_stars=amount_stars,
+            amount_stars=int(amount_stars),
+            source="card",
             currency="XTR",
             status=status_map[normalized_result],
             raw_payload_json=_to_json(
@@ -1108,48 +1233,10 @@ class BusinessCabinetService:
                     "tier": normalized_tier,
                 }
             ),
-            processed_at=_utc_now().isoformat(),
+            audit_extra={"result": normalized_result},
         )
-        if not inserted:
-            return {
-                "applied": False,
-                "duplicate": True,
-                "result": normalized_result,
-                "subscription": None,
-            }
-
-        subscription: dict[str, Any] | None = None
-        if normalized_result == "success":
-            subscription = await self._activate_paid_subscription(
-                tg_user_id=tg_user_id,
-                place_id=place_id,
-                tier=normalized_tier,
-                audit_extra={
-                    "provider": PAYMENT_PROVIDER_MOCK,
-                    "external_payment_id": external_payment_id,
-                    "amount_stars": amount_stars,
-                },
-            )
-        else:
-            await self.repository.write_audit_log(
-                place_id=int(place_id),
-                actor_tg_user_id=int(tg_user_id),
-                action=f"payment_{normalized_result}",
-                payload_json=_to_json(
-                    {
-                        "provider": PAYMENT_PROVIDER_MOCK,
-                        "external_payment_id": external_payment_id,
-                        "tier": normalized_tier,
-                        "amount_stars": amount_stars,
-                    }
-                ),
-            )
-        return {
-            "applied": True,
-            "duplicate": False,
-            "result": normalized_result,
-            "subscription": subscription,
-        }
+        outcome["result"] = normalized_result
+        return outcome
 
     async def validate_telegram_stars_pre_checkout(
         self,
@@ -1180,24 +1267,23 @@ class BusinessCabinetService:
         if int(total_amount) != int(expected_amount):
             raise ValidationError("Сума рахунку не збігається з тарифом.")
 
-        existing = await self.repository.get_payment_events_by_external_id(
+        if not await self._payment_intent_exists(
             provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
             external_payment_id=str(payload.external_payment_id),
-        )
-        has_invoice = any(
-            int(row.get("place_id") or 0) == int(payload.place_id)
-            and str(row.get("event_type") or "") == "invoice_created"
-            for row in existing
-        )
-        if not has_invoice:
+            place_id=int(payload.place_id),
+        ):
             raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
 
-        await self.repository.create_payment_event(
+        await self.apply_payment_event(
+            tg_user_id=int(tg_user_id),
             place_id=int(payload.place_id),
+            tier=normalized_tier,
             provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
-            external_payment_id=str(payload.external_payment_id),
+            intent_external_payment_id=str(payload.external_payment_id),
+            payment_external_id=str(payload.external_payment_id),
             event_type="pre_checkout_ok",
             amount_stars=int(expected_amount),
+            source=str(payload.source or "card"),
             currency="XTR",
             status="processed",
             raw_payload_json=_to_json(
@@ -1208,7 +1294,7 @@ class BusinessCabinetService:
                     "invoice_payload": str(invoice_payload),
                 }
             ),
-            processed_at=_utc_now().isoformat(),
+            write_non_success_audit=False,
         )
         return {
             "place_id": int(payload.place_id),
@@ -1252,28 +1338,28 @@ class BusinessCabinetService:
         if int(total_amount) != int(expected_amount):
             raise ValidationError("Сума платежу не збігається з тарифом.")
 
-        existing = await self.repository.get_payment_events_by_external_id(
+        if not await self._payment_intent_exists(
             provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
             external_payment_id=str(payload.external_payment_id),
-        )
-        has_invoice = any(
-            int(row.get("place_id") or 0) == int(payload.place_id)
-            and str(row.get("event_type") or "") == "invoice_created"
-            for row in existing
-        )
-        if not has_invoice:
+            place_id=int(payload.place_id),
+        ):
             raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
 
         payment_event_external_id = str(telegram_payment_charge_id or "").strip() or str(payload.external_payment_id)
         expires_at_iso = _iso_from_unix_utc(subscription_expiration_date)
-        inserted = await self.repository.create_payment_event(
+        return await self.apply_payment_event(
+            tg_user_id=int(tg_user_id),
             place_id=int(payload.place_id),
+            tier=normalized_tier,
             provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
-            external_payment_id=payment_event_external_id,
+            intent_external_payment_id=str(payload.external_payment_id),
+            payment_external_id=payment_event_external_id,
             event_type="payment_succeeded",
             amount_stars=int(expected_amount),
+            source=str(payload.source or "card"),
             currency="XTR",
             status="processed",
+            expires_at=expires_at_iso,
             raw_payload_json=raw_payload_json
             or _to_json(
                 {
@@ -1288,42 +1374,10 @@ class BusinessCabinetService:
                     "is_first_recurring": bool(is_first_recurring) if is_first_recurring is not None else None,
                 }
             ),
-            processed_at=_utc_now().isoformat(),
-        )
-        if not inserted:
-            return {
-                "applied": False,
-                "duplicate": True,
-                "place_id": int(payload.place_id),
-                "tier": normalized_tier,
-                "source": str(payload.source or "card"),
-                "payment_external_id": payment_event_external_id,
-                "external_payment_id": str(payload.external_payment_id),
-                "subscription": None,
-            }
-
-        subscription = await self._activate_paid_subscription(
-            tg_user_id=int(tg_user_id),
-            place_id=int(payload.place_id),
-            tier=normalized_tier,
-            expires_at=expires_at_iso,
             audit_extra={
-                "provider": PAYMENT_PROVIDER_TELEGRAM_STARS,
-                "intent_external_payment_id": str(payload.external_payment_id),
-                "payment_external_id": payment_event_external_id,
-                "amount_stars": int(expected_amount),
                 "is_recurring": bool(is_recurring) if is_recurring is not None else None,
                 "is_first_recurring": bool(is_first_recurring) if is_first_recurring is not None else None,
                 "subscription_expiration_date": subscription_expiration_date,
+                "provider_payment_charge_id": str(provider_payment_charge_id or ""),
             },
         )
-        return {
-            "applied": True,
-            "duplicate": False,
-            "place_id": int(payload.place_id),
-            "tier": normalized_tier,
-            "source": str(payload.source or "card"),
-            "payment_external_id": payment_event_external_id,
-            "external_payment_id": str(payload.external_payment_id),
-            "subscription": subscription,
-        }
