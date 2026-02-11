@@ -71,6 +71,7 @@ CB_BIZ_TOKG_PLACE_ROTATE_PREFIX = "abiz_tokg_r|"
 
 CB_BIZ_SUBS = "abiz_subs"
 CB_BIZ_SUBS_PAGE_PREFIX = "abiz_subs_page|"
+CB_BIZ_SUBS_EXPORT = "abiz_subs_export"
 
 CB_BIZ_AUDIT = "abiz_audit"
 CB_BIZ_AUDIT_PAGE_PREFIX = "abiz_audit_page|"
@@ -826,14 +827,35 @@ async def cb_business_menu(callback: CallbackQuery, state: FSMContext) -> None:
 def _subscription_status_title(raw: str | None) -> str:
     status = (raw or "").strip().lower()
     if status == "active":
-        return "🟢 active"
+        return "🟢 Активна"
     if status == "past_due":
-        return "🟠 past_due"
+        return "🟠 Прострочена"
     if status == "canceled":
-        return "🔴 canceled"
+        return "🔴 Скасована"
     if status == "inactive":
-        return "⚪ inactive"
-    return f"⚫ {status or 'unknown'}"
+        return "⚪ Неактивна"
+    return f"⚫ {status or 'невідомо'}"
+
+
+def _subscription_tier_title(raw: str | None) -> str:
+    tier = (raw or "").strip().lower()
+    if tier == "light":
+        return "Light"
+    if tier == "pro":
+        return "Pro"
+    if tier == "partner":
+        return "Partner"
+    if tier == "free":
+        return "Free"
+    return tier or "Free"
+
+
+def _subscription_visibility_title(is_published: int | bool | None) -> str:
+    return "✅ Опубліковано" if int(is_published or 0) == 1 else "📝 Чернетка"
+
+
+def _subscription_verified_title(is_verified: int | bool | None) -> str:
+    return "✅ Verified" if int(is_verified or 0) == 1 else "—"
 
 
 async def _render_business_subscriptions(
@@ -886,24 +908,20 @@ async def _render_business_subscriptions(
             offset=safe_page * BIZ_SUBS_PAGE_SIZE,
         )
 
-    lines = [
-        "💳 <b>Підписки</b>",
-        "",
-        f"Всього: <b>{int(total)}</b>",
-        "",
-    ]
+    lines = ["💳 <b>Підписки бізнесів</b>", "", f"Записів: <b>{int(total)}</b>", ""]
     for row in rows:
         place_id = int(row.get("place_id") or 0)
-        name = escape(str(row.get("place_name") or f"ID {place_id}"))
-        tier = escape(str(row.get("tier") or "free"))
+        place_name = escape(str(row.get("place_name") or f"ID {place_id}"))
+        tier = escape(_subscription_tier_title(str(row.get("tier") or "free")))
         status = _subscription_status_title(str(row.get("status") or "inactive"))
         expires_at = escape(str(row.get("expires_at") or "—"))
-        published = "✅pub" if int(row.get("is_published") or 0) == 1 else "📝draft"
-        verified = "✅verified" if int(row.get("is_verified") or 0) == 1 else "—"
+        visibility = _subscription_visibility_title(row.get("is_published"))
+        verified = _subscription_verified_title(row.get("is_verified"))
         lines.append(
-            f"• <code>{place_id}</code> <b>{name}</b>\n"
-            f"  tier=<code>{tier}</code> {status}\n"
-            f"  exp=<code>{expires_at}</code> {published} {verified}"
+            f"• <b>{place_name}</b> <code>#{place_id}</code>\n"
+            f"  Тариф: <code>{tier}</code> | Стан: {status}\n"
+            f"  Діє до: <code>{expires_at}</code>\n"
+            f"  {visibility} | {verified}"
         )
         lines.append("")
 
@@ -926,6 +944,7 @@ async def _render_business_subscriptions(
                 )
             )
         kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text="📄 Експорт (файл)", callback_data=CB_BIZ_SUBS_EXPORT)])
     kb_rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
     kb_rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
     await render(
@@ -936,6 +955,69 @@ async def _render_business_subscriptions(
         prefer_message_id=prefer_message_id,
         force_new_message=True,
     )
+
+
+@router.callback_query(F.data == CB_BIZ_SUBS_EXPORT)
+async def cb_business_subscriptions_export(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Формую файл…")
+    admin_id = int(callback.from_user.id)
+
+    try:
+        all_rows: list[dict] = []
+        page_size = 50
+        offset = 0
+        while True:
+            rows, total = await business_service.list_all_subscriptions_admin(
+                admin_id,
+                limit=page_size,
+                offset=offset,
+            )
+            all_rows.extend(rows)
+            offset += len(rows)
+            if not rows or offset >= int(total):
+                break
+    except BusinessAccessDeniedError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to export business subscriptions")
+        await callback.answer("❌ Не вдалося сформувати експорт", show_alert=True)
+        return
+
+    lines: list[str] = [
+        "place_id\tplace_name\ttier\tstatus\texpires_at\tis_published\tis_verified\tbusiness_enabled\tverified_tier\tverified_until\tupdated_at"
+    ]
+    for row in all_rows:
+        place_id = int(row.get("place_id") or 0)
+        place_name = str(row.get("place_name") or "").replace("\t", " ").replace("\n", " ").strip()
+        tier = str(row.get("tier") or "free")
+        status = str(row.get("status") or "inactive")
+        expires_at = str(row.get("expires_at") or "")
+        is_published = int(row.get("is_published") or 0)
+        is_verified = int(row.get("is_verified") or 0)
+        business_enabled = int(row.get("business_enabled") or 0)
+        verified_tier = str(row.get("verified_tier") or "")
+        verified_until = str(row.get("verified_until") or "")
+        updated_at = str(row.get("updated_at") or "")
+        lines.append(
+            f"{place_id}\t{place_name}\t{tier}\t{status}\t{expires_at}\t{is_published}\t"
+            f"{is_verified}\t{business_enabled}\t{verified_tier}\t{verified_until}\t{updated_at}"
+        )
+
+    payload = "\n".join(lines).encode("utf-8")
+    file = BufferedInputFile(payload, filename="business_subscriptions.tsv")
+    caption = f"💳 Експорт підписок: {len(all_rows)} записів."
+    target_message = callback.message
+    try:
+        if target_message:
+            await target_message.answer_document(document=file, caption=caption)
+        else:
+            await callback.bot.send_document(chat_id=int(callback.from_user.id), document=file, caption=caption)
+    except Exception:
+        logger.exception("Failed to send business subscriptions export file")
+        await callback.answer("❌ Не вдалося надіслати файл", show_alert=True)
 
 
 @router.callback_query(F.data == CB_BIZ_SUBS)
