@@ -27,7 +27,14 @@ from business.service import (
     PAYMENT_PROVIDER_TELEGRAM_STARS,
     ValidationError,
 )
-from business.ui import bind_ui_message_id, render as ui_render, try_delete_user_message
+from business.ui import (
+    bind_invoice_message_id,
+    bind_ui_message_id,
+    render as ui_render,
+    try_delete_invoice_message_by_external,
+    try_delete_last_invoice_message,
+    try_delete_user_message,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -98,6 +105,7 @@ CB_TOKG_PLACE_ROTATE_PREFIX = "btokg_r:"
 CB_EDIT_BUILDING_PICK_PREFIX = "bebld:"
 CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
 CB_PAYMENT_RESULT_PREFIX = "bpayr:"
+CB_PAYMENT_CLEAN_PREFIX = "bpayc:"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -583,6 +591,31 @@ def build_plan_keyboard(
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data=back_cb)])
     buttons.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_plan_keyboard_with_invoice_cleanup(
+    place_id: int,
+    current_tier: str,
+    *,
+    external_payment_id: str,
+    back_callback_data: str | None = None,
+    source: str | None = None,
+) -> InlineKeyboardMarkup:
+    base = build_plan_keyboard(
+        place_id=place_id,
+        current_tier=current_tier,
+        back_callback_data=back_callback_data,
+        source=source,
+    )
+    rows = [list(row) for row in base.inline_keyboard]
+    cleanup_cb = (
+        f"{CB_PAYMENT_CLEAN_PREFIX}{int(place_id)}:"
+        f"{str(source or 'card')}:{str(external_payment_id)}"
+    )
+    # Insert cleanup action before back/menu rows.
+    insert_at = max(0, len(rows) - 2)
+    rows.insert(insert_at, [InlineKeyboardButton(text="🧹 Прибрати рахунок", callback_data=cleanup_cb)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_mock_payment_keyboard(
@@ -2248,6 +2281,10 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
         if not invoice_payload:
             await callback.answer("Не вдалося підготувати рахунок. Спробуй ще раз.", show_alert=True)
             return
+        await try_delete_last_invoice_message(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+        )
         invoice_title = f"Тариф {PLAN_TITLES.get(normalized_tier, normalized_tier)}"
         invoice_description = (
             f"Оплата тарифу {PLAN_TITLES.get(normalized_tier, normalized_tier)} "
@@ -2255,7 +2292,7 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
         )[:255]
         invoice_label = f"{PLAN_TITLES.get(normalized_tier, normalized_tier)} ({intent['amount_stars']}⭐)"
         try:
-            await callback.message.bot.send_invoice(
+            invoice_message = await callback.message.bot.send_invoice(
                 chat_id=callback.message.chat.id,
                 title=invoice_title[:32],
                 description=invoice_description,
@@ -2275,6 +2312,11 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
             await callback.answer("Не вдалося відправити рахунок. Спробуй ще раз.", show_alert=True)
             return
 
+        await bind_invoice_message_id(
+            callback.message.chat.id,
+            int(invoice_message.message_id),
+            external_id=str(intent["external_payment_id"]),
+        )
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         await ui_render(
             callback.message.bot,
@@ -2287,9 +2329,10 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
                 "Оплати рахунок у повідомленні від Telegram. "
                 "Після успішної оплати тариф активується автоматично."
             ),
-            reply_markup=build_plan_keyboard(
+            reply_markup=build_plan_keyboard_with_invoice_cleanup(
                 place_id,
                 str(item.get("tier") if item else "free"),
+                external_payment_id=str(intent["external_payment_id"]),
                 back_callback_data=back_cb,
                 source=source,
             ),
@@ -2386,6 +2429,56 @@ async def cb_mock_payment_result(callback: CallbackQuery) -> None:
     await callback.answer("Готово")
 
 
+@router.callback_query(F.data.startswith(CB_PAYMENT_CLEAN_PREFIX))
+async def cb_cleanup_invoice(callback: CallbackQuery) -> None:
+    payload = callback.data.removeprefix(CB_PAYMENT_CLEAN_PREFIX).split(":", 2)
+    if len(payload) != 3:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(payload[0])
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+    source = payload[1] or "card"
+    external_payment_id = str(payload[2] or "").strip()
+    if not external_payment_id:
+        await callback.answer("Невірний рахунок", show_alert=True)
+        return
+    if not callback.message:
+        await callback.answer("Готово")
+        return
+
+    deleted = await try_delete_invoice_message_by_external(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        external_id=external_payment_id,
+    )
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    if not item or item["ownership_status"] != "approved":
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        return
+    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+    note = "🧹 Рахунок прибрано з чату." if deleted else "ℹ️ Активний рахунок уже відсутній."
+
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=f"{note}\n\nОбери тариф для <b>{place_name}</b>:",
+        reply_markup=build_plan_keyboard(
+            place_id,
+            str(item.get("tier") or "free"),
+            back_callback_data=back_cb,
+            source=source,
+        ),
+    )
+    await callback.answer("Готово")
+
+
 @router.pre_checkout_query()
 async def on_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> None:
     tg_user_id = pre_checkout_query.from_user.id if pre_checkout_query.from_user else 0
@@ -2463,6 +2556,13 @@ async def on_successful_payment(message: Message) -> None:
 
     place_id = int(outcome.get("place_id") or 0)
     source = str(outcome.get("source") or "card")
+    external_payment_id = str(outcome.get("external_payment_id") or "").strip()
+    if external_payment_id:
+        await try_delete_invoice_message_by_external(
+            message.bot,
+            chat_id=message.chat.id,
+            external_id=external_payment_id,
+        )
     rows = await cabinet_service.list_user_businesses(int(tg_user_id))
     item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
     place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))

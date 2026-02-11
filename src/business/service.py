@@ -1012,6 +1012,7 @@ class BusinessCabinetService:
                 "place_id": int(payload.place_id),
                 "tier": normalized_tier,
                 "source": str(payload.source or "card"),
+                "external_payment_id": str(payload.external_payment_id),
                 "subscription": None,
             }
 
@@ -1026,5 +1027,6 @@ class BusinessCabinetService:
             "place_id": int(payload.place_id),
             "tier": normalized_tier,
             "source": str(payload.source or "card"),
+            "external_payment_id": str(payload.external_payment_id),
             "subscription": subscription,
         }
