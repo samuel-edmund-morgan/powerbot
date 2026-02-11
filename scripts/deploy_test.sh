@@ -204,6 +204,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_v
 echo "Running admin owner-request alert deep-link smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_owner_alert_deeplink.py"
 
+# Automated smoke: static write-retry policy for business repository.
+echo "Running business write-retry policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
