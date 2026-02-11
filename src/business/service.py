@@ -579,6 +579,23 @@ class BusinessCabinetService:
                         created_by=admin_tg_user_id,
                         expires_at=expires_at,
                     )
+                    await self.repository.write_audit_logs_bulk(
+                        [
+                            (
+                                int(place_id),
+                                int(admin_tg_user_id),
+                                "claim_token_rotated_admin_ui_bulk",
+                                _to_json(
+                                    {
+                                        "token": token,
+                                        "expires_at": expires_at,
+                                        "batch": "all_places",
+                                    }
+                                ),
+                            )
+                            for place_id, token in zip(chunk_ids, chunk_tokens)
+                        ]
+                    )
                     rotated += len(chunk_ids)
                     break
                 except sqlite3.IntegrityError:
