@@ -75,6 +75,7 @@ class Config:
     business_mode: bool
     business_bot_api_key: str
     business_bot_single_message_mode: bool
+    business_payment_provider: str
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -225,6 +226,7 @@ CFG = Config(
     business_mode=parse_bool(os.getenv("BUSINESS_MODE", "0")),
     business_bot_api_key=os.getenv("BUSINESS_BOT_API_KEY", "").strip().strip('"').strip("'"),
     business_bot_single_message_mode=parse_bool(os.getenv("BUSINESS_BOT_SINGLE_MESSAGE_MODE", "1")),
+    business_payment_provider=os.getenv("BUSINESS_PAYMENT_PROVIDER", "telegram_stars").strip().strip('"').strip("'").lower(),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу

@@ -861,6 +861,64 @@ class BusinessRepository:
                 (place_id, actor_tg_user_id, action, payload_json, created_at),
             )
 
+    async def create_payment_event(
+        self,
+        *,
+        place_id: int,
+        provider: str,
+        external_payment_id: str | None,
+        event_type: str,
+        amount_stars: int | None,
+        currency: str = "XTR",
+        status: str = "new",
+        raw_payload_json: str | None = None,
+        processed_at: str | None = None,
+    ) -> bool:
+        """Insert payment event idempotently.
+
+        Returns True when a new row was inserted, False when ignored by unique index.
+        """
+        created_at = utc_now_iso()
+        async with open_business_db() as db:
+            cursor = await execute_write_with_retry(
+                db,
+                """INSERT OR IGNORE INTO business_payment_events(
+                       place_id, provider, external_payment_id, event_type,
+                       amount_stars, currency, status, raw_payload_json, created_at, processed_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    int(place_id),
+                    str(provider),
+                    str(external_payment_id) if external_payment_id else None,
+                    str(event_type),
+                    int(amount_stars) if amount_stars is not None else None,
+                    str(currency or "XTR"),
+                    str(status or "new"),
+                    raw_payload_json,
+                    created_at,
+                    processed_at,
+                ),
+            )
+            return int(cursor.rowcount or 0) > 0
+
+    async def get_payment_events_by_external_id(
+        self,
+        *,
+        provider: str,
+        external_payment_id: str,
+    ) -> list[dict[str, Any]]:
+        async with open_business_db() as db:
+            async with db.execute(
+                """SELECT id, place_id, provider, external_payment_id, event_type,
+                          amount_stars, currency, status, raw_payload_json, created_at, processed_at
+                     FROM business_payment_events
+                    WHERE provider = ? AND external_payment_id = ?
+                    ORDER BY id ASC""",
+                (str(provider), str(external_payment_id)),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def count_all_business_subscriptions(self) -> int:
         async with open_business_db() as db:
             async with db.execute("SELECT COUNT(*) FROM business_subscriptions") as cur:

@@ -123,6 +123,13 @@ else
   echo "BUSINESS_MODE=1" >> "${TEST_DIR}/.env"
 fi
 
+# У test завжди працюємо через mock-оплати (без реальних списань Stars).
+if grep -q "^BUSINESS_PAYMENT_PROVIDER=" "${TEST_DIR}/.env"; then
+  sed -i -E 's/^BUSINESS_PAYMENT_PROVIDER=.*/BUSINESS_PAYMENT_PROVIDER=mock/' "${TEST_DIR}/.env"
+else
+  echo "BUSINESS_PAYMENT_PROVIDER=mock" >> "${TEST_DIR}/.env"
+fi
+
 cd "${TEST_DIR}"
 docker compose down
 docker compose pull
