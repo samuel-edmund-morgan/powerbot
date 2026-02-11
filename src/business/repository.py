@@ -190,6 +190,63 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def search_places_filtered(
+        self,
+        query: str,
+        *,
+        is_published: int | None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search places for admin UI by id or name/address within optional publish filter."""
+        q = str(query or "").strip()
+        if not q:
+            return []
+
+        safe_limit = max(1, min(int(limit), 50))
+        esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{esc}%"
+
+        where_parts: list[str] = []
+        params: list[Any] = []
+
+        if is_published is not None:
+            where_parts.append("p.is_published = ?")
+            params.append(1 if int(is_published) else 0)
+
+        order_prefix = ""
+        if q.isdigit():
+            where_parts.append(
+                "(p.id = ? OR p.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR p.address LIKE ? ESCAPE '\\' COLLATE NOCASE)"
+            )
+            pid = int(q)
+            params.extend([pid, like, like])
+            order_prefix = "ORDER BY (p.id = ?) DESC, p.name COLLATE NOCASE, p.id DESC "
+            order_params: list[Any] = [pid]
+        else:
+            where_parts.append("(p.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR p.address LIKE ? ESCAPE '\\' COLLATE NOCASE)")
+            params.extend([like, like])
+            order_params = []
+
+        where_sql = " AND ".join(where_parts) if where_parts else "1=1"
+        sql = (
+            "SELECT p.id, p.service_id, p.name, p.address, p.is_published, s.name AS service_name "
+            "  FROM places p "
+            "  LEFT JOIN general_services s ON s.id = p.service_id "
+            f" WHERE {where_sql} "
+        )
+        if order_prefix:
+            sql += order_prefix
+            params.extend(order_params)
+        else:
+            sql += "ORDER BY p.name COLLATE NOCASE, p.id DESC "
+        sql += "LIMIT ?"
+        params.append(safe_limit)
+
+        async with open_business_db() as db:
+            async with db.execute(sql, tuple(params)) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def list_place_ids_missing_active_claim_token(self, *, now_iso: str) -> list[int]:
         """Return place ids that have no active (non-expired) claim token."""
         async with open_business_db() as db:
