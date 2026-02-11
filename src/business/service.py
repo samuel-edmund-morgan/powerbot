@@ -66,6 +66,16 @@ def _to_json(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
+def _iso_from_unix_utc(timestamp: int | None) -> str | None:
+    try:
+        value = int(timestamp) if timestamp is not None else 0
+    except Exception:
+        return None
+    if value <= 0:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+
+
 class BusinessService(Protocol):
     """Service contract used by main bot adapters."""
 
@@ -698,6 +708,68 @@ class BusinessCabinetService:
         )
         return updated_place
 
+    async def _activate_paid_subscription(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        tier: str,
+        expires_at: str | None = None,
+        audit_extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Activate paid tier and sync verified flags."""
+        normalized_tier = str(tier).strip().lower()
+        if normalized_tier not in PAID_TIERS:
+            raise ValidationError("Для цього тарифу потрібен платний план.")
+        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_manage:
+            raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
+
+        now = _utc_now()
+        starts_at = now.isoformat()
+        effective_expires = str(expires_at or "").strip()
+        if not effective_expires:
+            effective_expires = (now + timedelta(days=DEFAULT_SUBSCRIPTION_DAYS)).isoformat()
+        else:
+            try:
+                parsed_expires = datetime.fromisoformat(effective_expires)
+                if parsed_expires.tzinfo is None:
+                    parsed_expires = parsed_expires.replace(tzinfo=timezone.utc)
+                if parsed_expires <= now:
+                    effective_expires = (now + timedelta(days=DEFAULT_SUBSCRIPTION_DAYS)).isoformat()
+            except Exception:
+                effective_expires = (now + timedelta(days=DEFAULT_SUBSCRIPTION_DAYS)).isoformat()
+
+        subscription = await self.repository.update_subscription(
+            place_id=place_id,
+            tier=normalized_tier,
+            status="active",
+            starts_at=starts_at,
+            expires_at=effective_expires,
+        )
+        await self.repository.update_place_business_flags(
+            place_id,
+            business_enabled=1,
+            is_verified=1,
+            verified_tier=normalized_tier,
+            verified_until=effective_expires,
+        )
+        payload: dict[str, Any] = {
+            "tier": normalized_tier,
+            "status": "active",
+            "starts_at": starts_at,
+            "expires_at": effective_expires,
+        }
+        if audit_extra:
+            payload.update(audit_extra)
+        await self.repository.write_audit_log(
+            place_id=place_id,
+            actor_tg_user_id=tg_user_id,
+            action="subscription_tier_changed",
+            payload_json=_to_json(payload),
+        )
+        return subscription
+
     async def change_subscription_tier(
         self,
         tg_user_id: int,
@@ -712,50 +784,48 @@ class BusinessCabinetService:
         if not can_manage:
             raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
 
-        now = _utc_now()
         if normalized_tier == "free":
+            now = _utc_now()
             sub_status = "inactive"
             starts_at = None
             expires_at = None
             is_verified = 0
             verified_tier = None
             verified_until = None
-        else:
-            sub_status = "active"
-            starts_at = now.isoformat()
-            expires_at = (now + timedelta(days=DEFAULT_SUBSCRIPTION_DAYS)).isoformat()
-            is_verified = 1
-            verified_tier = normalized_tier
-            verified_until = expires_at
+            subscription = await self.repository.update_subscription(
+                place_id=place_id,
+                tier=normalized_tier,
+                status=sub_status,
+                starts_at=starts_at,
+                expires_at=expires_at,
+            )
+            await self.repository.update_place_business_flags(
+                place_id,
+                business_enabled=1,
+                is_verified=is_verified,
+                verified_tier=verified_tier,
+                verified_until=verified_until,
+            )
+            await self.repository.write_audit_log(
+                place_id=place_id,
+                actor_tg_user_id=tg_user_id,
+                action="subscription_tier_changed",
+                payload_json=_to_json(
+                    {
+                        "tier": normalized_tier,
+                        "status": sub_status,
+                        "starts_at": starts_at,
+                        "expires_at": expires_at,
+                    }
+                ),
+            )
+            return subscription
 
-        subscription = await self.repository.update_subscription(
+        return await self._activate_paid_subscription(
+            tg_user_id=tg_user_id,
             place_id=place_id,
             tier=normalized_tier,
-            status=sub_status,
-            starts_at=starts_at,
-            expires_at=expires_at,
         )
-        await self.repository.update_place_business_flags(
-            place_id,
-            business_enabled=1,
-            is_verified=is_verified,
-            verified_tier=verified_tier,
-            verified_until=verified_until,
-        )
-        await self.repository.write_audit_log(
-            place_id=place_id,
-            actor_tg_user_id=tg_user_id,
-            action="subscription_tier_changed",
-            payload_json=_to_json(
-                {
-                    "tier": normalized_tier,
-                    "status": sub_status,
-                    "starts_at": starts_at,
-                    "expires_at": expires_at,
-                }
-            ),
-        )
-        return subscription
 
     async def create_mock_payment_intent(
         self,
@@ -849,10 +919,15 @@ class BusinessCabinetService:
 
         subscription: dict[str, Any] | None = None
         if normalized_result == "success":
-            subscription = await self.change_subscription_tier(
+            subscription = await self._activate_paid_subscription(
                 tg_user_id=tg_user_id,
                 place_id=place_id,
                 tier=normalized_tier,
+                audit_extra={
+                    "provider": PAYMENT_PROVIDER_MOCK,
+                    "external_payment_id": external_payment_id,
+                    "amount_stars": amount_stars,
+                },
             )
         else:
             await self.repository.write_audit_log(
@@ -949,6 +1024,9 @@ class BusinessCabinetService:
         invoice_payload: str,
         total_amount: int,
         currency: str,
+        subscription_expiration_date: int | None,
+        is_recurring: bool | None,
+        is_first_recurring: bool | None,
         telegram_payment_charge_id: str | None,
         provider_payment_charge_id: str | None,
         raw_payload_json: str | None,
@@ -985,10 +1063,12 @@ class BusinessCabinetService:
         if not has_invoice:
             raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
 
+        payment_event_external_id = str(telegram_payment_charge_id or "").strip() or str(payload.external_payment_id)
+        expires_at_iso = _iso_from_unix_utc(subscription_expiration_date)
         inserted = await self.repository.create_payment_event(
             place_id=int(payload.place_id),
             provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
-            external_payment_id=str(payload.external_payment_id),
+            external_payment_id=payment_event_external_id,
             event_type="payment_succeeded",
             amount_stars=int(expected_amount),
             currency="XTR",
@@ -999,8 +1079,12 @@ class BusinessCabinetService:
                     "source": "telegram_stars_successful_payment",
                     "tg_user_id": int(tg_user_id),
                     "invoice_payload": str(invoice_payload),
+                    "intent_external_payment_id": str(payload.external_payment_id),
                     "telegram_payment_charge_id": str(telegram_payment_charge_id or ""),
                     "provider_payment_charge_id": str(provider_payment_charge_id or ""),
+                    "subscription_expiration_date": subscription_expiration_date,
+                    "is_recurring": bool(is_recurring) if is_recurring is not None else None,
+                    "is_first_recurring": bool(is_first_recurring) if is_first_recurring is not None else None,
                 }
             ),
             processed_at=_utc_now().isoformat(),
@@ -1012,14 +1096,25 @@ class BusinessCabinetService:
                 "place_id": int(payload.place_id),
                 "tier": normalized_tier,
                 "source": str(payload.source or "card"),
+                "payment_external_id": payment_event_external_id,
                 "external_payment_id": str(payload.external_payment_id),
                 "subscription": None,
             }
 
-        subscription = await self.change_subscription_tier(
+        subscription = await self._activate_paid_subscription(
             tg_user_id=int(tg_user_id),
             place_id=int(payload.place_id),
             tier=normalized_tier,
+            expires_at=expires_at_iso,
+            audit_extra={
+                "provider": PAYMENT_PROVIDER_TELEGRAM_STARS,
+                "intent_external_payment_id": str(payload.external_payment_id),
+                "payment_external_id": payment_event_external_id,
+                "amount_stars": int(expected_amount),
+                "is_recurring": bool(is_recurring) if is_recurring is not None else None,
+                "is_first_recurring": bool(is_first_recurring) if is_first_recurring is not None else None,
+                "subscription_expiration_date": subscription_expiration_date,
+            },
         )
         return {
             "applied": True,
@@ -1027,6 +1122,7 @@ class BusinessCabinetService:
             "place_id": int(payload.place_id),
             "tier": normalized_tier,
             "source": str(payload.source or "card"),
+            "payment_external_id": payment_event_external_id,
             "external_payment_id": str(payload.external_payment_id),
             "subscription": subscription,
         }
