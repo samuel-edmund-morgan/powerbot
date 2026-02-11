@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import CFG
+from admin.ui import render as render_admin_ui
 from database import (
     claim_next_admin_job,
     finish_admin_job,
@@ -100,6 +101,15 @@ def _render_owner_request_alert_text(payload: dict) -> str:
     )
 
 
+def _owner_request_alert_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Модерація", callback_data="abiz_mod")],
+            [InlineKeyboardButton(text="🏠 Головне меню", callback_data="admin_refresh")],
+        ]
+    )
+
+
 async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
     payload = job.get("payload") or {}
     request_id = int(payload.get("request_id") or 0)
@@ -120,10 +130,18 @@ async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
         token=CFG.admin_bot_api_key,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    kb = _owner_request_alert_keyboard()
     try:
         for admin_id in CFG.admin_ids:
             try:
-                await admin_bot.send_message(int(admin_id), text)
+                # Keep admin chat clean: owner-request alerts should behave like single-message UI.
+                await render_admin_ui(
+                    admin_bot,
+                    chat_id=int(admin_id),
+                    text=text,
+                    reply_markup=kb,
+                    force_new_message=True,
+                )
                 sent_ok += 1
             except Exception:
                 logger.exception(
