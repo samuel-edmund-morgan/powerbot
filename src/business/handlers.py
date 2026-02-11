@@ -13,7 +13,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
 )
 from database import create_admin_job
 
@@ -2215,19 +2217,12 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
         await callback.answer("Тариф оновлено")
         return
 
-    provider = cabinet_service.get_payment_provider()
-    if provider == PAYMENT_PROVIDER_TELEGRAM_STARS:
-        await callback.answer("Оплата Stars буде підключена окремим кроком. Поки недоступно.", show_alert=True)
-        return
-    if provider != PAYMENT_PROVIDER_MOCK:
-        await callback.answer("Невідомий провайдер оплати в конфігурації.", show_alert=True)
-        return
-
     try:
-        intent = await cabinet_service.create_mock_payment_intent(
+        intent = await cabinet_service.create_payment_intent(
             tg_user_id=callback.from_user.id,
             place_id=place_id,
             tier=normalized_tier,
+            source=source,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
         await callback.answer(str(error), show_alert=True)
@@ -2241,9 +2236,71 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
         await callback.answer("Оплата підготовлена")
         return
 
+    provider = str(intent.get("provider") or "").strip().lower()
     rows = await cabinet_service.list_user_businesses(callback.from_user.id)
     item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
     place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
+    place_name_plain = str(item.get("place_name") if item else "вашого закладу")
+    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+
+    if provider == PAYMENT_PROVIDER_TELEGRAM_STARS:
+        invoice_payload = str(intent.get("invoice_payload") or "").strip()
+        if not invoice_payload:
+            await callback.answer("Не вдалося підготувати рахунок. Спробуй ще раз.", show_alert=True)
+            return
+        invoice_title = f"Тариф {PLAN_TITLES.get(normalized_tier, normalized_tier)}"
+        invoice_description = (
+            f"Оплата тарифу {PLAN_TITLES.get(normalized_tier, normalized_tier)} "
+            f"для закладу «{place_name_plain}» на 30 днів."
+        )[:255]
+        invoice_label = f"{PLAN_TITLES.get(normalized_tier, normalized_tier)} ({intent['amount_stars']}⭐)"
+        try:
+            await callback.message.bot.send_invoice(
+                chat_id=callback.message.chat.id,
+                title=invoice_title[:32],
+                description=invoice_description,
+                payload=invoice_payload,
+                currency="XTR",
+                prices=[LabeledPrice(label=invoice_label, amount=int(intent["amount_stars"]))],
+                provider_token=None,
+                start_parameter=f"biz_{place_id}_{normalized_tier}",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send Telegram Stars invoice place_id=%s tier=%s chat_id=%s",
+                place_id,
+                normalized_tier,
+                callback.message.chat.id,
+            )
+            await callback.answer("Не вдалося відправити рахунок. Спробуй ще раз.", show_alert=True)
+            return
+
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=(
+                f"💳 <b>Рахунок на {intent['amount_stars']}⭐ надіслано</b>\n\n"
+                f"Заклад: <b>{place_name}</b>\n"
+                f"Тариф: <b>{PLAN_TITLES.get(normalized_tier, normalized_tier)}</b>\n\n"
+                "Оплати рахунок у повідомленні від Telegram. "
+                "Після успішної оплати тариф активується автоматично."
+            ),
+            reply_markup=build_plan_keyboard(
+                place_id,
+                str(item.get("tier") if item else "free"),
+                back_callback_data=back_cb,
+                source=source,
+            ),
+        )
+        await callback.answer("Рахунок надіслано")
+        return
+
+    if provider != PAYMENT_PROVIDER_MOCK:
+        await callback.answer("Невідомий провайдер оплати в конфігурації.", show_alert=True)
+        return
+
     await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
     await ui_render(
         callback.message.bot,
@@ -2327,6 +2384,107 @@ async def cb_mock_payment_result(callback: CallbackQuery) -> None:
         ),
     )
     await callback.answer("Готово")
+
+
+@router.pre_checkout_query()
+async def on_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> None:
+    tg_user_id = pre_checkout_query.from_user.id if pre_checkout_query.from_user else 0
+    try:
+        await cabinet_service.validate_telegram_stars_pre_checkout(
+            tg_user_id=int(tg_user_id),
+            invoice_payload=str(pre_checkout_query.invoice_payload or ""),
+            total_amount=int(pre_checkout_query.total_amount or 0),
+            currency=str(pre_checkout_query.currency or ""),
+            pre_checkout_query_id=str(pre_checkout_query.id or ""),
+        )
+    except (ValidationError, AccessDeniedError, NotFoundError) as error:
+        message = str(error).strip() or "Оплату неможливо підтвердити."
+        if len(message) > 180:
+            message = message[:177] + "..."
+        await pre_checkout_query.answer(ok=False, error_message=message)
+        return
+    except Exception:
+        logger.exception(
+            "Unexpected pre_checkout failure query_id=%s from_user=%s",
+            pre_checkout_query.id,
+            tg_user_id,
+        )
+        await pre_checkout_query.answer(ok=False, error_message="Технічна помилка. Спробуй ще раз.")
+        return
+    await pre_checkout_query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def on_successful_payment(message: Message) -> None:
+    payment = message.successful_payment
+    if not payment:
+        return
+    tg_user_id = message.from_user.id if message.from_user else message.chat.id
+    raw_payload_json = None
+    try:
+        raw_payload_json = payment.model_dump_json(exclude_none=True)
+    except Exception:
+        raw_payload_json = None
+
+    try:
+        outcome = await cabinet_service.apply_telegram_stars_successful_payment(
+            tg_user_id=int(tg_user_id),
+            invoice_payload=str(payment.invoice_payload or ""),
+            total_amount=int(payment.total_amount or 0),
+            currency=str(payment.currency or ""),
+            telegram_payment_charge_id=str(payment.telegram_payment_charge_id or ""),
+            provider_payment_charge_id=str(payment.provider_payment_charge_id or ""),
+            raw_payload_json=raw_payload_json,
+        )
+    except (ValidationError, AccessDeniedError, NotFoundError) as error:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=(
+                "⚠️ Не вдалося застосувати оплату автоматично.\n"
+                "Напиши адміністратору і додай скрін цього повідомлення.\n\n"
+                f"Деталі: {html.escape(str(error))}"
+            ),
+            reply_markup=build_main_menu(tg_user_id),
+        )
+        return
+    except Exception:
+        logger.exception("Failed to apply successful payment for chat_id=%s", message.chat.id)
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=(
+                "⚠️ Сталась технічна помилка при обробці оплати.\n"
+                "Напиши адміністратору і додай скрін цього повідомлення."
+            ),
+            reply_markup=build_main_menu(tg_user_id),
+        )
+        return
+
+    place_id = int(outcome.get("place_id") or 0)
+    source = str(outcome.get("source") or "card")
+    rows = await cabinet_service.list_user_businesses(int(tg_user_id))
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
+    current_tier = str(item.get("tier") if item else "free")
+    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+
+    note = (
+        "ℹ️ Цей платіж уже був оброблений раніше."
+        if outcome.get("duplicate")
+        else "✅ Оплату отримано. Тариф активовано."
+    )
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=f"{note}\n\nОбери тариф для <b>{place_name}</b>:",
+        reply_markup=build_plan_keyboard(
+            place_id,
+            current_tier,
+            back_callback_data=back_cb,
+            source=source,
+        ),
+    )
 
 
 @router.message(Command("moderation"))

@@ -11,6 +11,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from business.guards import is_business_feature_enabled
+from business.payments import (
+    MockPaymentProvider,
+    TelegramStarsPaymentProvider,
+    decode_telegram_stars_payload,
+)
 from business.repository import BusinessRepository
 from config import CFG
 
@@ -139,6 +144,10 @@ class BusinessCabinetService:
     def __init__(self, repository: BusinessRepository | None = None) -> None:
         self.repository = repository or BusinessRepository()
         self.admin_ids = set(CFG.admin_ids)
+        self._payment_providers = {
+            PAYMENT_PROVIDER_MOCK: MockPaymentProvider(),
+            PAYMENT_PROVIDER_TELEGRAM_STARS: TelegramStarsPaymentProvider(),
+        }
 
     def is_admin(self, tg_user_id: int) -> bool:
         return tg_user_id in self.admin_ids
@@ -155,6 +164,84 @@ class BusinessCabinetService:
 
     def get_plan_price_stars(self, tier: str) -> int:
         return int(PLAN_STARS_PRICES.get(str(tier).strip().lower(), 0))
+
+    def _get_payment_provider_impl(self, provider_name: str):
+        provider = self._payment_providers.get(str(provider_name).strip().lower())
+        if not provider:
+            raise ValidationError("Невідомий провайдер оплати в конфігурації.")
+        return provider
+
+    async def _assert_paid_plan_access(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        tier: str,
+    ) -> tuple[str, int]:
+        normalized_tier = str(tier).strip().lower()
+        if normalized_tier not in PAID_TIERS:
+            raise ValidationError("Для цього тарифу оплата не потрібна.")
+        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_manage:
+            raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
+        amount_stars = self.get_plan_price_stars(normalized_tier)
+        if amount_stars <= 0:
+            raise ValidationError("Для цього тарифу ще не налаштована ціна.")
+        return normalized_tier, amount_stars
+
+    async def create_payment_intent(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        tier: str,
+        source: str = "card",
+    ) -> dict[str, Any]:
+        normalized_tier, amount_stars = await self._assert_paid_plan_access(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+        )
+        provider_name = self.get_payment_provider()
+        provider = self._get_payment_provider_impl(provider_name)
+        intent = provider.create_intent(
+            tg_user_id=int(tg_user_id),
+            place_id=int(place_id),
+            tier=normalized_tier,
+            amount_stars=amount_stars,
+            source=str(source or "card"),
+        )
+        raw_payload: dict[str, Any] = {
+            "source": f"businessbot_{provider_name}_ui",
+            "tg_user_id": int(tg_user_id),
+            "place_id": int(place_id),
+            "tier": normalized_tier,
+            "amount_stars": int(amount_stars),
+            "source_menu": str(source or "card"),
+        }
+        if intent.invoice_payload:
+            raw_payload["invoice_payload"] = str(intent.invoice_payload)
+        inserted = await self.repository.create_payment_event(
+            place_id=int(place_id),
+            provider=str(intent.provider),
+            external_payment_id=str(intent.external_payment_id),
+            event_type="invoice_created",
+            amount_stars=int(amount_stars),
+            currency="XTR",
+            status="new",
+            raw_payload_json=_to_json(raw_payload),
+            processed_at=None,
+        )
+        if not inserted:
+            raise RuntimeError("Не вдалося підготувати оплату. Спробуй ще раз.")
+        return {
+            "provider": str(intent.provider),
+            "external_payment_id": str(intent.external_payment_id),
+            "amount_stars": int(amount_stars),
+            "tier": normalized_tier,
+            "source": str(source or "card"),
+            "invoice_payload": str(intent.invoice_payload) if intent.invoice_payload else None,
+        }
 
     async def _generate_unique_claim_token(self) -> str:
         token = ""
@@ -676,49 +763,18 @@ class BusinessCabinetService:
         tg_user_id: int,
         place_id: int,
         tier: str,
+        source: str = "card",
     ) -> dict[str, Any]:
-        """Create mock payment intent and write invoice_created event."""
-        normalized_tier = str(tier).strip().lower()
-        if normalized_tier not in PAID_TIERS:
-            raise ValidationError("Для цього тарифу оплата не потрібна.")
-        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
-        if not can_manage:
-            raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
-
-        amount_stars = self.get_plan_price_stars(normalized_tier)
-        if amount_stars <= 0:
-            raise ValidationError("Для цього тарифу ще не налаштована ціна.")
-
-        # Keep callback payload compact but unique enough for test simulation.
-        external_payment_id = f"mock_{int(_utc_now().timestamp())}_{secrets.token_hex(4)}"
-        raw_payload = _to_json(
-            {
-                "source": "businessbot_mock_ui",
-                "tg_user_id": int(tg_user_id),
-                "place_id": int(place_id),
-                "tier": normalized_tier,
-                "amount_stars": amount_stars,
-            }
+        """Backward-compatible wrapper for mock payment intent creation."""
+        provider = self.get_payment_provider()
+        if provider != PAYMENT_PROVIDER_MOCK:
+            raise ValidationError("Mock-оплата доступна лише у test-режимі.")
+        return await self.create_payment_intent(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            source=source,
         )
-        inserted = await self.repository.create_payment_event(
-            place_id=int(place_id),
-            provider=PAYMENT_PROVIDER_MOCK,
-            external_payment_id=external_payment_id,
-            event_type="invoice_created",
-            amount_stars=amount_stars,
-            currency="XTR",
-            status="new",
-            raw_payload_json=raw_payload,
-            processed_at=None,
-        )
-        if not inserted:
-            raise RuntimeError("Не вдалося підготувати оплату. Спробуй ще раз.")
-        return {
-            "provider": PAYMENT_PROVIDER_MOCK,
-            "external_payment_id": external_payment_id,
-            "amount_stars": amount_stars,
-            "tier": normalized_tier,
-        }
 
     async def apply_mock_payment_result(
         self,
@@ -730,12 +786,11 @@ class BusinessCabinetService:
         result: str,
     ) -> dict[str, Any]:
         """Apply mock payment result idempotently."""
-        normalized_tier = str(tier).strip().lower()
-        if normalized_tier not in PAID_TIERS:
-            raise ValidationError("Для цього тарифу оплата не потрібна.")
-        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
-        if not can_manage:
-            raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
+        normalized_tier, amount_stars = await self._assert_paid_plan_access(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+        )
         if not external_payment_id:
             raise ValidationError("Сесія оплати не знайдена. Спробуй ще раз.")
 
@@ -754,7 +809,6 @@ class BusinessCabinetService:
         if normalized_result not in {"success", "cancel", "fail"}:
             raise ValidationError("Невідомий результат оплати.")
 
-        amount_stars = self.get_plan_price_stars(normalized_tier)
         event_type_map = {
             "success": "payment_succeeded",
             "cancel": "payment_canceled",
@@ -818,5 +872,159 @@ class BusinessCabinetService:
             "applied": True,
             "duplicate": False,
             "result": normalized_result,
+            "subscription": subscription,
+        }
+
+    async def validate_telegram_stars_pre_checkout(
+        self,
+        *,
+        tg_user_id: int,
+        invoice_payload: str,
+        total_amount: int,
+        currency: str,
+        pre_checkout_query_id: str | None = None,
+    ) -> dict[str, Any]:
+        provider = self.get_payment_provider()
+        if provider != PAYMENT_PROVIDER_TELEGRAM_STARS:
+            raise ValidationError("Оплати тимчасово недоступні.")
+
+        payload = decode_telegram_stars_payload(invoice_payload)
+        if not payload:
+            raise ValidationError("Некоректні дані рахунку.")
+        if int(payload.tg_user_id) != int(tg_user_id):
+            raise ValidationError("Цей рахунок належить іншому користувачу.")
+
+        normalized_tier, expected_amount = await self._assert_paid_plan_access(
+            tg_user_id=int(tg_user_id),
+            place_id=int(payload.place_id),
+            tier=str(payload.tier),
+        )
+        if str(currency or "").upper() != "XTR":
+            raise ValidationError("Підтримується лише оплата у Stars (XTR).")
+        if int(total_amount) != int(expected_amount):
+            raise ValidationError("Сума рахунку не збігається з тарифом.")
+
+        existing = await self.repository.get_payment_events_by_external_id(
+            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+            external_payment_id=str(payload.external_payment_id),
+        )
+        has_invoice = any(
+            int(row.get("place_id") or 0) == int(payload.place_id)
+            and str(row.get("event_type") or "") == "invoice_created"
+            for row in existing
+        )
+        if not has_invoice:
+            raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
+
+        await self.repository.create_payment_event(
+            place_id=int(payload.place_id),
+            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+            external_payment_id=str(payload.external_payment_id),
+            event_type="pre_checkout_ok",
+            amount_stars=int(expected_amount),
+            currency="XTR",
+            status="processed",
+            raw_payload_json=_to_json(
+                {
+                    "source": "telegram_stars_pre_checkout",
+                    "tg_user_id": int(tg_user_id),
+                    "pre_checkout_query_id": str(pre_checkout_query_id or ""),
+                    "invoice_payload": str(invoice_payload),
+                }
+            ),
+            processed_at=_utc_now().isoformat(),
+        )
+        return {
+            "place_id": int(payload.place_id),
+            "tier": normalized_tier,
+            "amount_stars": int(expected_amount),
+            "external_payment_id": str(payload.external_payment_id),
+            "source": str(payload.source or "card"),
+        }
+
+    async def apply_telegram_stars_successful_payment(
+        self,
+        *,
+        tg_user_id: int,
+        invoice_payload: str,
+        total_amount: int,
+        currency: str,
+        telegram_payment_charge_id: str | None,
+        provider_payment_charge_id: str | None,
+        raw_payload_json: str | None,
+    ) -> dict[str, Any]:
+        provider = self.get_payment_provider()
+        if provider != PAYMENT_PROVIDER_TELEGRAM_STARS:
+            raise ValidationError("Оплати тимчасово недоступні.")
+
+        payload = decode_telegram_stars_payload(invoice_payload)
+        if not payload:
+            raise ValidationError("Некоректні дані платежу.")
+        if int(payload.tg_user_id) != int(tg_user_id):
+            raise ValidationError("Цей платіж належить іншому користувачу.")
+
+        normalized_tier, expected_amount = await self._assert_paid_plan_access(
+            tg_user_id=int(tg_user_id),
+            place_id=int(payload.place_id),
+            tier=str(payload.tier),
+        )
+        if str(currency or "").upper() != "XTR":
+            raise ValidationError("Підтримується лише оплата у Stars (XTR).")
+        if int(total_amount) != int(expected_amount):
+            raise ValidationError("Сума платежу не збігається з тарифом.")
+
+        existing = await self.repository.get_payment_events_by_external_id(
+            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+            external_payment_id=str(payload.external_payment_id),
+        )
+        has_invoice = any(
+            int(row.get("place_id") or 0) == int(payload.place_id)
+            and str(row.get("event_type") or "") == "invoice_created"
+            for row in existing
+        )
+        if not has_invoice:
+            raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
+
+        inserted = await self.repository.create_payment_event(
+            place_id=int(payload.place_id),
+            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+            external_payment_id=str(payload.external_payment_id),
+            event_type="payment_succeeded",
+            amount_stars=int(expected_amount),
+            currency="XTR",
+            status="processed",
+            raw_payload_json=raw_payload_json
+            or _to_json(
+                {
+                    "source": "telegram_stars_successful_payment",
+                    "tg_user_id": int(tg_user_id),
+                    "invoice_payload": str(invoice_payload),
+                    "telegram_payment_charge_id": str(telegram_payment_charge_id or ""),
+                    "provider_payment_charge_id": str(provider_payment_charge_id or ""),
+                }
+            ),
+            processed_at=_utc_now().isoformat(),
+        )
+        if not inserted:
+            return {
+                "applied": False,
+                "duplicate": True,
+                "place_id": int(payload.place_id),
+                "tier": normalized_tier,
+                "source": str(payload.source or "card"),
+                "subscription": None,
+            }
+
+        subscription = await self.change_subscription_tier(
+            tg_user_id=int(tg_user_id),
+            place_id=int(payload.place_id),
+            tier=normalized_tier,
+        )
+        return {
+            "applied": True,
+            "duplicate": False,
+            "place_id": int(payload.place_id),
+            "tier": normalized_tier,
+            "source": str(payload.source or "card"),
             "subscription": subscription,
         }
