@@ -98,9 +98,8 @@ async def main() -> None:
         print("OK: business claim token smoke passed.")
     finally:
         # Cleanup temporary unpublished place and related business rows.
-        await repository.delete_place_and_related_unpublished(int(place_id))
+        await repository.delete_place_draft(int(place_id))
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
