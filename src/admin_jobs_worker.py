@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import html
+from datetime import datetime, timedelta
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -15,6 +16,11 @@ from database import (
     update_admin_job_progress,
     db_set,
     list_subscribers,
+    get_all_active_sensors,
+    get_building_section_power_state,
+    default_section_for_building,
+    freeze_sensor,
+    unfreeze_sensor,
 )
 from services import broadcast_messages
 
@@ -23,6 +29,8 @@ logger = logging.getLogger(__name__)
 JOB_KIND_BROADCAST = "broadcast"
 JOB_KIND_LIGHT_NOTIFY = "light_notify"
 JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
+JOB_KIND_SENSORS_FREEZE_ALL = "sensors_freeze_all"
+JOB_KIND_SENSORS_UNFREEZE_ALL = "sensors_unfreeze_all"
 
 
 async def _handle_light_notify(job: dict) -> None:
@@ -79,6 +87,66 @@ async def _handle_broadcast(bot: Bot, job: dict) -> tuple[int, int]:
     # Best-effort progress: we count only successful sends; total is recipients list size.
     await update_admin_job_progress(job_id, current=sent_ok, total=total)
     return sent_ok, total
+
+
+async def _handle_sensors_freeze_all(job: dict) -> tuple[int, int]:
+    payload = job.get("payload") or {}
+    try:
+        seconds = int(payload.get("seconds", 6 * 3600))
+    except Exception:
+        seconds = 6 * 3600
+    if seconds < 60 or seconds > 7 * 24 * 3600:
+        raise ValueError("sensors_freeze_all requires payload.seconds within 60..604800")
+
+    sensors = await get_all_active_sensors()
+    total = len(sensors)
+    job_id = int(job["id"])
+    await update_admin_job_progress(job_id, current=0, total=total)
+    if total == 0:
+        return 0, 0
+
+    now = datetime.now()
+    timeout = timedelta(seconds=CFG.sensor_timeout)
+    frozen_ok = 0
+    for sensor in sensors:
+        bid = int(sensor.get("building_id") or 0)
+        sid = sensor.get("section_id") or default_section_for_building(bid) or 1
+        sid = int(sid)
+
+        section_state = await get_building_section_power_state(bid, sid)
+        if section_state is not None:
+            frozen_is_up = bool(section_state["is_up"])
+        else:
+            frozen_is_up = bool(sensor.get("last_heartbeat") and (now - sensor["last_heartbeat"]) < timeout)
+
+        ok = await freeze_sensor(
+            str(sensor["uuid"]),
+            frozen_until=now + timedelta(seconds=seconds),
+            frozen_is_up=frozen_is_up,
+            frozen_at=now,
+        )
+        if ok:
+            frozen_ok += 1
+        await update_admin_job_progress(job_id, current=frozen_ok, total=total)
+
+    return frozen_ok, total
+
+
+async def _handle_sensors_unfreeze_all(job: dict) -> tuple[int, int]:
+    sensors = await get_all_active_sensors()
+    total = len(sensors)
+    job_id = int(job["id"])
+    await update_admin_job_progress(job_id, current=0, total=total)
+    if total == 0:
+        return 0, 0
+
+    unfrozen_ok = 0
+    for sensor in sensors:
+        ok = await unfreeze_sensor(str(sensor["uuid"]))
+        if ok:
+            unfrozen_ok += 1
+        await update_admin_job_progress(job_id, current=unfrozen_ok, total=total)
+    return unfrozen_ok, total
 
 
 def _render_owner_request_alert_text(payload: dict) -> str:
@@ -190,6 +258,10 @@ async def admin_jobs_worker_loop(bot: Bot, *, poll_interval_sec: float = 1.0) ->
                     done_current, done_total = await _handle_broadcast(bot, job)
                 elif kind == JOB_KIND_ADMIN_OWNER_REQUEST_ALERT:
                     done_current, done_total = await _handle_admin_owner_request_alert(job)
+                elif kind == JOB_KIND_SENSORS_FREEZE_ALL:
+                    done_current, done_total = await _handle_sensors_freeze_all(job)
+                elif kind == JOB_KIND_SENSORS_UNFREEZE_ALL:
+                    done_current, done_total = await _handle_sensors_unfreeze_all(job)
                 else:
                     raise ValueError(f"Unknown admin job kind: {kind}")
 
