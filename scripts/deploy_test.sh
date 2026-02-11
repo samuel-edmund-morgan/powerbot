@@ -173,6 +173,11 @@ if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
 fi
 
+# Automated smoke: business mock payments state machine + idempotency.
+# Run inside container (all runtime deps are present there).
+echo "Running business payments smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_payments.py"
+
 # Optional: mini app health if endpoint exists.
 curl -s http://127.0.0.1:18082/api/v1/webapp/health >/dev/null || true
 
