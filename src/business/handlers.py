@@ -27,12 +27,10 @@ from business.service import (
     PAYMENT_PROVIDER_TELEGRAM_STARS,
     ValidationError,
 )
+from business.payments import SUBSCRIPTION_PERIOD_SECONDS
 from business.ui import (
-    bind_invoice_message_id,
     bind_ui_message_id,
     render as ui_render,
-    try_delete_invoice_message_by_external,
-    try_delete_last_invoice_message,
     try_delete_user_message,
 )
 
@@ -105,7 +103,6 @@ CB_TOKG_PLACE_ROTATE_PREFIX = "btokg_r:"
 CB_EDIT_BUILDING_PICK_PREFIX = "bebld:"
 CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
 CB_PAYMENT_RESULT_PREFIX = "bpayr:"
-CB_PAYMENT_CLEAN_PREFIX = "bpayc:"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -593,31 +590,6 @@ def build_plan_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def build_plan_keyboard_with_invoice_cleanup(
-    place_id: int,
-    current_tier: str,
-    *,
-    external_payment_id: str,
-    back_callback_data: str | None = None,
-    source: str | None = None,
-) -> InlineKeyboardMarkup:
-    base = build_plan_keyboard(
-        place_id=place_id,
-        current_tier=current_tier,
-        back_callback_data=back_callback_data,
-        source=source,
-    )
-    rows = [list(row) for row in base.inline_keyboard]
-    cleanup_cb = (
-        f"{CB_PAYMENT_CLEAN_PREFIX}{int(place_id)}:"
-        f"{str(source or 'card')}:{str(external_payment_id)}"
-    )
-    # Insert cleanup action before back/menu rows.
-    insert_at = max(0, len(rows) - 2)
-    rows.insert(insert_at, [InlineKeyboardButton(text="🧹 Прибрати рахунок", callback_data=cleanup_cb)])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def build_mock_payment_keyboard(
     *,
     place_id: int,
@@ -634,6 +606,24 @@ def build_mock_payment_keyboard(
             [InlineKeyboardButton(text="❌ Імітувати відміну", callback_data=cb("cancel"))],
             [InlineKeyboardButton(text="⚠️ Імітувати помилку", callback_data=cb("fail"))],
             [InlineKeyboardButton(text="« Назад", callback_data=f"bp_menu:{int(place_id)}:{source}")],
+            [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+        ]
+    )
+
+
+def build_stars_payment_keyboard(
+    *,
+    pay_url: str,
+    place_id: int,
+    tier: str,
+    source: str,
+    back_callback_data: str,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатити підписку ⭐", url=str(pay_url))],
+            [InlineKeyboardButton(text="🔄 Оновити посилання", callback_data=f"bp:{int(place_id)}:{tier}:{source}")],
+            [InlineKeyboardButton(text="« Назад", callback_data=back_callback_data)],
             [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
         ]
     )
@@ -2281,63 +2271,54 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
         if not invoice_payload:
             await callback.answer("Не вдалося підготувати рахунок. Спробуй ще раз.", show_alert=True)
             return
-        await try_delete_last_invoice_message(
-            callback.message.bot,
-            chat_id=callback.message.chat.id,
-        )
         invoice_title = f"Тариф {PLAN_TITLES.get(normalized_tier, normalized_tier)}"
         invoice_description = (
-            f"Оплата тарифу {PLAN_TITLES.get(normalized_tier, normalized_tier)} "
-            f"для закладу «{place_name_plain}» на 30 днів."
+            f"Підписка {PLAN_TITLES.get(normalized_tier, normalized_tier)} "
+            f"для закладу «{place_name_plain}». Автопродовження щомісяця."
         )[:255]
         invoice_label = f"{PLAN_TITLES.get(normalized_tier, normalized_tier)} ({intent['amount_stars']}⭐)"
         try:
-            invoice_message = await callback.message.bot.send_invoice(
-                chat_id=callback.message.chat.id,
+            invoice_link = await callback.message.bot.create_invoice_link(
                 title=invoice_title[:32],
                 description=invoice_description,
                 payload=invoice_payload,
                 currency="XTR",
                 prices=[LabeledPrice(label=invoice_label, amount=int(intent["amount_stars"]))],
                 provider_token=None,
-                start_parameter=f"biz_{place_id}_{normalized_tier}",
+                subscription_period=SUBSCRIPTION_PERIOD_SECONDS,
             )
         except Exception:
             logger.exception(
-                "Failed to send Telegram Stars invoice place_id=%s tier=%s chat_id=%s",
+                "Failed to create Telegram Stars invoice link place_id=%s tier=%s chat_id=%s",
                 place_id,
                 normalized_tier,
                 callback.message.chat.id,
             )
-            await callback.answer("Не вдалося відправити рахунок. Спробуй ще раз.", show_alert=True)
+            await callback.answer("Не вдалося підготувати посилання на оплату. Спробуй ще раз.", show_alert=True)
             return
 
-        await bind_invoice_message_id(
-            callback.message.chat.id,
-            int(invoice_message.message_id),
-            external_id=str(intent["external_payment_id"]),
-        )
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         await ui_render(
             callback.message.bot,
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
             text=(
-                f"💳 <b>Рахунок на {intent['amount_stars']}⭐ надіслано</b>\n\n"
+                f"💳 <b>Підписка {PLAN_TITLES.get(normalized_tier, normalized_tier)}</b>\n\n"
                 f"Заклад: <b>{place_name}</b>\n"
                 f"Тариф: <b>{PLAN_TITLES.get(normalized_tier, normalized_tier)}</b>\n\n"
-                "Оплати рахунок у повідомленні від Telegram. "
-                "Після успішної оплати тариф активується автоматично."
+                f"Сума: <b>{intent['amount_stars']}⭐ / 30 днів</b>\n"
+                "Автопродовження: <b>увімкнено Telegram</b>\n\n"
+                "Натисни «Оплатити підписку», щоб підтвердити перший платіж."
             ),
-            reply_markup=build_plan_keyboard_with_invoice_cleanup(
-                place_id,
-                str(item.get("tier") if item else "free"),
-                external_payment_id=str(intent["external_payment_id"]),
-                back_callback_data=back_cb,
+            reply_markup=build_stars_payment_keyboard(
+                pay_url=str(invoice_link),
+                place_id=place_id,
+                tier=normalized_tier,
                 source=source,
+                back_callback_data=back_cb,
             ),
         )
-        await callback.answer("Рахунок надіслано")
+        await callback.answer("Посилання на оплату підготовлено")
         return
 
     if provider != PAYMENT_PROVIDER_MOCK:
@@ -2429,56 +2410,6 @@ async def cb_mock_payment_result(callback: CallbackQuery) -> None:
     await callback.answer("Готово")
 
 
-@router.callback_query(F.data.startswith(CB_PAYMENT_CLEAN_PREFIX))
-async def cb_cleanup_invoice(callback: CallbackQuery) -> None:
-    payload = callback.data.removeprefix(CB_PAYMENT_CLEAN_PREFIX).split(":", 2)
-    if len(payload) != 3:
-        await callback.answer("Некоректні дані", show_alert=True)
-        return
-    try:
-        place_id = int(payload[0])
-    except Exception:
-        await callback.answer("Некоректний заклад", show_alert=True)
-        return
-    source = payload[1] or "card"
-    external_payment_id = str(payload[2] or "").strip()
-    if not external_payment_id:
-        await callback.answer("Невірний рахунок", show_alert=True)
-        return
-    if not callback.message:
-        await callback.answer("Готово")
-        return
-
-    deleted = await try_delete_invoice_message_by_external(
-        callback.message.bot,
-        chat_id=callback.message.chat.id,
-        external_id=external_payment_id,
-    )
-    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
-    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
-    if not item or item["ownership_status"] != "approved":
-        await callback.answer("Недостатньо прав.", show_alert=True)
-        return
-    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
-    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
-    note = "🧹 Рахунок прибрано з чату." if deleted else "ℹ️ Активний рахунок уже відсутній."
-
-    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-    await ui_render(
-        callback.message.bot,
-        chat_id=callback.message.chat.id,
-        prefer_message_id=callback.message.message_id,
-        text=f"{note}\n\nОбери тариф для <b>{place_name}</b>:",
-        reply_markup=build_plan_keyboard(
-            place_id,
-            str(item.get("tier") or "free"),
-            back_callback_data=back_cb,
-            source=source,
-        ),
-    )
-    await callback.answer("Готово")
-
-
 @router.pre_checkout_query()
 async def on_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> None:
     tg_user_id = pre_checkout_query.from_user.id if pre_checkout_query.from_user else 0
@@ -2512,6 +2443,7 @@ async def on_successful_payment(message: Message) -> None:
     payment = message.successful_payment
     if not payment:
         return
+    await try_delete_user_message(message)
     tg_user_id = message.from_user.id if message.from_user else message.chat.id
     raw_payload_json = None
     try:
@@ -2525,6 +2457,15 @@ async def on_successful_payment(message: Message) -> None:
             invoice_payload=str(payment.invoice_payload or ""),
             total_amount=int(payment.total_amount or 0),
             currency=str(payment.currency or ""),
+            subscription_expiration_date=(
+                int(payment.subscription_expiration_date)
+                if payment.subscription_expiration_date is not None
+                else None
+            ),
+            is_recurring=bool(payment.is_recurring) if payment.is_recurring is not None else None,
+            is_first_recurring=(
+                bool(payment.is_first_recurring) if payment.is_first_recurring is not None else None
+            ),
             telegram_payment_charge_id=str(payment.telegram_payment_charge_id or ""),
             provider_payment_charge_id=str(payment.provider_payment_charge_id or ""),
             raw_payload_json=raw_payload_json,
@@ -2556,13 +2497,6 @@ async def on_successful_payment(message: Message) -> None:
 
     place_id = int(outcome.get("place_id") or 0)
     source = str(outcome.get("source") or "card")
-    external_payment_id = str(outcome.get("external_payment_id") or "").strip()
-    if external_payment_id:
-        await try_delete_invoice_message_by_external(
-            message.bot,
-            chat_id=message.chat.id,
-            external_id=external_payment_id,
-        )
     rows = await cabinet_service.list_user_businesses(int(tg_user_id))
     item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
     place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))

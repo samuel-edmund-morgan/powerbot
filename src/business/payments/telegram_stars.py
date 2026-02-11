@@ -10,6 +10,7 @@ from .base import PaymentIntent
 
 
 PAYLOAD_PREFIX = "bpayv1"
+SUBSCRIPTION_PERIOD_SECONDS = 30 * 24 * 60 * 60  # Telegram Stars monthly period (2592000)
 SOURCE_TO_CODE = {
     "card": "c",
     "plans": "p",
