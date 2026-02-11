@@ -21,7 +21,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+def _resolve_repo_root() -> Path:
+    candidates: list[Path] = []
+    try:
+        candidates.append(Path(__file__).resolve().parents[1])
+    except Exception:
+        pass
+    candidates.extend(
+        [
+            Path.cwd(),
+            Path("/app"),
+            Path("/workspace"),
+        ]
+    )
+    for root in candidates:
+        if (root / "schema.sql").exists() and (root / "src").exists():
+            return root
+    raise FileNotFoundError("Cannot locate repo root with schema.sql and src/")
+
+
+REPO_ROOT = _resolve_repo_root()
 SCHEMA_SQL = REPO_ROOT / "schema.sql"
 
 
