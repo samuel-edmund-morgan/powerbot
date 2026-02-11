@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 PAID_TIERS = {"light", "pro", "partner"}
 SUPPORTED_TIERS = {"free", "light", "pro", "partner"}
 DEFAULT_SUBSCRIPTION_DAYS = 30
+PLAN_STARS_PRICES: dict[str, int] = {
+    "light": 1000,
+    "pro": 2500,
+    "partner": 5000,
+}
+
+PAYMENT_PROVIDER_MOCK = "mock"
+PAYMENT_PROVIDER_TELEGRAM_STARS = "telegram_stars"
+SUPPORTED_PAYMENT_PROVIDERS = {PAYMENT_PROVIDER_MOCK, PAYMENT_PROVIDER_TELEGRAM_STARS}
 
 ADMIN_CLAIM_TOKEN_TTL_DAYS = 365
 CLAIM_TOKEN_ALPHABET = string.ascii_uppercase + string.digits
@@ -137,6 +146,15 @@ class BusinessCabinetService:
     def _require_admin(self, tg_user_id: int) -> None:
         if not self.is_admin(tg_user_id):
             raise AccessDeniedError("Ця дія доступна лише адміністратору.")
+
+    def get_payment_provider(self) -> str:
+        raw = (CFG.business_payment_provider or "").strip().lower()
+        if raw in SUPPORTED_PAYMENT_PROVIDERS:
+            return raw
+        return PAYMENT_PROVIDER_TELEGRAM_STARS
+
+    def get_plan_price_stars(self, tier: str) -> int:
+        return int(PLAN_STARS_PRICES.get(str(tier).strip().lower(), 0))
 
     async def _generate_unique_claim_token(self) -> str:
         token = ""
@@ -599,7 +617,7 @@ class BusinessCabinetService:
         place_id: int,
         tier: str,
     ) -> dict[str, Any]:
-        """Owner-level plan switch (manual MVP, no auto-billing)."""
+        """Apply subscription tier change and sync verified flags."""
         normalized_tier = tier.strip().lower()
         if normalized_tier not in SUPPORTED_TIERS:
             raise ValidationError("Невідомий тариф.")
@@ -651,3 +669,154 @@ class BusinessCabinetService:
             ),
         )
         return subscription
+
+    async def create_mock_payment_intent(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        tier: str,
+    ) -> dict[str, Any]:
+        """Create mock payment intent and write invoice_created event."""
+        normalized_tier = str(tier).strip().lower()
+        if normalized_tier not in PAID_TIERS:
+            raise ValidationError("Для цього тарифу оплата не потрібна.")
+        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_manage:
+            raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
+
+        amount_stars = self.get_plan_price_stars(normalized_tier)
+        if amount_stars <= 0:
+            raise ValidationError("Для цього тарифу ще не налаштована ціна.")
+
+        # Keep callback payload compact but unique enough for test simulation.
+        external_payment_id = f"mock_{int(_utc_now().timestamp())}_{secrets.token_hex(4)}"
+        raw_payload = _to_json(
+            {
+                "source": "businessbot_mock_ui",
+                "tg_user_id": int(tg_user_id),
+                "place_id": int(place_id),
+                "tier": normalized_tier,
+                "amount_stars": amount_stars,
+            }
+        )
+        inserted = await self.repository.create_payment_event(
+            place_id=int(place_id),
+            provider=PAYMENT_PROVIDER_MOCK,
+            external_payment_id=external_payment_id,
+            event_type="invoice_created",
+            amount_stars=amount_stars,
+            currency="XTR",
+            status="new",
+            raw_payload_json=raw_payload,
+            processed_at=None,
+        )
+        if not inserted:
+            raise RuntimeError("Не вдалося підготувати оплату. Спробуй ще раз.")
+        return {
+            "provider": PAYMENT_PROVIDER_MOCK,
+            "external_payment_id": external_payment_id,
+            "amount_stars": amount_stars,
+            "tier": normalized_tier,
+        }
+
+    async def apply_mock_payment_result(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        tier: str,
+        external_payment_id: str,
+        result: str,
+    ) -> dict[str, Any]:
+        """Apply mock payment result idempotently."""
+        normalized_tier = str(tier).strip().lower()
+        if normalized_tier not in PAID_TIERS:
+            raise ValidationError("Для цього тарифу оплата не потрібна.")
+        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_manage:
+            raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
+        if not external_payment_id:
+            raise ValidationError("Сесія оплати не знайдена. Спробуй ще раз.")
+
+        existing = await self.repository.get_payment_events_by_external_id(
+            provider=PAYMENT_PROVIDER_MOCK,
+            external_payment_id=external_payment_id,
+        )
+        has_invoice = any(
+            int(row.get("place_id") or 0) == int(place_id) and str(row.get("event_type") or "") == "invoice_created"
+            for row in existing
+        )
+        if not has_invoice:
+            raise ValidationError("Сесія оплати застаріла або не знайдена. Запусти оплату ще раз.")
+
+        normalized_result = str(result).strip().lower()
+        if normalized_result not in {"success", "cancel", "fail"}:
+            raise ValidationError("Невідомий результат оплати.")
+
+        amount_stars = self.get_plan_price_stars(normalized_tier)
+        event_type_map = {
+            "success": "payment_succeeded",
+            "cancel": "payment_canceled",
+            "fail": "payment_failed",
+        }
+        status_map = {
+            "success": "processed",
+            "cancel": "failed",
+            "fail": "failed",
+        }
+        event_type = event_type_map[normalized_result]
+        inserted = await self.repository.create_payment_event(
+            place_id=int(place_id),
+            provider=PAYMENT_PROVIDER_MOCK,
+            external_payment_id=external_payment_id,
+            event_type=event_type,
+            amount_stars=amount_stars,
+            currency="XTR",
+            status=status_map[normalized_result],
+            raw_payload_json=_to_json(
+                {
+                    "source": "businessbot_mock_ui",
+                    "result": normalized_result,
+                    "tg_user_id": int(tg_user_id),
+                    "place_id": int(place_id),
+                    "tier": normalized_tier,
+                }
+            ),
+            processed_at=_utc_now().isoformat(),
+        )
+        if not inserted:
+            return {
+                "applied": False,
+                "duplicate": True,
+                "result": normalized_result,
+                "subscription": None,
+            }
+
+        subscription: dict[str, Any] | None = None
+        if normalized_result == "success":
+            subscription = await self.change_subscription_tier(
+                tg_user_id=tg_user_id,
+                place_id=place_id,
+                tier=normalized_tier,
+            )
+        else:
+            await self.repository.write_audit_log(
+                place_id=int(place_id),
+                actor_tg_user_id=int(tg_user_id),
+                action=f"payment_{normalized_result}",
+                payload_json=_to_json(
+                    {
+                        "provider": PAYMENT_PROVIDER_MOCK,
+                        "external_payment_id": external_payment_id,
+                        "tier": normalized_tier,
+                        "amount_stars": amount_stars,
+                    }
+                ),
+            )
+        return {
+            "applied": True,
+            "duplicate": False,
+            "result": normalized_result,
+            "subscription": subscription,
+        }

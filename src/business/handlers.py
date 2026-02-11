@@ -21,6 +21,8 @@ from business.service import (
     AccessDeniedError,
     BusinessCabinetService,
     NotFoundError,
+    PAYMENT_PROVIDER_MOCK,
+    PAYMENT_PROVIDER_TELEGRAM_STARS,
     ValidationError,
 )
 from business.ui import bind_ui_message_id, render as ui_render, try_delete_user_message
@@ -93,12 +95,18 @@ CB_TOKG_PLACE_PAGE_PREFIX = "btokg_pp:"
 CB_TOKG_PLACE_ROTATE_PREFIX = "btokg_r:"
 CB_EDIT_BUILDING_PICK_PREFIX = "bebld:"
 CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
+CB_PAYMENT_RESULT_PREFIX = "bpayr:"
 
 PLAN_TITLES = {
     "free": "Free",
     "light": "Light",
     "pro": "Pro",
     "partner": "Partner",
+}
+PLAN_STARS = {
+    "light": 1000,
+    "pro": 2500,
+    "partner": 5000,
 }
 
 OWNERSHIP_TITLES = {
@@ -549,6 +557,9 @@ def build_plan_keyboard(
     first_row = []
     for tier in ("free", "light"):
         title = PLAN_TITLES[tier]
+        stars = PLAN_STARS.get(tier)
+        if stars:
+            title = f"{title} ({stars}⭐)"
         if tier == current_tier:
             title = f"• {title}"
         cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
@@ -558,6 +569,9 @@ def build_plan_keyboard(
     second_row = []
     for tier in ("pro", "partner"):
         title = PLAN_TITLES[tier]
+        stars = PLAN_STARS.get(tier)
+        if stars:
+            title = f"{title} ({stars}⭐)"
         if tier == current_tier:
             title = f"• {title}"
         cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
@@ -567,6 +581,27 @@ def build_plan_keyboard(
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data=back_cb)])
     buttons.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_mock_payment_keyboard(
+    *,
+    place_id: int,
+    tier: str,
+    external_payment_id: str,
+    source: str,
+) -> InlineKeyboardMarkup:
+    def cb(result: str) -> str:
+        return f"{CB_PAYMENT_RESULT_PREFIX}{int(place_id)}:{tier}:{external_payment_id}:{result}:{source}"
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Імітувати успішну оплату", callback_data=cb("success"))],
+            [InlineKeyboardButton(text="❌ Імітувати відміну", callback_data=cb("cancel"))],
+            [InlineKeyboardButton(text="⚠️ Імітувати помилку", callback_data=cb("fail"))],
+            [InlineKeyboardButton(text="« Назад", callback_data=f"bp_menu:{int(place_id)}:{source}")],
+            [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+        ]
+    )
 
 
 def build_moderation_keyboard(owner_id: int) -> InlineKeyboardMarkup:
@@ -2130,38 +2165,156 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
     place_id = int(payload[1])
     tier = payload[2]
     source = payload[3] if len(payload) == 4 else "card"
+    normalized_tier = str(tier).strip().lower()
+
+    # Free plan does not require payment.
+    if normalized_tier == "free":
+        try:
+            subscription = await cabinet_service.change_subscription_tier(
+                tg_user_id=callback.from_user.id,
+                place_id=place_id,
+                tier=tier,
+            )
+        except (ValidationError, NotFoundError, AccessDeniedError) as error:
+            await callback.answer(str(error), show_alert=True)
+            return
+        if not callback.message:
+            await callback.answer("Тариф оновлено")
+            return
+
+        rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+        item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+        place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
+        back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text=f"✅ Тариф оновлено.\n\nОбери тариф для <b>{place_name}</b>:",
+            reply_markup=build_plan_keyboard(
+                place_id,
+                subscription["tier"],
+                back_callback_data=back_cb,
+                source=source,
+            ),
+        )
+        await callback.answer("Тариф оновлено")
+        return
+
+    provider = cabinet_service.get_payment_provider()
+    if provider == PAYMENT_PROVIDER_TELEGRAM_STARS:
+        await callback.answer("Оплата Stars буде підключена окремим кроком. Поки недоступно.", show_alert=True)
+        return
+    if provider != PAYMENT_PROVIDER_MOCK:
+        await callback.answer("Невідомий провайдер оплати в конфігурації.", show_alert=True)
+        return
+
     try:
-        subscription = await cabinet_service.change_subscription_tier(
+        intent = await cabinet_service.create_mock_payment_intent(
             tg_user_id=callback.from_user.id,
             place_id=place_id,
-            tier=tier,
+            tier=normalized_tier,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
         await callback.answer(str(error), show_alert=True)
         return
+    except Exception:
+        logger.exception("Failed to create mock payment intent place_id=%s tier=%s", place_id, normalized_tier)
+        await callback.answer("Не вдалося підготувати оплату. Спробуй ще раз.", show_alert=True)
+        return
+
     if not callback.message:
-        await callback.answer("Тариф оновлено")
+        await callback.answer("Оплата підготовлена")
+        return
+
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=(
+            f"💳 <b>Оплата тарифу {PLAN_TITLES.get(normalized_tier, normalized_tier)}</b>\n\n"
+            f"Заклад: <b>{place_name}</b>\n"
+            f"Сума: <b>{intent['amount_stars']}⭐</b>\n"
+            "Режим: <b>TEST / MOCK</b>\n\n"
+            "Обери результат симуляції оплати:"
+        ),
+        reply_markup=build_mock_payment_keyboard(
+            place_id=place_id,
+            tier=normalized_tier,
+            external_payment_id=str(intent["external_payment_id"]),
+            source=source,
+        ),
+    )
+    await callback.answer("Оплата підготовлена")
+
+
+@router.callback_query(F.data.startswith(CB_PAYMENT_RESULT_PREFIX))
+async def cb_mock_payment_result(callback: CallbackQuery) -> None:
+    payload = callback.data.removeprefix(CB_PAYMENT_RESULT_PREFIX).split(":")
+    if len(payload) != 5:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(payload[0])
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+    tier = payload[1]
+    external_payment_id = payload[2]
+    result = payload[3]
+    source = payload[4] or "card"
+
+    try:
+        outcome = await cabinet_service.apply_mock_payment_result(
+            tg_user_id=callback.from_user.id,
+            place_id=place_id,
+            tier=tier,
+            external_payment_id=external_payment_id,
+            result=result,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    if not callback.message:
+        await callback.answer("Готово")
         return
 
     rows = await cabinet_service.list_user_businesses(callback.from_user.id)
     item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
     place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
     back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+    current_tier = str(item.get("tier") if item else "free")
+
+    if outcome.get("duplicate"):
+        note = "ℹ️ Цю подію вже оброблено раніше."
+    elif result == "success":
+        note = "✅ Оплату успішно імітовано. Тариф активовано."
+    elif result == "cancel":
+        note = "ℹ️ Оплату скасовано. Тариф не змінено."
+    else:
+        note = "⚠️ Імітація помилки оплати. Тариф не змінено."
 
     await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
     await ui_render(
         callback.message.bot,
         chat_id=callback.message.chat.id,
         prefer_message_id=callback.message.message_id,
-        text=f"✅ Тариф оновлено.\n\nОбери тариф для <b>{place_name}</b>:",
+        text=f"{note}\n\nОбери тариф для <b>{place_name}</b>:",
         reply_markup=build_plan_keyboard(
             place_id,
-            subscription["tier"],
+            current_tier,
             back_callback_data=back_cb,
             source=source,
         ),
     )
-    await callback.answer("Тариф оновлено")
+    await callback.answer("Готово")
 
 
 @router.message(Command("moderation"))
