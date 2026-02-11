@@ -409,6 +409,41 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def create_service_if_missing(self, service_name: str) -> dict[str, Any]:
+        """Create category if missing (case-insensitive)."""
+        clean_name = str(service_name or "").strip()
+        if not clean_name:
+            raise ValueError("service_name is required")
+
+        async with open_business_db() as db:
+            async with db.execute(
+                "SELECT id, name FROM general_services WHERE lower(name) = lower(?)",
+                (clean_name,),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    return {"id": int(row["id"]), "name": str(row["name"]), "created": False}
+
+            cursor = await execute_write_with_retry(
+                db,
+                "INSERT INTO general_services(name) VALUES(?)",
+                (clean_name,),
+            )
+            service_id = int(cursor.lastrowid)
+            return {"id": service_id, "name": clean_name, "created": True}
+
+    async def rename_service(self, service_id: int, service_name: str) -> bool:
+        clean_name = str(service_name or "").strip()
+        if not clean_name:
+            raise ValueError("service_name is required")
+        async with open_business_db() as db:
+            cursor = await execute_write_with_retry(
+                db,
+                "UPDATE general_services SET name=? WHERE id=?",
+                (clean_name, int(service_id)),
+            )
+            return int(cursor.rowcount or 0) > 0
+
     async def get_place(self, place_id: int) -> dict[str, Any] | None:
         async with open_business_db() as db:
             async with db.execute(
