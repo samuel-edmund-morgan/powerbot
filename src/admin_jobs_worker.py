@@ -32,6 +32,10 @@ JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
 JOB_KIND_SENSORS_FREEZE_ALL = "sensors_freeze_all"
 JOB_KIND_SENSORS_UNFREEZE_ALL = "sensors_unfreeze_all"
 
+# Best-effort cache for admin bot username used in deep-links.
+_ADMIN_BOT_USERNAME_CACHE: str | None = None
+_ADMIN_BOT_USERNAME_RESOLVED = False
+
 
 async def _handle_light_notify(job: dict) -> None:
     desired = str(job.get("payload", {}).get("value", "")).strip().lower()
@@ -149,7 +153,14 @@ async def _handle_sensors_unfreeze_all(job: dict) -> tuple[int, int]:
     return unfrozen_ok, total
 
 
-def _render_owner_request_alert_text(payload: dict) -> str:
+def _build_adminbot_start_url(admin_bot_username: str | None, request_id: int) -> str | None:
+    username = str(admin_bot_username or "").strip().lstrip("@")
+    if not username or request_id <= 0:
+        return None
+    return f"https://t.me/{username}?start=bmod_{request_id}"
+
+
+def _render_owner_request_alert_text(payload: dict, *, deep_link_url: str | None = None) -> str:
     request_id = int(payload.get("request_id") or 0)
     place_id = int(payload.get("place_id") or 0)
     place_name = html.escape(str(payload.get("place_name") or f"place_id={place_id}"))
@@ -169,7 +180,7 @@ def _render_owner_request_alert_text(payload: dict) -> str:
     owner_link = f'<a href="tg://user?id={owner_tg_user_id}">{owner_label}</a>' if owner_tg_user_id > 0 else owner_label
     source = html.escape(str(payload.get("source") or "unknown"))
     created_at = html.escape(str(payload.get("created_at") or ""))
-    return (
+    text = (
         "🛎 Нова заявка власника бізнесу\n\n"
         f"Заявка: <code>{request_id}</code>\n"
         f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
@@ -178,15 +189,36 @@ def _render_owner_request_alert_text(payload: dict) -> str:
         f"Створено: {created_at}"
         "\n\n⚙️ Модерація: відкрий <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>."
     )
+    if deep_link_url:
+        safe_url = html.escape(deep_link_url, quote=True)
+        text += f"\n🔗 Швидкий перехід: <a href=\"{safe_url}\">відкрити заявку</a>."
+    return text
 
 
-def _owner_request_alert_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🛡 Модерація", callback_data="abiz_mod")],
-            [InlineKeyboardButton(text="🏠 Головне меню", callback_data="admin_refresh")],
-        ]
-    )
+def _owner_request_alert_keyboard(*, request_id: int, deep_link_url: str | None = None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="🛡 Відкрити заявку", callback_data=f"abiz_mod_jump|{int(request_id)}")],
+        [InlineKeyboardButton(text="🧭 Вся модерація", callback_data="abiz_mod")],
+    ]
+    if deep_link_url:
+        rows.append([InlineKeyboardButton(text="🔗 Deep-link", url=deep_link_url)])
+    rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="admin_refresh")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _resolve_admin_bot_username(bot: Bot) -> str | None:
+    global _ADMIN_BOT_USERNAME_CACHE, _ADMIN_BOT_USERNAME_RESOLVED
+    if _ADMIN_BOT_USERNAME_RESOLVED:
+        return _ADMIN_BOT_USERNAME_CACHE
+    _ADMIN_BOT_USERNAME_RESOLVED = True
+    try:
+        me = await bot.get_me()
+        username = str(getattr(me, "username", "") or "").strip()
+        _ADMIN_BOT_USERNAME_CACHE = username or None
+    except Exception:
+        logger.exception("Failed to resolve admin bot username for deep-link")
+        _ADMIN_BOT_USERNAME_CACHE = None
+    return _ADMIN_BOT_USERNAME_CACHE
 
 
 async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
@@ -201,7 +233,6 @@ async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
     if not (CFG.admin_bot_api_key or "").strip():
         raise ValueError("admin_owner_request_alert requires non-empty ADMIN_BOT_API_KEY")
 
-    text = _render_owner_request_alert_text(payload)
     total = len(CFG.admin_ids)
     sent_ok = 0
 
@@ -209,8 +240,11 @@ async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
         token=CFG.admin_bot_api_key,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    kb = _owner_request_alert_keyboard()
     try:
+        admin_bot_username = await _resolve_admin_bot_username(admin_bot)
+        deep_link_url = _build_adminbot_start_url(admin_bot_username, request_id)
+        text = _render_owner_request_alert_text(payload, deep_link_url=deep_link_url)
+        kb = _owner_request_alert_keyboard(request_id=request_id, deep_link_url=deep_link_url)
         for admin_id in CFG.admin_ids:
             try:
                 # Keep admin chat clean: owner-request alerts should behave like single-message UI.
