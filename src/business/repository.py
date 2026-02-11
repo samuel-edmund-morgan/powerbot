@@ -627,6 +627,23 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def get_pending_owner_request_for_place(self, place_id: int) -> dict[str, Any] | None:
+        async with open_business_db() as db:
+            async with db.execute(
+                """SELECT bo.id AS owner_id, bo.place_id, bo.tg_user_id, bo.role, bo.status,
+                          bo.created_at, p.name AS place_name, p.address AS place_address,
+                          s.username, s.first_name
+                     FROM business_owners bo
+                     JOIN places p ON p.id = bo.place_id
+                     LEFT JOIN subscribers s ON s.chat_id = bo.tg_user_id
+                    WHERE bo.place_id = ? AND bo.status = 'pending'
+                    ORDER BY bo.created_at ASC
+                    LIMIT 1""",
+                (int(place_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
     async def update_owner_status(
         self,
         owner_id: int,

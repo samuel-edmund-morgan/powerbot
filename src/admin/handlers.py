@@ -87,6 +87,8 @@ CB_BIZ_PLACES_HIDE_PREFIX = "abiz_places_hide|"
 CB_BIZ_PLACES_HIDE_CONFIRM_PREFIX = "abiz_places_hidec|"
 CB_BIZ_PLACES_DELETE_PREFIX = "abiz_places_del|"
 CB_BIZ_PLACES_DELETE_CONFIRM_PREFIX = "abiz_places_delc|"
+CB_BIZ_PLACES_REJECT_OWNER_PREFIX = "abiz_places_ro|"
+CB_BIZ_PLACES_REJECT_OWNER_CONFIRM_PREFIX = "abiz_places_roc|"
 
 business_service = BusinessCabinetService()
 business_repo = BusinessRepository()
@@ -2444,6 +2446,15 @@ async def _render_biz_place_detail(
         )
         return
 
+    pending_owner: dict[str, object] | None = None
+    try:
+        pending_owner = await business_service.get_pending_owner_request_for_place(int(chat_id), int(place_id))
+    except BusinessAccessDeniedError:
+        pending_owner = None
+    except Exception:
+        logger.exception("Failed to load pending owner request for place %s", place_id)
+        pending_owner = None
+
     published = int(place.get("is_published") or 0) == 1
     published_label = "✅ Опублікований" if published else "📝 Чернетка (не видна мешканцям)"
 
@@ -2468,12 +2479,39 @@ async def _render_biz_place_detail(
         f"Адреса: {addr}"
     )
 
+    if pending_owner:
+        owner_id = int(pending_owner.get("owner_id") or 0)
+        owner_tg_user_id = int(pending_owner.get("tg_user_id") or 0)
+        owner_label = (
+            f"@{pending_owner.get('username')}"
+            if pending_owner.get("username")
+            else str(pending_owner.get("first_name") or "unknown")
+        )
+        text += (
+            "\n\n🛡 Pending owner request:\n"
+            f"request: <code>{owner_id}</code>\n"
+            f"user: <b>{escape(owner_label)}</b> / <code>{owner_tg_user_id}</code>\n"
+            f"created: <code>{escape(str(pending_owner.get('created_at') or ''))}</code>"
+        )
+
     rows: list[list[InlineKeyboardButton]] = []
     if published:
         rows.append([InlineKeyboardButton(text="🙈 Приховати (unpublish)", callback_data=f"{CB_BIZ_PLACES_HIDE_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
     else:
         rows.append([InlineKeyboardButton(text="✅ Опублікувати", callback_data=f"{CB_BIZ_PLACES_PUBLISH_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
         rows.append([InlineKeyboardButton(text="🗑 Видалити чернетку", callback_data=f"{CB_BIZ_PLACES_DELETE_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
+    if pending_owner:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="❌ Відхилити owner-заявку",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_REJECT_OWNER_PREFIX}{filter_code}|{int(place_id)}|{int(service_id)}|"
+                        f"{int(place_page)}|{int(service_page)}|{int(pending_owner.get('owner_id') or 0)}"
+                    ),
+                )
+            ]
+        )
 
     rows.append([InlineKeyboardButton(text="« Заклади", callback_data=f"{CB_BIZ_PLACES_PLACE_PAGE_PREFIX}{filter_code}|{int(service_id)}|{int(place_page)}|{int(service_page)}")])
     rows.append([InlineKeyboardButton(text="« Категорії", callback_data=f"{CB_BIZ_PLACES_SVC_PAGE_PREFIX}{filter_code}|{int(service_page)}")])
@@ -2745,4 +2783,107 @@ async def cb_biz_places_delete(callback: CallbackQuery) -> None:
         place_page=place_page,
         service_page=service_page,
         prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_REJECT_OWNER_PREFIX))
+async def cb_biz_places_reject_owner_confirm_screen(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    parts = callback.data.split("|")
+    if len(parts) < 7:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+        owner_id = int(parts[6])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    text = (
+        "⚠️ <b>Підтвердження</b>\n\n"
+        "Відхилити pending owner‑заявку для цього закладу?\n"
+        f"Owner request: <code>{owner_id}</code>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ Так, відхилити",
+                    callback_data=(
+                        f"{CB_BIZ_PLACES_REJECT_OWNER_CONFIRM_PREFIX}{filter_code}|{place_id}|{service_id}|"
+                        f"{place_page}|{service_page}|{owner_id}"
+                    ),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}{filter_code}|{place_id}|{service_id}|{place_page}|{service_page}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PLACES_REJECT_OWNER_CONFIRM_PREFIX))
+async def cb_biz_places_reject_owner(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Відхиляю…")
+    parts = callback.data.split("|")
+    if len(parts) < 7:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    filter_code = parts[1]
+    try:
+        place_id = int(parts[2])
+        service_id = int(parts[3])
+        place_page = int(parts[4])
+        service_page = int(parts[5])
+        owner_id = int(parts[6])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await business_service.reject_owner_request(int(callback.from_user.id), owner_id)
+    except (BusinessValidationError, BusinessNotFoundError, BusinessAccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to reject pending owner request from place detail")
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+
+    await _notify_owner_via_business_bot(
+        int(updated["tg_user_id"]),
+        "❌ Твою заявку на керування бізнесом відхилено адміністратором.",
+    )
+
+    await _render_biz_place_detail(
+        callback.bot,
+        callback.message.chat.id,
+        filter_code=filter_code,
+        place_id=place_id,
+        service_id=service_id,
+        place_page=place_page,
+        service_page=service_page,
+        prefer_message_id=callback.message.message_id,
+        note=f"✅ Owner-заявку <code>{owner_id}</code> відхилено.",
     )
