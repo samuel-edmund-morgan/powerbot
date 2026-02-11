@@ -896,6 +896,50 @@ class BusinessRepository:
                 (place_id, actor_tg_user_id, action, payload_json, created_at),
             )
 
+    async def write_audit_logs_bulk(
+        self,
+        rows: Sequence[tuple[int, int | None, str, str | None]],
+    ) -> None:
+        """Insert many audit rows in a single short write transaction."""
+        if not rows:
+            return
+        created_at = utc_now_iso()
+        last_error: Exception | None = None
+        for attempt in range(WRITE_RETRY_ATTEMPTS):
+            try:
+                async with open_business_db() as db:
+                    await db.execute("BEGIN")
+                    await db.executemany(
+                        """INSERT INTO business_audit_log(
+                               place_id, actor_tg_user_id, action, payload_json, created_at
+                           ) VALUES(?, ?, ?, ?, ?)""",
+                        [
+                            (
+                                int(place_id),
+                                int(actor_tg_user_id) if actor_tg_user_id is not None else None,
+                                str(action),
+                                payload_json,
+                                created_at,
+                            )
+                            for (place_id, actor_tg_user_id, action, payload_json) in rows
+                        ],
+                    )
+                    await db.commit()
+                    return
+            except aiosqlite.OperationalError as error:
+                if "database is locked" not in str(error).lower():
+                    raise
+                last_error = error
+                backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                await asyncio.sleep(backoff)
+                continue
+            except Exception as error:
+                last_error = error
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Unexpected retry loop state")
+
     async def create_payment_event(
         self,
         *,
