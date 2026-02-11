@@ -690,7 +690,7 @@ _ADMIN_JOB_STATUSES = {"pending", "running", "done", "failed", "canceled"}
 
 
 def _is_sqlite_locked_error(exc: BaseException) -> bool:
-    if not isinstance(exc, sqlite3.OperationalError):
+    if not isinstance(exc, (sqlite3.OperationalError, aiosqlite.OperationalError)):
         return False
     msg = str(exc).lower()
     return "database is locked" in msg or "database table is locked" in msg
@@ -982,13 +982,16 @@ async def get_subscriber_building(chat_id: int) -> int | None:
 
 async def set_subscriber_building(chat_id: int, building_id: int) -> bool:
     """Встановити будинок для підписника. Повертає True якщо успішно."""
-    async with open_db() as db:
-        result = await db.execute(
-            "UPDATE subscribers SET building_id = ? WHERE chat_id = ?",
-            (building_id, chat_id)
-        )
-        await db.commit()
-        return result.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            result = await db.execute(
+                "UPDATE subscribers SET building_id = ? WHERE chat_id = ?",
+                (building_id, chat_id)
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_subscriber_section(chat_id: int) -> int | None:
@@ -1003,13 +1006,16 @@ async def get_subscriber_section(chat_id: int) -> int | None:
 
 async def set_subscriber_section(chat_id: int, section_id: int | None) -> bool:
     """Встановити секцію для підписника. Повертає True якщо успішно."""
-    async with open_db() as db:
-        result = await db.execute(
-            "UPDATE subscribers SET section_id = ? WHERE chat_id = ?",
-            (section_id, chat_id),
-        )
-        await db.commit()
-        return result.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            result = await db.execute(
+                "UPDATE subscribers SET section_id = ? WHERE chat_id = ?",
+                (section_id, chat_id),
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_subscriber_building_and_section(chat_id: int) -> tuple[int | None, int | None]:
@@ -1420,14 +1426,17 @@ async def add_event(
     event_type: 'up' або 'down'
     Повертає timestamp події.
     """
-    now = datetime.now()
-    async with open_db() as db:
-        await db.execute(
-            "INSERT INTO events (event_type, timestamp, building_id, section_id) VALUES (?, ?, ?, ?)",
-            (event_type, now.isoformat(), building_id, section_id),
-        )
-        await db.commit()
-    return now
+    async def _op() -> datetime:
+        now = datetime.now()
+        async with open_db() as db:
+            await db.execute(
+                "INSERT INTO events (event_type, timestamp, building_id, section_id) VALUES (?, ?, ?, ?)",
+                (event_type, now.isoformat(), building_id, section_id),
+            )
+            await db.commit()
+        return now
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_last_event(
@@ -2066,19 +2075,22 @@ async def vote_heating(
     if section_id not in VALID_SECTION_IDS:
         return
     
-    now = datetime.now().isoformat()
-    async with open_db() as db:
-        await db.execute(
-            """INSERT INTO heating_votes(chat_id, has_heating, voted_at, building_id, section_id)
-               VALUES(?, ?, ?, ?, ?)
-               ON CONFLICT(chat_id) DO UPDATE SET
-                   has_heating=excluded.has_heating,
-                   voted_at=excluded.voted_at,
-                   building_id=excluded.building_id,
-                   section_id=excluded.section_id""",
-            (chat_id, 1 if has_heating else 0, now, building_id, section_id)
-        )
-        await db.commit()
+    async def _op() -> None:
+        now = datetime.now().isoformat()
+        async with open_db() as db:
+            await db.execute(
+                """INSERT INTO heating_votes(chat_id, has_heating, voted_at, building_id, section_id)
+                   VALUES(?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET
+                       has_heating=excluded.has_heating,
+                       voted_at=excluded.voted_at,
+                       building_id=excluded.building_id,
+                       section_id=excluded.section_id""",
+                (chat_id, 1 if has_heating else 0, now, building_id, section_id)
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def vote_water(
@@ -2105,19 +2117,22 @@ async def vote_water(
     if section_id not in VALID_SECTION_IDS:
         return
     
-    now = datetime.now().isoformat()
-    async with open_db() as db:
-        await db.execute(
-            """INSERT INTO water_votes(chat_id, has_water, voted_at, building_id, section_id)
-               VALUES(?, ?, ?, ?, ?)
-               ON CONFLICT(chat_id) DO UPDATE SET
-                   has_water=excluded.has_water,
-                   voted_at=excluded.voted_at,
-                   building_id=excluded.building_id,
-                   section_id=excluded.section_id""",
-            (chat_id, 1 if has_water else 0, now, building_id, section_id)
-        )
-        await db.commit()
+    async def _op() -> None:
+        now = datetime.now().isoformat()
+        async with open_db() as db:
+            await db.execute(
+                """INSERT INTO water_votes(chat_id, has_water, voted_at, building_id, section_id)
+                   VALUES(?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET
+                       has_water=excluded.has_water,
+                       voted_at=excluded.voted_at,
+                       building_id=excluded.building_id,
+                       section_id=excluded.section_id""",
+                (chat_id, 1 if has_water else 0, now, building_id, section_id)
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def get_heating_stats(building_id: int | None = None, section_id: int | None = None) -> dict:
@@ -2237,40 +2252,46 @@ async def reset_votes(building_id: int | None = None, section_id: int | None = N
     Args:
         building_id: ID будинку для скидання (якщо None - скидаємо всі голоси)
     """
-    async with open_db() as db:
-        if building_id is not None and section_id is not None:
-            await db.execute(
-                "DELETE FROM heating_votes WHERE building_id = ? AND section_id = ?",
-                (building_id, section_id),
-            )
-            await db.execute(
-                "DELETE FROM water_votes WHERE building_id = ? AND section_id = ?",
-                (building_id, section_id),
-            )
-        elif building_id is not None:
-            await db.execute("DELETE FROM heating_votes WHERE building_id = ?", (building_id,))
-            await db.execute("DELETE FROM water_votes WHERE building_id = ?", (building_id,))
-        else:
-            await db.execute("DELETE FROM heating_votes")
-            await db.execute("DELETE FROM water_votes")
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            if building_id is not None and section_id is not None:
+                await db.execute(
+                    "DELETE FROM heating_votes WHERE building_id = ? AND section_id = ?",
+                    (building_id, section_id),
+                )
+                await db.execute(
+                    "DELETE FROM water_votes WHERE building_id = ? AND section_id = ?",
+                    (building_id, section_id),
+                )
+            elif building_id is not None:
+                await db.execute("DELETE FROM heating_votes WHERE building_id = ?", (building_id,))
+                await db.execute("DELETE FROM water_votes WHERE building_id = ?", (building_id,))
+            else:
+                await db.execute("DELETE FROM heating_votes")
+                await db.execute("DELETE FROM water_votes")
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 # ============ Активні сповіщення для оновлення ============
 
 async def save_notification(chat_id: int, message_id: int, notification_type: str = "power_change"):
     """Зберегти сповіщення для подальшого оновлення (одне на чат і тип)."""
-    now = datetime.now().isoformat()
-    async with open_db() as db:
-        await db.execute(
-            "DELETE FROM active_notifications WHERE chat_id=? AND notification_type=?",
-            (chat_id, notification_type)
-        )
-        await db.execute(
-            "INSERT INTO active_notifications(chat_id, message_id, created_at, notification_type) VALUES(?, ?, ?, ?)",
-            (chat_id, message_id, now, notification_type)
-        )
-        await db.commit()
+    async def _op() -> None:
+        now = datetime.now().isoformat()
+        async with open_db() as db:
+            await db.execute(
+                "DELETE FROM active_notifications WHERE chat_id=? AND notification_type=?",
+                (chat_id, notification_type)
+            )
+            await db.execute(
+                "INSERT INTO active_notifications(chat_id, message_id, created_at, notification_type) VALUES(?, ?, ?, ?)",
+                (chat_id, message_id, now, notification_type)
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def get_active_notifications(notification_type: str | None = None) -> list[dict]:
@@ -2320,16 +2341,22 @@ async def get_active_notifications_for_chat(chat_id: int) -> list[dict]:
 
 async def delete_notification(notification_id: int):
     """Видалити сповіщення за ID."""
-    async with open_db() as db:
-        await db.execute("DELETE FROM active_notifications WHERE id=?", (notification_id,))
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute("DELETE FROM active_notifications WHERE id=?", (notification_id,))
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def clear_all_notifications():
     """Видалити всі активні сповіщення (при зміні стану світла)."""
-    async with open_db() as db:
-        await db.execute("DELETE FROM active_notifications")
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute("DELETE FROM active_notifications")
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 # ============ ЯСНО: кеш стану графіків ============
@@ -2376,37 +2403,43 @@ async def upsert_yasno_schedule_state(
     slots_hash: str | None,
     updated_at: str | None,
 ) -> None:
-    async with open_db() as db:
-        if section_id is None:
-            await db.execute(
-                """INSERT INTO yasno_schedule_state(building_id, queue_key, day_key, status, slots_hash, updated_at)
-                   VALUES(?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(building_id, queue_key, day_key)
-                   DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
-                (building_id, queue_key, day_key, status, slots_hash, updated_at),
-            )
-        else:
-            await db.execute(
-                """INSERT INTO yasno_schedule_state_v2(building_id, section_id, queue_key, day_key, status, slots_hash, updated_at)
-                   VALUES(?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(building_id, section_id, queue_key, day_key)
-                   DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
-                (building_id, section_id, queue_key, day_key, status, slots_hash, updated_at),
-            )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            if section_id is None:
+                await db.execute(
+                    """INSERT INTO yasno_schedule_state(building_id, queue_key, day_key, status, slots_hash, updated_at)
+                       VALUES(?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(building_id, queue_key, day_key)
+                       DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
+                    (building_id, queue_key, day_key, status, slots_hash, updated_at),
+                )
+            else:
+                await db.execute(
+                    """INSERT INTO yasno_schedule_state_v2(building_id, section_id, queue_key, day_key, status, slots_hash, updated_at)
+                       VALUES(?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(building_id, section_id, queue_key, day_key)
+                       DO UPDATE SET status=excluded.status, slots_hash=excluded.slots_hash, updated_at=excluded.updated_at""",
+                    (building_id, section_id, queue_key, day_key, status, slots_hash, updated_at),
+                )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 # ============ Останнє повідомлення бота (чистий чат) ============
 
 async def save_last_bot_message(chat_id: int, message_id: int):
     """Зберегти останнє повідомлення бота для чату."""
-    async with open_db() as db:
-        await db.execute(
-            "INSERT INTO last_bot_message(chat_id, message_id) VALUES(?, ?) "
-            "ON CONFLICT(chat_id) DO UPDATE SET message_id=excluded.message_id",
-            (chat_id, message_id)
-        )
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                "INSERT INTO last_bot_message(chat_id, message_id) VALUES(?, ?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET message_id=excluded.message_id",
+                (chat_id, message_id)
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def get_last_bot_message(chat_id: int) -> int | None:
@@ -2419,9 +2452,12 @@ async def get_last_bot_message(chat_id: int) -> int | None:
 
 async def delete_last_bot_message_record(chat_id: int):
     """Видалити запис про останнє повідомлення."""
-    async with open_db() as db:
-        await db.execute("DELETE FROM last_bot_message WHERE chat_id=?", (chat_id,))
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute("DELETE FROM last_bot_message WHERE chat_id=?", (chat_id,))
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 # ============ Сенсори ESP32 ============
@@ -2437,27 +2473,30 @@ async def upsert_sensor_heartbeat(
     Upsert сенсора + оновити last_heartbeat.
     Повертає True якщо сенсор був створений, False якщо оновлений.
     """
-    async with open_db() as db:
-        now = datetime.now().isoformat()
-        async with db.execute("SELECT 1 FROM sensors WHERE uuid=?", (uuid,)) as cur:
-            existed = await cur.fetchone() is not None
+    async def _op() -> bool:
+        async with open_db() as db:
+            now = datetime.now().isoformat()
+            async with db.execute("SELECT 1 FROM sensors WHERE uuid=?", (uuid,)) as cur:
+                existed = await cur.fetchone() is not None
 
-        await db.execute(
-            """
-            INSERT INTO sensors(uuid, building_id, section_id, name, comment, last_heartbeat, created_at, is_active)
-            VALUES(?, ?, ?, ?, ?, ?, ?, 1)
-            ON CONFLICT(uuid) DO UPDATE SET
-                building_id=excluded.building_id,
-                section_id=excluded.section_id,
-                name=COALESCE(excluded.name, sensors.name),
-                comment=COALESCE(excluded.comment, sensors.comment),
-                last_heartbeat=excluded.last_heartbeat,
-                is_active=1
-            """,
-            (uuid, building_id, section_id, name, comment, now, now),
-        )
-        await db.commit()
-        return not existed
+            await db.execute(
+                """
+                INSERT INTO sensors(uuid, building_id, section_id, name, comment, last_heartbeat, created_at, is_active)
+                VALUES(?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(uuid) DO UPDATE SET
+                    building_id=excluded.building_id,
+                    section_id=excluded.section_id,
+                    name=COALESCE(excluded.name, sensors.name),
+                    comment=COALESCE(excluded.comment, sensors.comment),
+                    last_heartbeat=excluded.last_heartbeat,
+                    is_active=1
+                """,
+                (uuid, building_id, section_id, name, comment, now, now),
+            )
+            await db.commit()
+            return not existed
+
+    return await _with_sqlite_retry(_op)
 
 
 async def register_sensor(uuid: str, building_id: int, name: str | None = None) -> bool:
@@ -2465,22 +2504,23 @@ async def register_sensor(uuid: str, building_id: int, name: str | None = None) 
     Реєстрація нового сенсора або оновлення існуючого.
     Повертає True якщо сенсор новий, False якщо оновлений.
     """
-    async with open_db() as db:
-        now = datetime.now().isoformat()
-        
-        # Перевіряємо чи сенсор вже існує
-        async with db.execute("SELECT uuid FROM sensors WHERE uuid=?", (uuid,)) as cur:
-            exists = await cur.fetchone()
-        
-        if exists:
-            # Оновлюємо існуючий сенсор
-            await db.execute(
-                "UPDATE sensors SET building_id=?, name=?, is_active=1 WHERE uuid=?",
-                (building_id, name, uuid)
-            )
-            await db.commit()
-            return False
-        else:
+    async def _op() -> bool:
+        async with open_db() as db:
+            now = datetime.now().isoformat()
+
+            # Перевіряємо чи сенсор вже існує
+            async with db.execute("SELECT uuid FROM sensors WHERE uuid=?", (uuid,)) as cur:
+                exists = await cur.fetchone()
+
+            if exists:
+                # Оновлюємо існуючий сенсор
+                await db.execute(
+                    "UPDATE sensors SET building_id=?, name=?, is_active=1 WHERE uuid=?",
+                    (building_id, name, uuid)
+                )
+                await db.commit()
+                return False
+
             # Створюємо новий сенсор
             await db.execute(
                 "INSERT INTO sensors(uuid, building_id, name, created_at, is_active) VALUES(?, ?, ?, ?, 1)",
@@ -2489,20 +2529,25 @@ async def register_sensor(uuid: str, building_id: int, name: str | None = None) 
             await db.commit()
             return True
 
+    return await _with_sqlite_retry(_op)
+
 
 async def update_sensor_heartbeat(uuid: str) -> bool:
     """
     Оновити час останнього heartbeat сенсора.
     Повертає True якщо сенсор знайдено, False якщо ні.
     """
-    async with open_db() as db:
-        now = datetime.now().isoformat()
-        cursor = await db.execute(
-            "UPDATE sensors SET last_heartbeat=? WHERE uuid=? AND is_active=1",
-            (now, uuid)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+    async def _op() -> bool:
+        async with open_db() as db:
+            now = datetime.now().isoformat()
+            cursor = await db.execute(
+                "UPDATE sensors SET last_heartbeat=? WHERE uuid=? AND is_active=1",
+                (now, uuid)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_sensor_by_uuid(uuid: str) -> dict | None:
@@ -2698,9 +2743,12 @@ async def unfreeze_sensor(uuid: str) -> bool:
 
 async def deactivate_sensor(uuid: str):
     """Деактивувати сенсор."""
-    async with open_db() as db:
-        await db.execute("UPDATE sensors SET is_active=0 WHERE uuid=?", (uuid,))
-        await db.commit()
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute("UPDATE sensors SET is_active=0 WHERE uuid=?", (uuid,))
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 async def get_sensors_count_by_building(building_id: int) -> int:
@@ -2739,36 +2787,39 @@ async def set_building_power_state(building_id: int, is_up: bool) -> bool:
     Встановити стан електропостачання будинку.
     Повертає True якщо стан змінився, False якщо залишився тим самим.
     """
-    async with open_db() as db:
-        now = datetime.now().isoformat()
-        
-        # Отримуємо поточний стан
-        async with db.execute(
-            "SELECT is_up FROM building_power_state WHERE building_id=?",
-            (building_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        
-        if row is None:
-            # Створюємо новий запис
+    async def _op() -> bool:
+        async with open_db() as db:
+            now = datetime.now().isoformat()
+
+            # Отримуємо поточний стан
+            async with db.execute(
+                "SELECT is_up FROM building_power_state WHERE building_id=?",
+                (building_id,)
+            ) as cur:
+                row = await cur.fetchone()
+
+            if row is None:
+                # Створюємо новий запис
+                await db.execute(
+                    "INSERT INTO building_power_state(building_id, is_up, last_change) VALUES(?, ?, ?)",
+                    (building_id, 1 if is_up else 0, now)
+                )
+                await db.commit()
+                return True
+
+            current_is_up = bool(row[0])
+            if current_is_up == is_up:
+                return False  # Стан не змінився
+
+            # Оновлюємо стан
             await db.execute(
-                "INSERT INTO building_power_state(building_id, is_up, last_change) VALUES(?, ?, ?)",
-                (building_id, 1 if is_up else 0, now)
+                "UPDATE building_power_state SET is_up=?, last_change=? WHERE building_id=?",
+                (1 if is_up else 0, now, building_id)
             )
             await db.commit()
             return True
-        
-        current_is_up = bool(row[0])
-        if current_is_up == is_up:
-            return False  # Стан не змінився
-        
-        # Оновлюємо стан
-        await db.execute(
-            "UPDATE building_power_state SET is_up=?, last_change=? WHERE building_id=?",
-            (1 if is_up else 0, now, building_id)
-        )
-        await db.commit()
-        return True
+
+    return await _with_sqlite_retry(_op)
 
 
 async def get_all_buildings_power_state() -> dict[int, dict]:
@@ -2816,43 +2867,46 @@ async def set_building_section_power_state(building_id: int, section_id: int, is
     Встановити стан електропостачання секції.
     Повертає True якщо стан змінився (або створено новий запис).
     """
-    async with open_db() as db:
-        now = datetime.now().isoformat()
-        async with db.execute(
-            """
-            SELECT is_up
-              FROM building_section_power_state
-             WHERE building_id=? AND section_id=?
-            """,
-            (building_id, section_id),
-        ) as cur:
-            row = await cur.fetchone()
+    async def _op() -> bool:
+        async with open_db() as db:
+            now = datetime.now().isoformat()
+            async with db.execute(
+                """
+                SELECT is_up
+                  FROM building_section_power_state
+                 WHERE building_id=? AND section_id=?
+                """,
+                (building_id, section_id),
+            ) as cur:
+                row = await cur.fetchone()
 
-        if row is None:
+            if row is None:
+                await db.execute(
+                    """
+                    INSERT INTO building_section_power_state(building_id, section_id, is_up, last_change)
+                    VALUES(?, ?, ?, ?)
+                    """,
+                    (building_id, section_id, 1 if is_up else 0, now),
+                )
+                await db.commit()
+                return True
+
+            current_is_up = bool(row[0])
+            if current_is_up == is_up:
+                return False
+
             await db.execute(
                 """
-                INSERT INTO building_section_power_state(building_id, section_id, is_up, last_change)
-                VALUES(?, ?, ?, ?)
+                UPDATE building_section_power_state
+                   SET is_up=?, last_change=?
+                 WHERE building_id=? AND section_id=?
                 """,
-                (building_id, section_id, 1 if is_up else 0, now),
+                (1 if is_up else 0, now, building_id, section_id),
             )
             await db.commit()
             return True
 
-        current_is_up = bool(row[0])
-        if current_is_up == is_up:
-            return False
-
-        await db.execute(
-            """
-            UPDATE building_section_power_state
-               SET is_up=?, last_change=?
-             WHERE building_id=? AND section_id=?
-            """,
-            (1 if is_up else 0, now, building_id, section_id),
-        )
-        await db.commit()
-        return True
+    return await _with_sqlite_retry(_op)
 
 
 async def get_all_building_sections_power_state() -> dict[tuple[int, int], dict]:
