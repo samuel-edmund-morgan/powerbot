@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import html
+import logging
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,6 +16,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from config import CFG
 
 from business.service import (
     AccessDeniedError,
@@ -23,6 +26,7 @@ from business.service import (
 )
 from business.ui import bind_ui_message_id, render as ui_render, try_delete_user_message
 
+logger = logging.getLogger(__name__)
 router = Router()
 cabinet_service = BusinessCabinetService()
 
@@ -576,29 +580,42 @@ async def notify_admins_about_owner_request(
     place_row: dict | None,
     source: str,
 ) -> None:
-    place_name = place_row["name"] if place_row else f"place_id={owner_row['place_id']}"
+    place_name_raw = place_row["name"] if place_row else f"place_id={owner_row['place_id']}"
+    place_name = html.escape(str(place_name_raw))
     if message.from_user:
-        from_label = message.from_user.username or message.from_user.full_name
+        from_label_raw = message.from_user.username or message.from_user.full_name
     else:
-        from_label = str(owner_row["tg_user_id"])
+        from_label_raw = str(owner_row["tg_user_id"])
+    from_label = html.escape(str(from_label_raw))
+    source_safe = html.escape(str(source))
+    created_at_safe = html.escape(str(owner_row.get("created_at") or ""))
     text = (
         "🛎 Нова заявка власника бізнесу\n\n"
         f"Request ID: <code>{owner_row['id']}</code>\n"
         f"Place: <b>{place_name}</b> (ID: <code>{owner_row['place_id']}</code>)\n"
         f"Telegram user: <code>{owner_row['tg_user_id']}</code>\n"
         f"From: {from_label}\n"
-        f"Source: <code>{source}</code>\n"
-        f"Created: {owner_row['created_at']}"
+        f"Source: <code>{source_safe}</code>\n"
+        f"Created: {created_at_safe}"
     )
-    # Business admin actions are handled in the separate admin bot now.
-    # We keep this notification so admins don't miss new requests.
     text += "\n\n⚙️ Модерація: відкрий <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>."
-    keyboard = None
-    for admin_id in cabinet_service.admin_ids:
+    admin_bot_token = (CFG.admin_bot_api_key or "").strip()
+    if not admin_bot_token:
+        logger.warning("Skip owner request admin notification: ADMIN_BOT_API_KEY is empty.")
+        return
+
+    admin_bot = Bot(token=admin_bot_token)
+    try:
+        for admin_id in cabinet_service.admin_ids:
+            try:
+                await admin_bot.send_message(int(admin_id), text, parse_mode=ParseMode.HTML)
+            except Exception:
+                logger.exception("Failed to send owner request notification to admin %s via adminbot", admin_id)
+    finally:
         try:
-            await message.bot.send_message(admin_id, text, reply_markup=keyboard)
+            await admin_bot.session.close()
         except Exception:
-            continue
+            pass
 
 
 async def send_main_menu(message: Message, user_id: int) -> None:
