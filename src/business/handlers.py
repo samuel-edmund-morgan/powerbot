@@ -641,8 +641,16 @@ async def notify_admins_about_owner_request(
     source: str,
 ) -> None:
     place_name_raw = str(place_row["name"]) if place_row and place_row.get("name") else "Невідомий заклад"
+    from_username = ""
+    from_first_name = ""
+    from_last_name = ""
+    from_full_name = ""
     if message.from_user:
-        from_label_raw = str(message.from_user.username or message.from_user.full_name)
+        from_username = str(message.from_user.username or "")
+        from_first_name = str(message.from_user.first_name or "")
+        from_last_name = str(message.from_user.last_name or "")
+        from_full_name = str(message.from_user.full_name or "").strip()
+        from_label_raw = str(message.from_user.username or from_full_name or owner_row["tg_user_id"])
     else:
         from_label_raw = str(owner_row["tg_user_id"])
 
@@ -652,6 +660,10 @@ async def notify_admins_about_owner_request(
         "place_name": place_name_raw,
         "owner_tg_user_id": int(owner_row["tg_user_id"]),
         "from_label": from_label_raw,
+        "from_username": from_username,
+        "from_first_name": from_first_name,
+        "from_last_name": from_last_name,
+        "from_full_name": from_full_name,
         "source": str(source),
         "created_at": str(owner_row.get("created_at") or ""),
     }

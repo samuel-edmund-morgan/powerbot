@@ -87,16 +87,27 @@ def _render_owner_request_alert_text(payload: dict) -> str:
     place_name = html.escape(str(payload.get("place_name") or f"place_id={place_id}"))
     owner_tg_user_id = int(payload.get("owner_tg_user_id") or 0)
     from_label = html.escape(str(payload.get("from_label") or owner_tg_user_id))
+    from_username = str(payload.get("from_username") or "").strip()
+    from_first_name = str(payload.get("from_first_name") or "").strip()
+    from_last_name = str(payload.get("from_last_name") or "").strip()
+    from_full_name = str(payload.get("from_full_name") or "").strip()
+    full_name = from_full_name or " ".join(part for part in [from_first_name, from_last_name] if part).strip()
+    if from_username:
+        owner_label = f"@{html.escape(from_username)}"
+    elif full_name:
+        owner_label = html.escape(full_name)
+    else:
+        owner_label = from_label
+    owner_link = f'<a href="tg://user?id={owner_tg_user_id}">{owner_label}</a>' if owner_tg_user_id > 0 else owner_label
     source = html.escape(str(payload.get("source") or "unknown"))
     created_at = html.escape(str(payload.get("created_at") or ""))
     return (
         "🛎 Нова заявка власника бізнесу\n\n"
-        f"Request ID: <code>{request_id}</code>\n"
-        f"Place: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
-        f"Telegram user: <code>{owner_tg_user_id}</code>\n"
-        f"From: {from_label}\n"
-        f"Source: <code>{source}</code>\n"
-        f"Created: {created_at}"
+        f"Заявка: <code>{request_id}</code>\n"
+        f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Власник: {owner_link} / <code>{owner_tg_user_id}</code>\n"
+        f"Джерело: <code>{source}</code>\n"
+        f"Створено: {created_at}"
         "\n\n⚙️ Модерація: відкрий <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>."
     )
 
