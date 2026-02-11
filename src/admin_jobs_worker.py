@@ -1,9 +1,13 @@
 import asyncio
 import logging
+import html
 
 from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from config import CFG
 from database import (
     claim_next_admin_job,
     finish_admin_job,
@@ -17,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 JOB_KIND_BROADCAST = "broadcast"
 JOB_KIND_LIGHT_NOTIFY = "light_notify"
+JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
 
 
 async def _handle_light_notify(job: dict) -> None:
@@ -75,6 +80,66 @@ async def _handle_broadcast(bot: Bot, job: dict) -> tuple[int, int]:
     return sent_ok, total
 
 
+def _render_owner_request_alert_text(payload: dict) -> str:
+    request_id = int(payload.get("request_id") or 0)
+    place_id = int(payload.get("place_id") or 0)
+    place_name = html.escape(str(payload.get("place_name") or f"place_id={place_id}"))
+    owner_tg_user_id = int(payload.get("owner_tg_user_id") or 0)
+    from_label = html.escape(str(payload.get("from_label") or owner_tg_user_id))
+    source = html.escape(str(payload.get("source") or "unknown"))
+    created_at = html.escape(str(payload.get("created_at") or ""))
+    return (
+        "🛎 Нова заявка власника бізнесу\n\n"
+        f"Request ID: <code>{request_id}</code>\n"
+        f"Place: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Telegram user: <code>{owner_tg_user_id}</code>\n"
+        f"From: {from_label}\n"
+        f"Source: <code>{source}</code>\n"
+        f"Created: {created_at}"
+        "\n\n⚙️ Модерація: відкрий <b>adminbot</b> → <b>Бізнес</b> → <b>Модерація</b>."
+    )
+
+
+async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
+    payload = job.get("payload") or {}
+    request_id = int(payload.get("request_id") or 0)
+    place_id = int(payload.get("place_id") or 0)
+    owner_tg_user_id = int(payload.get("owner_tg_user_id") or 0)
+    if request_id <= 0 or place_id <= 0 or owner_tg_user_id <= 0:
+        raise ValueError("admin_owner_request_alert requires request_id/place_id/owner_tg_user_id")
+    if not CFG.admin_ids:
+        raise ValueError("admin_owner_request_alert requires non-empty ADMIN_IDS")
+    if not (CFG.admin_bot_api_key or "").strip():
+        raise ValueError("admin_owner_request_alert requires non-empty ADMIN_BOT_API_KEY")
+
+    text = _render_owner_request_alert_text(payload)
+    total = len(CFG.admin_ids)
+    sent_ok = 0
+
+    admin_bot = Bot(
+        token=CFG.admin_bot_api_key,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        for admin_id in CFG.admin_ids:
+            try:
+                await admin_bot.send_message(int(admin_id), text)
+                sent_ok += 1
+            except Exception:
+                logger.exception(
+                    "Failed to send admin owner request alert to admin_id=%s request_id=%s",
+                    admin_id,
+                    request_id,
+                )
+    finally:
+        try:
+            await admin_bot.session.close()
+        except Exception:
+            pass
+
+    return sent_ok, total
+
+
 async def admin_jobs_worker_loop(bot: Bot, *, poll_interval_sec: float = 1.0) -> None:
     """Background worker that executes jobs enqueued by the admin bot."""
     sleep_s = max(0.2, float(poll_interval_sec))
@@ -94,6 +159,8 @@ async def admin_jobs_worker_loop(bot: Bot, *, poll_interval_sec: float = 1.0) ->
                     done_current, done_total = 1, 1
                 elif kind == JOB_KIND_BROADCAST:
                     done_current, done_total = await _handle_broadcast(bot, job)
+                elif kind == JOB_KIND_ADMIN_OWNER_REQUEST_ALERT:
+                    done_current, done_total = await _handle_admin_owner_request_alert(job)
                 else:
                     raise ValueError(f"Unknown admin job kind: {kind}")
 
