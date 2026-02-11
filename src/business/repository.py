@@ -787,6 +787,88 @@ class BusinessRepository:
                 (place_id, actor_tg_user_id, action, payload_json, created_at),
             )
 
+    async def count_all_business_subscriptions(self) -> int:
+        async with open_business_db() as db:
+            async with db.execute("SELECT COUNT(*) FROM business_subscriptions") as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row else 0)
+
+    async def list_all_business_subscriptions(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 50))
+        safe_offset = max(0, int(offset))
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT bs.place_id, bs.tier, bs.status, bs.starts_at, bs.expires_at,
+                       bs.created_at, bs.updated_at,
+                       p.name AS place_name, p.address AS place_address,
+                       p.business_enabled, p.is_published, p.is_verified, p.verified_tier, p.verified_until
+                  FROM business_subscriptions bs
+                  JOIN places p ON p.id = bs.place_id
+                 ORDER BY
+                   CASE bs.status
+                     WHEN 'active' THEN 0
+                     WHEN 'past_due' THEN 1
+                     WHEN 'inactive' THEN 2
+                     WHEN 'canceled' THEN 3
+                     ELSE 4
+                   END,
+                   bs.updated_at DESC,
+                   bs.place_id ASC
+                 LIMIT ? OFFSET ?
+                """,
+                (safe_limit, safe_offset),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
+    async def count_business_audit_logs(self, *, place_id: int | None = None) -> int:
+        query = "SELECT COUNT(*) FROM business_audit_log"
+        params: tuple[Any, ...] = ()
+        if place_id is not None:
+            query += " WHERE place_id = ?"
+            params = (int(place_id),)
+        async with open_business_db() as db:
+            async with db.execute(query, params) as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row else 0)
+
+    async def list_business_audit_logs(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        place_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, int(offset))
+        where_clause = ""
+        params: list[Any] = []
+        if place_id is not None:
+            where_clause = "WHERE a.place_id = ?"
+            params.append(int(place_id))
+        params.extend([safe_limit, safe_offset])
+        async with open_business_db() as db:
+            async with db.execute(
+                f"""
+                SELECT a.id, a.place_id, a.actor_tg_user_id, a.action, a.payload_json, a.created_at,
+                       p.name AS place_name
+                  FROM business_audit_log a
+                  LEFT JOIN places p ON p.id = a.place_id
+                  {where_clause}
+                 ORDER BY a.created_at DESC, a.id DESC
+                 LIMIT ? OFFSET ?
+                """,
+                tuple(params),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def create_claim_token(
         self,
         place_id: int,
