@@ -154,7 +154,9 @@ if [[ "${DEPLOY_FREEZE_SENSORS}" == "1" && -f "${PROD_DIR}/state.db" ]]; then
 fi
 
 docker compose down
-docker compose pull
+if ! docker compose pull; then
+  echo "Warning: docker compose pull failed; continuing with local images built in this run."
+fi
 
 if [[ "${MIGRATE}" == "1" ]]; then
   docker compose --profile migrate run --rm migrate
