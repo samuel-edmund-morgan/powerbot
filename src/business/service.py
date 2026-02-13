@@ -805,6 +805,18 @@ class BusinessCabinetService:
         total = await self.repository.count_all_business_subscriptions()
         return rows, total
 
+    async def list_payment_events_admin(
+        self,
+        admin_tg_user_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        self._require_admin(admin_tg_user_id)
+        rows = await self.repository.list_all_business_payment_events(limit=limit, offset=offset)
+        total = await self.repository.count_all_business_payment_events()
+        return rows, total
+
     async def list_audit_logs_admin(
         self,
         admin_tg_user_id: int,

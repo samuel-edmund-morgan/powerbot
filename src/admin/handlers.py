@@ -44,6 +44,7 @@ SENSORS_PAGE_SIZE = 8
 BIZ_SERVICES_PAGE_SIZE = 10
 BIZ_PLACES_PAGE_SIZE = 8
 BIZ_SUBS_PAGE_SIZE = 8
+BIZ_PAYMENTS_PAGE_SIZE = 8
 BIZ_AUDIT_PAGE_SIZE = 8
 CB_ADMIN_NOOP = "admin_noop"
 SENSORS_FREEZE_ALL_DEFAULT_SEC = 6 * 3600
@@ -75,6 +76,10 @@ CB_BIZ_TOKG_PLACE_ROTATE_PREFIX = "abiz_tokg_r|"
 CB_BIZ_SUBS = "abiz_subs"
 CB_BIZ_SUBS_PAGE_PREFIX = "abiz_subs_page|"
 CB_BIZ_SUBS_EXPORT = "abiz_subs_export"
+
+CB_BIZ_PAYMENTS = "abiz_payments"
+CB_BIZ_PAYMENTS_PAGE_PREFIX = "abiz_payments_page|"
+CB_BIZ_PAYMENTS_EXPORT = "abiz_payments_export"
 
 CB_BIZ_AUDIT = "abiz_audit"
 CB_BIZ_AUDIT_PAGE_PREFIX = "abiz_audit_page|"
@@ -930,7 +935,10 @@ def _biz_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="➕ Додати заклад", callback_data=CB_BIZ_CREATE_PLACE_MENU),
                 InlineKeyboardButton(text="🗂 Категорії", callback_data=CB_BIZ_CATEGORIES_MENU),
             ],
-            [InlineKeyboardButton(text="📒 Аудит", callback_data=CB_BIZ_AUDIT)],
+            [
+                InlineKeyboardButton(text="💸 Платежі", callback_data=CB_BIZ_PAYMENTS),
+                InlineKeyboardButton(text="📒 Аудит", callback_data=CB_BIZ_AUDIT),
+            ],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")],
         ]
     )
@@ -1003,6 +1011,45 @@ def _subscription_visibility_title(is_published: int | bool | None) -> str:
 
 def _subscription_verified_title(is_verified: int | bool | None) -> str:
     return "✅ Verified" if int(is_verified or 0) == 1 else "—"
+
+
+def _payment_event_title(raw: str | None) -> str:
+    event = (raw or "").strip().lower()
+    if event == "invoice_created":
+        return "🧾 Інвойс створено"
+    if event == "pre_checkout_ok":
+        return "✅ Pre-checkout OK"
+    if event == "payment_succeeded":
+        return "💚 Оплата успішна"
+    if event == "payment_failed":
+        return "❌ Оплата помилкова"
+    if event == "payment_canceled":
+        return "🚫 Оплату скасовано"
+    if event == "refund":
+        return "↩️ Повернення"
+    return f"⚪ {event or 'невідомо'}"
+
+
+def _payment_status_title(raw: str | None) -> str:
+    status = (raw or "").strip().lower()
+    if status == "processed":
+        return "✅ processed"
+    if status == "new":
+        return "🕓 new"
+    if status == "failed":
+        return "❌ failed"
+    if status == "canceled":
+        return "🚫 canceled"
+    return f"⚪ {status or 'unknown'}"
+
+
+def _short_external_id(raw: str | None, *, limit: int = 42) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return "—"
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 1)].rstrip() + "…"
 
 
 def _format_tg_contact(*, tg_user_id: int | None, username: str | None, first_name: str | None) -> str:
@@ -1214,6 +1261,216 @@ async def cb_business_subscriptions_page(callback: CallbackQuery) -> None:
     except Exception:
         page = 0
     await _render_business_subscriptions(
+        callback.bot,
+        callback.message.chat.id,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _render_business_payments(
+    bot: Bot,
+    chat_id: int,
+    *,
+    page: int,
+    prefer_message_id: int | None,
+) -> None:
+    admin_id = int(chat_id)
+    offset = max(0, int(page)) * BIZ_PAYMENTS_PAGE_SIZE
+    try:
+        rows, total = await business_service.list_payment_events_admin(
+            admin_id,
+            limit=BIZ_PAYMENTS_PAGE_SIZE,
+            offset=offset,
+        )
+    except BusinessAccessDeniedError as error:
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note=f"❌ {escape(str(error))}")
+        return
+    except Exception:
+        logger.exception("Failed to load business payment events")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження платежів.")
+        return
+
+    if total <= 0:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+            ]
+        )
+        await render(
+            bot,
+            chat_id=chat_id,
+            text="💸 <b>Платежі</b>\n\nНаразі немає подій.",
+            reply_markup=kb,
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    total_pages = max(1, (int(total) + BIZ_PAYMENTS_PAGE_SIZE - 1) // BIZ_PAYMENTS_PAGE_SIZE)
+    safe_page = max(0, min(int(page), total_pages - 1))
+    if safe_page != int(page):
+        rows, _ = await business_service.list_payment_events_admin(
+            admin_id,
+            limit=BIZ_PAYMENTS_PAGE_SIZE,
+            offset=safe_page * BIZ_PAYMENTS_PAGE_SIZE,
+        )
+
+    lines = ["💸 <b>Платіжні події</b>", "", f"Подій: <b>{int(total)}</b>", ""]
+    for row in rows:
+        event_id = int(row.get("id") or 0)
+        place_id = int(row.get("place_id") or 0)
+        place_name = escape(str(row.get("place_name") or f"ID {place_id}"))
+        provider = escape(str(row.get("provider") or "—"))
+        event_title = _payment_event_title(str(row.get("event_type") or ""))
+        status_title = _payment_status_title(str(row.get("status") or ""))
+        amount = row.get("amount_stars")
+        amount_text = f"{int(amount)}⭐" if amount is not None else "—"
+        currency = escape(str(row.get("currency") or "XTR"))
+        created_at = escape(str(row.get("created_at") or "—"))
+        external_payment_id = escape(_short_external_id(row.get("external_payment_id")))
+        owner_contact = _format_tg_contact(
+            tg_user_id=row.get("owner_tg_user_id"),
+            username=row.get("owner_username"),
+            first_name=row.get("owner_first_name"),
+        )
+        owner_status = _owner_status_title(str(row.get("owner_status") or ""))
+        lines.append(
+            f"• <code>#{event_id}</code> {event_title}\n"
+            f"  Заклад: <b>{place_name}</b> <code>#{place_id}</code>\n"
+            f"  Сума: <code>{amount_text}</code> {currency} | {status_title}\n"
+            f"  Провайдер: <code>{provider}</code>\n"
+            f"  ext: <code>{external_payment_id}</code>\n"
+            f"  Власник: {owner_contact} ({owner_status})\n"
+            f"  <code>{created_at}</code>"
+        )
+        lines.append("")
+
+    kb_rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if safe_page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"{CB_BIZ_PAYMENTS_PAGE_PREFIX}{safe_page - 1}",
+                )
+            )
+        nav.append(InlineKeyboardButton(text=f"{safe_page + 1}/{total_pages}", callback_data=CB_ADMIN_NOOP))
+        if safe_page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"{CB_BIZ_PAYMENTS_PAGE_PREFIX}{safe_page + 1}",
+                )
+            )
+        kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text="📄 Експорт (файл)", callback_data=CB_BIZ_PAYMENTS_EXPORT)])
+    kb_rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    kb_rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+    await render(
+        bot,
+        chat_id=chat_id,
+        text="\n".join(lines).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_PAYMENTS_EXPORT)
+async def cb_business_payments_export(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Формую файл…")
+    admin_id = int(callback.from_user.id)
+
+    try:
+        all_rows: list[dict] = []
+        page_size = 100
+        offset = 0
+        while True:
+            rows, total = await business_service.list_payment_events_admin(
+                admin_id,
+                limit=page_size,
+                offset=offset,
+            )
+            all_rows.extend(rows)
+            offset += len(rows)
+            if not rows or offset >= int(total):
+                break
+    except BusinessAccessDeniedError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to export business payment events")
+        await callback.answer("❌ Не вдалося сформувати експорт", show_alert=True)
+        return
+
+    lines: list[str] = [
+        "id\tplace_id\tplace_name\tprovider\texternal_payment_id\tevent_type\tamount_stars\tcurrency\tstatus\towner_tg_user_id\towner_username\towner_first_name\towner_status\tcreated_at\tprocessed_at"
+    ]
+    for row in all_rows:
+        event_id = int(row.get("id") or 0)
+        place_id = int(row.get("place_id") or 0)
+        place_name = str(row.get("place_name") or "").replace("\t", " ").replace("\n", " ").strip()
+        provider = str(row.get("provider") or "")
+        external_payment_id = str(row.get("external_payment_id") or "").replace("\t", " ").replace("\n", " ").strip()
+        event_type = str(row.get("event_type") or "")
+        amount_stars = row.get("amount_stars")
+        amount_stars_text = "" if amount_stars is None else str(int(amount_stars))
+        currency = str(row.get("currency") or "")
+        status = str(row.get("status") or "")
+        owner_tg_user_id = int(row.get("owner_tg_user_id") or 0)
+        owner_username = str(row.get("owner_username") or "").replace("\t", " ").replace("\n", " ").strip()
+        owner_first_name = str(row.get("owner_first_name") or "").replace("\t", " ").replace("\n", " ").strip()
+        owner_status = str(row.get("owner_status") or "")
+        created_at = str(row.get("created_at") or "")
+        processed_at = str(row.get("processed_at") or "")
+        lines.append(
+            f"{event_id}\t{place_id}\t{place_name}\t{provider}\t{external_payment_id}\t{event_type}\t"
+            f"{amount_stars_text}\t{currency}\t{status}\t{owner_tg_user_id}\t{owner_username}\t"
+            f"{owner_first_name}\t{owner_status}\t{created_at}\t{processed_at}"
+        )
+
+    payload = "\n".join(lines).encode("utf-8")
+    file = BufferedInputFile(payload, filename="business_payments.tsv")
+    caption = f"💸 Експорт платежів: {len(all_rows)} подій."
+    target_message = callback.message
+    try:
+        if target_message:
+            await target_message.answer_document(document=file, caption=caption)
+        else:
+            await callback.bot.send_document(chat_id=int(callback.from_user.id), document=file, caption=caption)
+    except Exception:
+        logger.exception("Failed to send business payment events export file")
+        await callback.answer("❌ Не вдалося надіслати файл", show_alert=True)
+
+
+@router.callback_query(F.data == CB_BIZ_PAYMENTS)
+async def cb_business_payments(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_business_payments(
+        callback.bot,
+        callback.message.chat.id,
+        page=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PAYMENTS_PAGE_PREFIX))
+async def cb_business_payments_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        page = int(callback.data.split("|", 1)[1])
+    except Exception:
+        page = 0
+    await _render_business_payments(
         callback.bot,
         callback.message.chat.id,
         page=page,
