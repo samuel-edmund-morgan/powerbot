@@ -228,6 +228,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
 echo "Running business UI inline/menu policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 
+# Automated smoke: businessbot single-message rendering policy.
+echo "Running business single-message policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_single_message_policy.py"
+
 # Automated smoke: transaction/network boundary policy for business layer.
 echo "Running business transaction boundary policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_transaction_boundary_policy.py"
