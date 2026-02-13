@@ -61,11 +61,11 @@ def _setup_temp_db(db_path: Path) -> None:
         conn.execute("INSERT INTO general_services(name) VALUES(?)", ("Кав'ярні",))
 
         created_at = _now_iso()
-        # 5 places:
+        # 9 places:
         # 1..3 => success tiers light/pro/partner
-        # 4 => cancel
-        # 5 => fail
-        for idx in range(1, 6):
+        # 4..6 => cancel tiers light/pro/partner
+        # 7..9 => fail tiers light/pro/partner
+        for idx in range(1, 10):
             conn.execute(
                 """
                 INSERT INTO places(
@@ -118,11 +118,8 @@ async def _run_checks() -> None:
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
 
-    success_cases = [
-        (1, 10001, "light"),
-        (2, 10002, "pro"),
-        (3, 10003, "partner"),
-    ]
+    tiers = ["light", "pro", "partner"]
+    success_cases = [(idx + 1, 10001 + idx, tier) for idx, tier in enumerate(tiers)]
     for place_id, tg_user_id, tier in success_cases:
         intent = await service.create_mock_payment_intent(
             tg_user_id=tg_user_id,
@@ -161,47 +158,72 @@ async def _run_checks() -> None:
         _assert(str(place.get("verified_tier")) == tier, f"verified_tier mismatch for {tier}: {place}")
         _assert(bool(place.get("verified_until")), f"verified_until missing for {tier}: {place}")
 
-    # Cancel should not activate.
-    cancel_intent = await service.create_mock_payment_intent(
-        tg_user_id=10004,
-        place_id=4,
-        tier="light",
-        source="plans",
-    )
-    cancel_outcome = await service.apply_mock_payment_result(
-        tg_user_id=10004,
-        place_id=4,
-        tier="light",
-        external_payment_id=str(cancel_intent["external_payment_id"]),
-        result="cancel",
-    )
-    _assert(bool(cancel_outcome.get("applied")), "cancel event not recorded")
-    cancel_sub = await repo.ensure_subscription(4)
-    _assert(str(cancel_sub.get("tier")) == "free", f"cancel changed tier unexpectedly: {cancel_sub}")
-    _assert(str(cancel_sub.get("status")) == "inactive", f"cancel changed status unexpectedly: {cancel_sub}")
-    cancel_place = await repo.get_place(4)
-    _assert(int(cancel_place.get("is_verified") or 0) == 0, f"cancel set verified unexpectedly: {cancel_place}")
+    # Cancel/fail should not activate for each tier.
+    cancel_cases = [(idx + 4, 10004 + idx, tier) for idx, tier in enumerate(tiers)]
+    for place_id, tg_user_id, tier in cancel_cases:
+        cancel_intent = await service.create_mock_payment_intent(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            source="plans",
+        )
+        ext = str(cancel_intent["external_payment_id"])
+        cancel_outcome = await service.apply_mock_payment_result(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            external_payment_id=ext,
+            result="cancel",
+        )
+        _assert(bool(cancel_outcome.get("applied")), f"cancel event not recorded for {tier}")
+        cancel_duplicate = await service.apply_mock_payment_result(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            external_payment_id=ext,
+            result="cancel",
+        )
+        _assert(not bool(cancel_duplicate.get("applied")), f"cancel duplicate applied for {tier}")
+        _assert(bool(cancel_duplicate.get("duplicate")), f"cancel duplicate flag missing for {tier}")
 
-    # Fail should not activate.
-    fail_intent = await service.create_mock_payment_intent(
-        tg_user_id=10005,
-        place_id=5,
-        tier="pro",
-        source="plans",
-    )
-    fail_outcome = await service.apply_mock_payment_result(
-        tg_user_id=10005,
-        place_id=5,
-        tier="pro",
-        external_payment_id=str(fail_intent["external_payment_id"]),
-        result="fail",
-    )
-    _assert(bool(fail_outcome.get("applied")), "fail event not recorded")
-    fail_sub = await repo.ensure_subscription(5)
-    _assert(str(fail_sub.get("tier")) == "free", f"fail changed tier unexpectedly: {fail_sub}")
-    _assert(str(fail_sub.get("status")) == "inactive", f"fail changed status unexpectedly: {fail_sub}")
-    fail_place = await repo.get_place(5)
-    _assert(int(fail_place.get("is_verified") or 0) == 0, f"fail set verified unexpectedly: {fail_place}")
+        cancel_sub = await repo.ensure_subscription(place_id)
+        _assert(str(cancel_sub.get("tier")) == "free", f"cancel changed tier unexpectedly for {tier}: {cancel_sub}")
+        _assert(str(cancel_sub.get("status")) == "inactive", f"cancel changed status unexpectedly for {tier}: {cancel_sub}")
+        cancel_place = await repo.get_place(place_id)
+        _assert(int(cancel_place.get("is_verified") or 0) == 0, f"cancel set verified unexpectedly for {tier}: {cancel_place}")
+
+    fail_cases = [(idx + 7, 10007 + idx, tier) for idx, tier in enumerate(tiers)]
+    for place_id, tg_user_id, tier in fail_cases:
+        fail_intent = await service.create_mock_payment_intent(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            source="plans",
+        )
+        ext = str(fail_intent["external_payment_id"])
+        fail_outcome = await service.apply_mock_payment_result(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            external_payment_id=ext,
+            result="fail",
+        )
+        _assert(bool(fail_outcome.get("applied")), f"fail event not recorded for {tier}")
+        fail_duplicate = await service.apply_mock_payment_result(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+            tier=tier,
+            external_payment_id=ext,
+            result="fail",
+        )
+        _assert(not bool(fail_duplicate.get("applied")), f"fail duplicate applied for {tier}")
+        _assert(bool(fail_duplicate.get("duplicate")), f"fail duplicate flag missing for {tier}")
+
+        fail_sub = await repo.ensure_subscription(place_id)
+        _assert(str(fail_sub.get("tier")) == "free", f"fail changed tier unexpectedly for {tier}: {fail_sub}")
+        _assert(str(fail_sub.get("status")) == "inactive", f"fail changed status unexpectedly for {tier}: {fail_sub}")
+        fail_place = await repo.get_place(place_id)
+        _assert(int(fail_place.get("is_verified") or 0) == 0, f"fail set verified unexpectedly for {tier}: {fail_place}")
 
     # Sanity: we should have exactly one payment_succeeded per successful intent.
     import aiosqlite  # noqa: WPS433
@@ -219,6 +241,20 @@ async def _run_checks() -> None:
     _assert(len(rows) == 3, f"unexpected payment_succeeded groups: {rows}")
     for row in rows:
         _assert(int(row[3]) == 1, f"non-idempotent succeeded rows: {rows}")
+
+    async with aiosqlite.connect(os.environ["DB_PATH"]) as db:
+        async with db.execute(
+            """
+            SELECT event_type, COUNT(*)
+              FROM business_payment_events
+             WHERE event_type IN ('payment_canceled', 'payment_failed')
+             GROUP BY event_type
+            """
+        ) as cur:
+            non_success_rows = await cur.fetchall()
+    non_success_counts = {str(row[0]): int(row[1]) for row in non_success_rows}
+    _assert(int(non_success_counts.get("payment_canceled", 0)) == 3, f"unexpected payment_canceled count: {non_success_counts}")
+    _assert(int(non_success_counts.get("payment_failed", 0)) == 3, f"unexpected payment_failed count: {non_success_counts}")
 
 
 def main() -> None:
