@@ -232,6 +232,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 echo "Running business transaction boundary policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_transaction_boundary_policy.py"
 
+# Automated smoke: payment pipeline policy (UI handlers -> apply_payment_event).
+echo "Running business payment pipeline policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_payment_pipeline_policy.py"
+
 # Automated smoke: shared sqlite transaction boundary policy (database/repository DB-only).
 echo "Running sqlite transaction boundary policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_sqlite_transaction_boundary_policy.py"
