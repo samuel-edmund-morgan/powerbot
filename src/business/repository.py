@@ -739,6 +739,29 @@ class BusinessRepository:
                     raise RuntimeError("Failed to read subscription")
                 return dict(row)
 
+    async def list_subscriptions_for_reconcile(
+        self,
+        *,
+        limit: int,
+        after_place_id: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List subscriptions in stable place_id order for lifecycle reconciliation."""
+        safe_limit = max(1, min(int(limit), 200))
+        cursor = max(0, int(after_place_id))
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT place_id, tier, status, starts_at, expires_at, created_at, updated_at
+                  FROM business_subscriptions
+                 WHERE place_id > ?
+                 ORDER BY place_id ASC
+                 LIMIT ?
+                """,
+                (cursor, safe_limit),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def update_subscription(
         self,
         place_id: int,
