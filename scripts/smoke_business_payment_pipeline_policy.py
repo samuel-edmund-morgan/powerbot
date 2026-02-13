@@ -96,6 +96,7 @@ def main() -> None:
     apply_mock_payment_result = _method_node(tree, "BusinessCabinetService", "apply_mock_payment_result")
     validate_pre_checkout = _method_node(tree, "BusinessCabinetService", "validate_telegram_stars_pre_checkout")
     apply_telegram_success = _method_node(tree, "BusinessCabinetService", "apply_telegram_stars_successful_payment")
+    apply_telegram_terminal = _method_node(tree, "BusinessCabinetService", "apply_telegram_stars_terminal_event")
 
     apply_calls = _self_call_names(apply_payment_event)
     if "_activate_paid_subscription" not in apply_calls:
@@ -111,6 +112,7 @@ def main() -> None:
         ("apply_mock_payment_result", apply_mock_payment_result),
         ("validate_telegram_stars_pre_checkout", validate_pre_checkout),
         ("apply_telegram_stars_successful_payment", apply_telegram_success),
+        ("apply_telegram_stars_terminal_event", apply_telegram_terminal),
     ]:
         calls = _self_call_names(method_node)
         if "apply_payment_event" not in calls:

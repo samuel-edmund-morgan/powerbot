@@ -1392,32 +1392,13 @@ class BusinessCabinetService:
         currency: str,
         pre_checkout_query_id: str | None = None,
     ) -> dict[str, Any]:
-        provider = self.get_payment_provider()
-        if provider != PAYMENT_PROVIDER_TELEGRAM_STARS:
-            raise ValidationError("Оплати тимчасово недоступні.")
-
-        payload = decode_telegram_stars_payload(invoice_payload)
-        if not payload:
-            raise ValidationError("Некоректні дані рахунку.")
-        if int(payload.tg_user_id) != int(tg_user_id):
-            raise ValidationError("Цей рахунок належить іншому користувачу.")
-
-        normalized_tier, expected_amount = await self._assert_paid_plan_access(
+        payload, normalized_tier, expected_amount = await self._validate_telegram_stars_intent_context(
             tg_user_id=int(tg_user_id),
-            place_id=int(payload.place_id),
-            tier=str(payload.tier),
+            invoice_payload=invoice_payload,
+            total_amount=int(total_amount),
+            currency=str(currency or ""),
+            strict_amount_match=True,
         )
-        if str(currency or "").upper() != "XTR":
-            raise ValidationError("Підтримується лише оплата у Stars (XTR).")
-        if int(total_amount) != int(expected_amount):
-            raise ValidationError("Сума рахунку не збігається з тарифом.")
-
-        if not await self._payment_intent_exists(
-            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
-            external_payment_id=str(payload.external_payment_id),
-            place_id=int(payload.place_id),
-        ):
-            raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
 
         await self.apply_payment_event(
             tg_user_id=int(tg_user_id),
@@ -1449,6 +1430,50 @@ class BusinessCabinetService:
             "source": str(payload.source or "card"),
         }
 
+    async def _validate_telegram_stars_intent_context(
+        self,
+        *,
+        tg_user_id: int,
+        invoice_payload: str,
+        total_amount: int,
+        currency: str,
+        strict_amount_match: bool,
+    ) -> tuple[Any, str, int]:
+        provider = self.get_payment_provider()
+        if provider != PAYMENT_PROVIDER_TELEGRAM_STARS:
+            raise ValidationError("Оплати тимчасово недоступні.")
+
+        payload = decode_telegram_stars_payload(invoice_payload)
+        if not payload:
+            raise ValidationError("Некоректні дані рахунку.")
+        if int(payload.tg_user_id) != int(tg_user_id):
+            raise ValidationError("Цей рахунок належить іншому користувачу.")
+
+        normalized_tier, expected_amount = await self._assert_paid_plan_access(
+            tg_user_id=int(tg_user_id),
+            place_id=int(payload.place_id),
+            tier=str(payload.tier),
+        )
+        if str(currency or "").upper() != "XTR":
+            raise ValidationError("Підтримується лише оплата у Stars (XTR).")
+
+        amount_value = int(total_amount)
+        if strict_amount_match:
+            if amount_value != int(expected_amount):
+                raise ValidationError("Сума рахунку не збігається з тарифом.")
+        else:
+            if amount_value <= 0 or amount_value > int(expected_amount):
+                raise ValidationError("Некоректна сума платіжної події.")
+
+        if not await self._payment_intent_exists(
+            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+            external_payment_id=str(payload.external_payment_id),
+            place_id=int(payload.place_id),
+        ):
+            raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
+
+        return payload, normalized_tier, int(expected_amount)
+
     async def apply_telegram_stars_successful_payment(
         self,
         *,
@@ -1463,32 +1488,13 @@ class BusinessCabinetService:
         provider_payment_charge_id: str | None,
         raw_payload_json: str | None,
     ) -> dict[str, Any]:
-        provider = self.get_payment_provider()
-        if provider != PAYMENT_PROVIDER_TELEGRAM_STARS:
-            raise ValidationError("Оплати тимчасово недоступні.")
-
-        payload = decode_telegram_stars_payload(invoice_payload)
-        if not payload:
-            raise ValidationError("Некоректні дані платежу.")
-        if int(payload.tg_user_id) != int(tg_user_id):
-            raise ValidationError("Цей платіж належить іншому користувачу.")
-
-        normalized_tier, expected_amount = await self._assert_paid_plan_access(
+        payload, normalized_tier, expected_amount = await self._validate_telegram_stars_intent_context(
             tg_user_id=int(tg_user_id),
-            place_id=int(payload.place_id),
-            tier=str(payload.tier),
+            invoice_payload=invoice_payload,
+            total_amount=int(total_amount),
+            currency=str(currency or ""),
+            strict_amount_match=True,
         )
-        if str(currency or "").upper() != "XTR":
-            raise ValidationError("Підтримується лише оплата у Stars (XTR).")
-        if int(total_amount) != int(expected_amount):
-            raise ValidationError("Сума платежу не збігається з тарифом.")
-
-        if not await self._payment_intent_exists(
-            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
-            external_payment_id=str(payload.external_payment_id),
-            place_id=int(payload.place_id),
-        ):
-            raise ValidationError("Сесія оплати застаріла. Спробуй ще раз.")
 
         payment_event_external_id = str(telegram_payment_charge_id or "").strip() or str(payload.external_payment_id)
         expires_at_iso = _iso_from_unix_utc(subscription_expiration_date)
@@ -1525,4 +1531,77 @@ class BusinessCabinetService:
                 "subscription_expiration_date": subscription_expiration_date,
                 "provider_payment_charge_id": str(provider_payment_charge_id or ""),
             },
+        )
+
+    async def apply_telegram_stars_terminal_event(
+        self,
+        *,
+        tg_user_id: int,
+        invoice_payload: str,
+        total_amount: int,
+        currency: str,
+        terminal_kind: str,
+        telegram_payment_charge_id: str | None,
+        provider_payment_charge_id: str | None,
+        raw_payload_json: str | None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        payload, normalized_tier, expected_amount = await self._validate_telegram_stars_intent_context(
+            tg_user_id=int(tg_user_id),
+            invoice_payload=invoice_payload,
+            total_amount=int(total_amount),
+            currency=str(currency or ""),
+            strict_amount_match=False,
+        )
+
+        normalized_kind = str(terminal_kind or "").strip().lower()
+        event_map: dict[str, tuple[str, str]] = {
+            "cancel": ("payment_canceled", "canceled"),
+            "canceled": ("payment_canceled", "canceled"),
+            "fail": ("payment_failed", "failed"),
+            "failed": ("payment_failed", "failed"),
+            "refund": ("refund", "processed"),
+            "refunded": ("refund", "processed"),
+        }
+        mapped = event_map.get(normalized_kind)
+        if not mapped:
+            raise ValidationError("Невідомий тип платіжної події.")
+        event_type, status = mapped
+
+        payment_event_external_id = (
+            str(telegram_payment_charge_id or "").strip()
+            or str(provider_payment_charge_id or "").strip()
+            or str(payload.external_payment_id)
+        )
+        return await self.apply_payment_event(
+            tg_user_id=int(tg_user_id),
+            place_id=int(payload.place_id),
+            tier=normalized_tier,
+            provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+            intent_external_payment_id=str(payload.external_payment_id),
+            payment_external_id=payment_event_external_id,
+            event_type=event_type,
+            amount_stars=int(total_amount or expected_amount),
+            source=str(payload.source or "card"),
+            currency="XTR",
+            status=status,
+            raw_payload_json=raw_payload_json
+            or _to_json(
+                {
+                    "source": "telegram_stars_terminal_event",
+                    "terminal_kind": normalized_kind,
+                    "reason": str(reason or ""),
+                    "tg_user_id": int(tg_user_id),
+                    "invoice_payload": str(invoice_payload),
+                    "intent_external_payment_id": str(payload.external_payment_id),
+                    "telegram_payment_charge_id": str(telegram_payment_charge_id or ""),
+                    "provider_payment_charge_id": str(provider_payment_charge_id or ""),
+                }
+            ),
+            audit_extra={
+                "terminal_kind": normalized_kind,
+                "reason": str(reason or ""),
+                "provider_payment_charge_id": str(provider_payment_charge_id or ""),
+            },
+            write_non_success_audit=True,
         )
