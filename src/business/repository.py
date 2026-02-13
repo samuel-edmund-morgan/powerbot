@@ -1021,6 +1021,98 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def count_all_business_payment_events(self) -> int:
+        async with open_business_db() as db:
+            async with db.execute("SELECT COUNT(*) FROM business_payment_events") as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row else 0)
+
+    async def list_all_business_payment_events(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, int(offset))
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT e.id, e.place_id, e.provider, e.external_payment_id, e.event_type,
+                       e.amount_stars, e.currency, e.status, e.raw_payload_json, e.created_at, e.processed_at,
+                       p.name AS place_name, p.address AS place_address,
+                       (
+                         SELECT bo.tg_user_id
+                           FROM business_owners bo
+                          WHERE bo.place_id = e.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_tg_user_id,
+                       (
+                         SELECT bo.status
+                           FROM business_owners bo
+                          WHERE bo.place_id = e.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_status,
+                       (
+                         SELECT s.username
+                           FROM business_owners bo
+                           LEFT JOIN subscribers s ON s.chat_id = bo.tg_user_id
+                          WHERE bo.place_id = e.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_username,
+                       (
+                         SELECT s.first_name
+                           FROM business_owners bo
+                           LEFT JOIN subscribers s ON s.chat_id = bo.tg_user_id
+                          WHERE bo.place_id = e.place_id
+                          ORDER BY
+                            CASE bo.status
+                              WHEN 'approved' THEN 0
+                              WHEN 'pending' THEN 1
+                              WHEN 'rejected' THEN 2
+                              ELSE 3
+                            END,
+                            bo.created_at DESC,
+                            bo.id DESC
+                          LIMIT 1
+                       ) AS owner_first_name
+                  FROM business_payment_events e
+                  LEFT JOIN places p ON p.id = e.place_id
+                 ORDER BY e.created_at DESC, e.id DESC
+                 LIMIT ? OFFSET ?
+                """,
+                (safe_limit, safe_offset),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def count_all_business_subscriptions(self) -> int:
         async with open_business_db() as db:
             async with db.execute("SELECT COUNT(*) FROM business_subscriptions") as cur:
