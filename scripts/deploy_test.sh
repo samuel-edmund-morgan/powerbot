@@ -268,6 +268,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_m
 echo "Running sqlite concurrency smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_sqlite_concurrency.py"
 
+# Automated smoke: admin_jobs queue concurrent claim/finish consistency.
+echo "Running admin_jobs concurrency smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_admin_jobs_concurrency.py"
+
 # Optional: mini app health if endpoint exists.
 curl -s http://127.0.0.1:18082/api/v1/webapp/health >/dev/null || true
 
