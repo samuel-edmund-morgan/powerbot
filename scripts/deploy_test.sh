@@ -184,6 +184,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_p
 echo "Running business Telegram Stars flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_telegram_stars_flow.py"
 
+# Automated smoke: telegram_stars non-success terminal events (cancel/fail/refund + idempotency).
+echo "Running business Telegram Stars terminal-events smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_telegram_stars_terminal_events.py"
+
 # Automated smoke: canonical refund event (persist/audit/idempotency contract).
 echo "Running business refund event smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_refund_event.py"
