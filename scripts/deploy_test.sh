@@ -208,6 +208,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_v
 echo "Running admin owner-request alert deep-link smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_owner_alert_deeplink.py"
 
+# Automated smoke: owner-request alert must be enqueued via admin_jobs queue.
+echo "Running business owner-request alert queue smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_owner_alert_job_queue.py"
+
 # Automated smoke: static write-retry policy for business repository.
 echo "Running business write-retry policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
