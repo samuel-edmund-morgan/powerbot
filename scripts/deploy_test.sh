@@ -180,6 +180,10 @@ fi
 echo "Running business payments smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_payments.py"
 
+# Automated smoke: telegram_stars provider flow (intent -> pre_checkout -> success -> idempotency).
+echo "Running business Telegram Stars flow smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_telegram_stars_flow.py"
+
 # Automated smoke: claim-token create/rotate/claim flow.
 echo "Running business claim-token smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_claim_tokens.py"
