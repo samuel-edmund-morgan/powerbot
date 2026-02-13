@@ -236,6 +236,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
 echo "Running business UI inline/menu policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 
+# Automated smoke: businessbot user copy hygiene (no technical IDs in owner UI).
+echo "Running business UI copy hygiene smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
+
 # Automated smoke: businessbot single-message rendering policy.
 echo "Running business single-message policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_single_message_policy.py"
