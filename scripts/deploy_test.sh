@@ -208,6 +208,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_owne
 echo "Running business write-retry policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
 
+# Automated smoke: businessbot inline-only menu policy.
+echo "Running business UI inline/menu policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
