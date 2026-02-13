@@ -188,6 +188,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_t
 echo "Running business Telegram Stars terminal-events smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_telegram_stars_terminal_events.py"
 
+# Automated smoke: parity mock vs telegram_stars for non-success outcomes.
+echo "Running business payment-provider parity smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_payment_provider_parity.py"
+
 # Automated smoke: canonical refund event (persist/audit/idempotency contract).
 echo "Running business refund event smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_refund_event.py"
