@@ -183,3 +183,64 @@ curl -X POST http://new-england.morgan-dev.com:18081/api/v1/heartbeat \
   -H "Content-Type: application/json" \
   -d '{"api_key":"<SENSOR_API_KEY>","building_id":1,"section_id":2,"sensor_uuid":"esp32-newcastle-001","comment":"кв. 123"}'
 ```
+
+## 5) Business Mode: ізоляція та перемикання
+
+Бізнес-функціонал ізольований feature-flag’ом і за замовчуванням не впливає на мешканців.
+
+Ключові змінні:
+- `BUSINESS_MODE=0|1`
+- `BUSINESS_BOT_API_KEY=<token>`
+- `BUSINESS_PAYMENT_PROVIDER=mock|telegram_stars`
+
+Правила:
+- `BUSINESS_MODE=0`:
+  - resident-бот працює у legacy-поведінці (без бізнес-UI/verified-first ефектів);
+  - бізнес-бот не має запускатися як робочий контур.
+- `BUSINESS_MODE=1` + непорожній `BUSINESS_BOT_API_KEY`:
+  - вмикається бізнес-контур;
+  - у test рекомендовано `BUSINESS_PAYMENT_PROVIDER=mock`;
+  - у prod для реальних оплат: `BUSINESS_PAYMENT_PROVIDER=telegram_stars`.
+
+### 5.1 Перемикання в test (`/opt/powerbot-test/.env`)
+
+1. Встановити:
+```bash
+BUSINESS_MODE=1
+BUSINESS_BOT_API_KEY=<test token>
+BUSINESS_PAYMENT_PROVIDER=mock
+```
+2. Запустити звичний test deploy:
+```bash
+git add . && git commit -m "<опис змін>" && git push origin main
+```
+3. Дочекатися `Deploy -> deploy_test`, перевірити simulate notifications і UAT.
+
+Щоб вимкнути business-контур у test:
+```bash
+BUSINESS_MODE=0
+BUSINESS_BOT_API_KEY=
+```
+і знову прогнати test deploy.
+
+### 5.2 Перемикання в prod (`/opt/powerbot/.env`)
+
+Безпечний дефолт для прода:
+```bash
+BUSINESS_MODE=0
+BUSINESS_BOT_API_KEY=
+```
+
+Коли готово увімкнути:
+```bash
+BUSINESS_MODE=1
+BUSINESS_BOT_API_KEY=<prod business token>
+BUSINESS_PAYMENT_PROVIDER=telegram_stars
+```
+
+Після зміни `.env` виконати prod deploy через workflow:
+```bash
+gh workflow run deploy.yml -f run_migrate=auto
+```
+
+Перед/після прод-деплою дотримуватись чинного runbook із заморозкою сенсорів.
