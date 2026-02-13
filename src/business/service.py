@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 PAID_TIERS = {"light", "pro", "partner"}
 SUPPORTED_TIERS = {"free", "light", "pro", "partner"}
 DEFAULT_SUBSCRIPTION_DAYS = 30
+SUBSCRIPTION_PAST_DUE_GRACE_DAYS = 3
+SUBSCRIPTION_RECONCILE_BATCH_SIZE = 50
 PLAN_STARS_PRICES: dict[str, int] = {
     "light": 1000,
     "pro": 2500,
@@ -74,6 +76,18 @@ def _iso_from_unix_utc(timestamp: int | None) -> str | None:
     if value <= 0:
         return None
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+
+
+def _parse_iso_utc(raw_value: str | None) -> datetime | None:
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_value))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class BusinessService(Protocol):
@@ -656,6 +670,120 @@ class BusinessCabinetService:
             "owner": owner,
             "place": place,
             "token": token,
+        }
+
+    async def reconcile_subscription_states(
+        self,
+        *,
+        grace_days: int = SUBSCRIPTION_PAST_DUE_GRACE_DAYS,
+        batch_size: int = SUBSCRIPTION_RECONCILE_BATCH_SIZE,
+        max_rows: int | None = None,
+    ) -> dict[str, int]:
+        """Reconcile expired paid subscriptions into past_due/free lifecycle states."""
+        now = _utc_now()
+        safe_grace_days = max(0, int(grace_days))
+        safe_batch_size = max(1, min(int(batch_size), 200))
+        row_cap = None if max_rows is None else max(1, int(max_rows))
+
+        scanned = 0
+        changed_active_to_past_due = 0
+        changed_past_due_to_free = 0
+        cursor_place_id = 0
+
+        while True:
+            if row_cap is not None and scanned >= row_cap:
+                break
+            fetch_limit = safe_batch_size if row_cap is None else min(safe_batch_size, row_cap - scanned)
+            rows = await self.repository.list_subscriptions_for_reconcile(
+                limit=fetch_limit,
+                after_place_id=cursor_place_id,
+            )
+            if not rows:
+                break
+
+            for row in rows:
+                place_id = int(row.get("place_id") or 0)
+                if place_id <= 0:
+                    continue
+                cursor_place_id = max(cursor_place_id, place_id)
+                scanned += 1
+
+                tier = str(row.get("tier") or "").strip().lower()
+                status = str(row.get("status") or "").strip().lower()
+                expires_at_raw = str(row.get("expires_at") or "").strip() or None
+                expires_at_dt = _parse_iso_utc(expires_at_raw)
+
+                if tier not in PAID_TIERS or not expires_at_dt:
+                    continue
+
+                if status == "active" and expires_at_dt <= now:
+                    await self.repository.update_subscription(
+                        place_id=place_id,
+                        tier=tier,
+                        status="past_due",
+                        starts_at=row.get("starts_at"),
+                        expires_at=expires_at_raw,
+                    )
+                    await self.repository.update_place_business_flags(
+                        place_id,
+                        business_enabled=1,
+                        is_verified=0,
+                        verified_tier=None,
+                        verified_until=None,
+                    )
+                    await self.repository.write_audit_log(
+                        place_id=place_id,
+                        actor_tg_user_id=None,
+                        action="subscription_expired_past_due",
+                        payload_json=_to_json(
+                            {
+                                "tier": tier,
+                                "expires_at": expires_at_raw,
+                                "grace_days": safe_grace_days,
+                            }
+                        ),
+                    )
+                    changed_active_to_past_due += 1
+                    continue
+
+                grace_deadline = expires_at_dt + timedelta(days=safe_grace_days)
+                if status == "past_due" and grace_deadline <= now:
+                    await self.repository.update_subscription(
+                        place_id=place_id,
+                        tier="free",
+                        status="inactive",
+                        starts_at=None,
+                        expires_at=None,
+                    )
+                    await self.repository.update_place_business_flags(
+                        place_id,
+                        business_enabled=1,
+                        is_verified=0,
+                        verified_tier=None,
+                        verified_until=None,
+                    )
+                    await self.repository.write_audit_log(
+                        place_id=place_id,
+                        actor_tg_user_id=None,
+                        action="subscription_past_due_to_free",
+                        payload_json=_to_json(
+                            {
+                                "previous_tier": tier,
+                                "previous_expires_at": expires_at_raw,
+                                "grace_days": safe_grace_days,
+                            }
+                        ),
+                    )
+                    changed_past_due_to_free += 1
+
+            if len(rows) < fetch_limit:
+                break
+
+        return {
+            "scanned": scanned,
+            "changed_active_to_past_due": changed_active_to_past_due,
+            "changed_past_due_to_free": changed_past_due_to_free,
+            "total_changed": changed_active_to_past_due + changed_past_due_to_free,
         }
 
     async def list_user_businesses(self, tg_user_id: int) -> list[dict[str, Any]]:
