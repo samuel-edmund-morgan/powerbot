@@ -17,7 +17,25 @@ from pathlib import Path
 import re
 
 
-HANDLERS_PATH = Path("src/business/handlers.py")
+def _resolve_handlers_path() -> Path:
+    candidates = []
+    try:
+        candidates.append(Path(__file__).resolve().parents[1] / "src/business/handlers.py")
+    except Exception:
+        pass
+    candidates.extend(
+        [
+            Path.cwd() / "src/business/handlers.py",
+            Path("/app/src/business/handlers.py"),
+        ]
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0] if candidates else Path("src/business/handlers.py")
+
+
+HANDLERS_PATH = _resolve_handlers_path()
 
 FORBIDDEN_TOKENS = {
     "ReplyKeyboardMarkup",
