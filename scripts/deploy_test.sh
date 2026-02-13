@@ -188,6 +188,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_c
 echo "Running business claim moderation flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_claim_moderation_flow.py"
 
+# Automated smoke: after approve + payment, main-bot enrichment exposes verified metadata.
+echo "Running business main-bot verified-after-approve smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_mainbot_verified_after_approve.py"
+
 # Automated smoke: moderation reject keeps place as unpublished draft.
 echo "Running business reject->unpublished smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_reject_unpublished.py"
