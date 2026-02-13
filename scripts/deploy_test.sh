@@ -228,6 +228,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_guard_policy.py"
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
 
+# Automated smoke: compare resident catalog OFF(no-op) vs ON(integration) business metadata path.
+echo "Running business mode catalog compare smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_mode_catalog_compare.py"
+
 # Automated smoke: sqlite concurrent writes (3 writers + retry/backoff).
 echo "Running sqlite concurrency smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_sqlite_concurrency.py"
