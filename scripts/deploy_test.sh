@@ -216,6 +216,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
 echo "Running business UI inline/menu policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 
+# Automated smoke: transaction/network boundary policy for business layer.
+echo "Running business transaction boundary policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_transaction_boundary_policy.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
