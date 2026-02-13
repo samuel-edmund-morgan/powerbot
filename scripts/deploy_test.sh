@@ -248,6 +248,10 @@ python3 "${REPO_DIR}/scripts/smoke_sqlite_transaction_boundary_policy.py"
 echo "Running business guard policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_guard_policy.py"
 
+# Automated smoke: resident places UI policy for BUSINESS_MODE on/off.
+echo "Running business mode UI policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
