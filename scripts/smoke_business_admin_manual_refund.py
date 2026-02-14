@@ -141,7 +141,8 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     _assert(event_id > 0, f"invalid payment event id: {succeeded}")
 
     # Admin refund.
-    admin_id = 1
+    admin_id = next(iter(service.admin_ids), 1)
+    service.admin_ids.add(int(admin_id))
     refund = await service.admin_mark_payment_refund(admin_id, event_id=event_id)
     _assert(bool(refund.get("applied")), f"refund must be applied: {refund}")
     _assert(not bool(refund.get("duplicate")), f"refund must not be duplicate on first apply: {refund}")
@@ -185,4 +186,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
