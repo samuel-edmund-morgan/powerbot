@@ -361,6 +361,7 @@ class DatabaseMigrator:
         NEWCASTLE_BUILDING_ID = 1
         DEFAULT_SECTION_FOR_OTHER_BUILDINGS = 1
         DEFAULT_SECTION_FOR_NEWCASTLE = 2
+        TWO_SECTION_BUILDING_IDS = (2, 3, 4, 11, 12)  # Оксфорд, Кембрідж, Ліверпуль, Лінкольн, Віндзор
 
         self.changes.append("Backfill: section_id defaults (subscribers/sensors/votes/events)")
 
@@ -443,6 +444,58 @@ class DatabaseMigrator:
             )
             log_info(f"Backfill events.building_id/section_id rows={cursor.rowcount}")
 
+            # Clamp invalid section_id for 2-section buildings (historic bug: UI allowed section 3).
+            self.changes.append("Backfill: clamp invalid section_id for 2-section buildings -> 1")
+            placeholders = ",".join(["?"] * len(TWO_SECTION_BUILDING_IDS))
+
+            cursor.execute(
+                f"""
+                UPDATE subscribers
+                   SET section_id = 1
+                 WHERE building_id IN ({placeholders})
+                   AND section_id IS NOT NULL
+                   AND section_id NOT IN (1, 2)
+                """,
+                TWO_SECTION_BUILDING_IDS,
+            )
+            log_info(f"Backfill clamp subscribers.section_id rows={cursor.rowcount}")
+
+            cursor.execute(
+                f"""
+                UPDATE heating_votes
+                   SET section_id = 1
+                 WHERE building_id IN ({placeholders})
+                   AND section_id IS NOT NULL
+                   AND section_id NOT IN (1, 2)
+                """,
+                TWO_SECTION_BUILDING_IDS,
+            )
+            log_info(f"Backfill clamp heating_votes.section_id rows={cursor.rowcount}")
+
+            cursor.execute(
+                f"""
+                UPDATE water_votes
+                   SET section_id = 1
+                 WHERE building_id IN ({placeholders})
+                   AND section_id IS NOT NULL
+                   AND section_id NOT IN (1, 2)
+                """,
+                TWO_SECTION_BUILDING_IDS,
+            )
+            log_info(f"Backfill clamp water_votes.section_id rows={cursor.rowcount}")
+
+            cursor.execute(
+                f"""
+                UPDATE sensors
+                   SET section_id = 1
+                 WHERE building_id IN ({placeholders})
+                   AND section_id IS NOT NULL
+                   AND section_id NOT IN (1, 2)
+                """,
+                TWO_SECTION_BUILDING_IDS,
+            )
+            log_info(f"Backfill clamp sensors.section_id rows={cursor.rowcount}")
+
             conn.commit()
         finally:
             conn.close()
@@ -486,7 +539,22 @@ class DatabaseMigrator:
             and not comparison["new_columns"]
             and not comparison["new_indexes"]
         ):
-            log_info("Схеми ідентичні, міграція не потрібна")
+            log_info("Схеми ідентичні, schema-міграція не потрібна. Виконую після-міграційні backfill-и.")
+            print("")
+            print(f"{Colors.BLUE}7. Після-міграційні backfill-и{Colors.NC}")
+            self._apply_post_migration_backfills()
+            print("")
+            print("=" * 60)
+            if self.dry_run:
+                print(f"{Colors.YELLOW}DRY RUN завершено. Зміни НЕ внесені.{Colors.NC}")
+            else:
+                print(f"{Colors.GREEN}Backfill-и застосовано успішно!{Colors.NC}")
+            print("=" * 60)
+            if self.changes:
+                print("")
+                print("Виконані зміни:")
+                for change in self.changes:
+                    print(f"  • {change}")
             return True
         
         # Нові таблиці

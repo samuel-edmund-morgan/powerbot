@@ -185,6 +185,41 @@ def main() -> None:
                 f"unexpected legacy events backfill: {ev}",
             )
 
+            # Regression test: Some buildings have only 2 sections; section_id=3 must be clamped to 1.
+            conn.execute("UPDATE subscribers SET section_id=3 WHERE chat_id=222")
+            conn.execute("UPDATE heating_votes SET section_id=3 WHERE chat_id=222")
+            conn.execute("UPDATE water_votes SET section_id=3 WHERE chat_id=222")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Run migration again with schema already up-to-date; backfills must still run.
+        migrator2 = DatabaseMigrator(
+            dry_run=False,
+            verbose=False,
+            source_db=source_db,
+            target_db=target_db,
+        )
+        ok2 = migrator2.run()
+        _assert(ok2 is True, "migrate_db.DatabaseMigrator.run() second pass returned False")
+
+        conn = sqlite3.connect(target_db)
+        try:
+            subs2 = conn.execute(
+                "SELECT chat_id, building_id, section_id FROM subscribers WHERE chat_id=222"
+            ).fetchone()
+            _assert(subs2 == (222, 3, 1), f"unexpected subscribers clamp: {subs2}")
+
+            hv2 = conn.execute(
+                "SELECT chat_id, building_id, section_id FROM heating_votes WHERE chat_id=222"
+            ).fetchone()
+            _assert(hv2 == (222, 3, 1), f"unexpected heating_votes clamp: {hv2}")
+
+            wv2 = conn.execute(
+                "SELECT chat_id, building_id, section_id FROM water_votes WHERE chat_id=222"
+            ).fetchone()
+            _assert(wv2 == (222, 3, 1), f"unexpected water_votes clamp: {wv2}")
+
             print("OK: sections schema/migration smoke test passed.")
         finally:
             conn.close()

@@ -67,8 +67,15 @@
     state.buildings = payload.buildings;
     state.categories = payload.categories;
 
+    const getSectionsCountForBuilding = (building_id) => {
+      const id = Number(building_id || 0);
+      const building = state.buildings.find((b) => b.id === id);
+      const count = building?.sections_count;
+      return typeof count === "number" && count > 0 ? count : 3;
+    };
+
     renderBuildings(payload.buildings, payload.settings.building_id);
-    renderSections(payload.settings.section_id);
+    renderSections(payload.settings.section_id, getSectionsCountForBuilding(payload.settings.building_id));
     renderPower(payload.power);
     renderSchedule(payload.schedule);
     renderAlerts(payload.alerts);
@@ -83,6 +90,15 @@
     renderSettings(payload.settings);
     elements.donateLink.href = payload.donate_url;
     applyRevealAnimations();
+
+    // Keep sections dropdown in sync with selected building.
+    elements.buildingSelect.addEventListener("change", () => {
+      const building_id = parseInt(elements.buildingSelect.value || "", 10);
+      const count = getSectionsCountForBuilding(building_id);
+      const selected = parseInt(elements.sectionSelect?.value || "", 10);
+      const normalizedSelected = selected && selected <= count ? selected : null;
+      renderSections(normalizedSelected, count);
+    });
   };
 
   const refreshStatus = async () => {

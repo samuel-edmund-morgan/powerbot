@@ -93,7 +93,7 @@
     });
   };
 
-  const renderSections = (selectedId) => {
+  const renderSections = (selectedId, sectionsCount = 3) => {
     if (!elements.sectionSelect) return;
     elements.sectionSelect.innerHTML = "";
     const placeholder = document.createElement("option");
@@ -101,13 +101,14 @@
     placeholder.textContent = "Оберіть секцію";
     elements.sectionSelect.appendChild(placeholder);
 
-    [1, 2, 3].forEach((id) => {
+    const normalizedCount = Math.max(1, Math.min(3, Number(sectionsCount) || 3));
+    for (let id = 1; id <= normalizedCount; id += 1) {
       const option = document.createElement("option");
       option.value = String(id);
       option.textContent = `${id} секція`;
       if (selectedId && id === selectedId) option.selected = true;
       elements.sectionSelect.appendChild(option);
-    });
+    }
   };
 
   const renderPower = (power) => {

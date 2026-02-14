@@ -52,8 +52,45 @@ NEWCASTLE_BUILDING_ID = 1
 DEFAULT_SECTION_OTHER_BUILDINGS = 1
 DEFAULT_SECTION_NEWCASTLE = 2
 VALID_SECTION_IDS = {1, 2, 3}
+# Деякі будинки мають лише 2 секції (а не 3).
+TWO_SECTION_BUILDING_IDS = {2, 3, 4, 11, 12}  # Оксфорд, Кембрідж, Ліверпуль, Лінкольн, Віндзор
+DEFAULT_BUILDING_SECTION_COUNT = 3
 SQLITE_BUSY_TIMEOUT_MS = 5000
 logger = logging.getLogger(__name__)
+
+
+def get_building_section_count(building_id: int | None) -> int:
+    """Return number of sections for a building (default: 3)."""
+    if building_id is None:
+        return DEFAULT_BUILDING_SECTION_COUNT
+    try:
+        bid = int(building_id)
+    except Exception:
+        return DEFAULT_BUILDING_SECTION_COUNT
+    if bid in TWO_SECTION_BUILDING_IDS:
+        return 2
+    return DEFAULT_BUILDING_SECTION_COUNT
+
+
+def get_building_section_ids(building_id: int | None) -> tuple[int, ...]:
+    """Return valid section ids for a building, in order (1..N)."""
+    count = get_building_section_count(building_id)
+    if count <= 1:
+        return (1,)
+    return tuple(range(1, count + 1))
+
+
+def is_valid_section_for_building(building_id: int | None, section_id: int | None) -> bool:
+    """Validate section_id against building-specific section count."""
+    if building_id is None or section_id is None:
+        return False
+    try:
+        sid = int(section_id)
+    except Exception:
+        return False
+    if sid <= 0:
+        return False
+    return sid <= get_building_section_count(building_id)
 
 
 def default_section_for_building(building_id: int | None) -> int | None:
@@ -1101,7 +1138,8 @@ async def get_all_buildings() -> list[dict]:
                     "name": r[1],
                     "address": r[2],
                     "has_sensor": bool(r[3]),
-                    "sensor_count": r[4]
+                    "sensor_count": r[4],
+                    "sections_count": get_building_section_count(int(r[0])),
                 }
                 for r in rows
             ]

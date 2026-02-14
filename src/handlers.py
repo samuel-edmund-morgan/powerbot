@@ -263,13 +263,13 @@ async def get_light_status_text(user_id: int) -> str:
         get_subscriber_building_and_section,
         get_sensors_by_building,
         default_section_for_building,
-        VALID_SECTION_IDS,
+        is_valid_section_for_building,
     )
     
     user_building_id, user_section_id = await get_subscriber_building_and_section(user_id)
     if not user_building_id:
         return "💡 Світло: оберіть будинок"
-    if user_section_id not in VALID_SECTION_IDS:
+    if not is_valid_section_for_building(user_building_id, user_section_id):
         return "💡 Світло: оберіть секцію"
     
     # Перевіряємо чи є сенсори
@@ -438,9 +438,11 @@ def get_buildings_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_sections_keyboard(building_id: int, current_section: int | None = None) -> InlineKeyboardMarkup:
-    """Клавіатура для вибору секції (1..3) для конкретного будинку."""
+    """Клавіатура для вибору секції (1..N) для конкретного будинку."""
+    from database import get_building_section_ids
+
     rows = []
-    for section_id in (1, 2, 3):
+    for section_id in get_building_section_ids(building_id):
         label = f"{section_id} секція"
         if current_section == section_id:
             label = f"✅ {label}"
@@ -569,7 +571,7 @@ async def cb_section_selected(callback: CallbackQuery):
         set_subscriber_section,
         get_building_by_id,
         add_subscriber,
-        VALID_SECTION_IDS,
+        is_valid_section_for_building,
     )
 
     try:
@@ -580,13 +582,12 @@ async def cb_section_selected(callback: CallbackQuery):
         await callback.answer("❌ Некоректні дані секції", show_alert=True)
         return
 
-    if section_id not in VALID_SECTION_IDS:
-        await callback.answer("❌ Некоректна секція", show_alert=True)
-        return
-
     building = get_building_by_id(building_id)
     if not building:
         await callback.answer("❌ Будинок не знайдено", show_alert=True)
+        return
+    if not is_valid_section_for_building(building_id, section_id):
+        await callback.answer("❌ Некоректна секція", show_alert=True)
         return
 
     user = callback.from_user
@@ -1068,7 +1069,7 @@ async def format_stats_message_for_user(
     period_text: str,
 ) -> str:
     """Форматувати повідомлення зі статистикою по обраній секції користувача."""
-    from database import get_subscriber_building_and_section, get_building_by_id, VALID_SECTION_IDS
+    from database import get_subscriber_building_and_section, get_building_by_id, is_valid_section_for_building
 
     building_id, section_id = await get_subscriber_building_and_section(user_id)
     building = get_building_by_id(building_id) if building_id else None
@@ -1079,7 +1080,7 @@ async def format_stats_message_for_user(
             "⚠️ Спочатку оберіть будинок і секцію.\n"
             "Натисніть «🏠 Обрати будинок»."
         )
-    if section_id not in VALID_SECTION_IDS:
+    if not is_valid_section_for_building(building_id, section_id):
         return (
             "📊 <b>Статистика</b>\n\n"
             f"🏠 {building['name']} ({building['address']})\n\n"
@@ -2222,7 +2223,7 @@ async def format_heating_status(user_id: int) -> str:
         get_heating_stats,
         get_subscriber_building_and_section,
         get_building_by_id,
-        VALID_SECTION_IDS,
+        is_valid_section_for_building,
     )
     
     building_id, section_id = await get_subscriber_building_and_section(user_id)
@@ -2234,7 +2235,7 @@ async def format_heating_status(user_id: int) -> str:
             "⚠️ Ви ще не обрали свій будинок.\n"
             "Натисніть «🏠 Обрати будинок» щоб голосувати по вашому будинку."
         )
-    if section_id not in VALID_SECTION_IDS:
+    if not is_valid_section_for_building(building_id, section_id):
         return (
             "🔥 <b>Стан опалення</b>\n\n"
             f"🏠 {building['name']} ({building['address']})\n\n"
@@ -2276,7 +2277,7 @@ async def format_water_status(user_id: int) -> str:
         get_water_stats,
         get_subscriber_building_and_section,
         get_building_by_id,
-        VALID_SECTION_IDS,
+        is_valid_section_for_building,
     )
     
     building_id, section_id = await get_subscriber_building_and_section(user_id)
@@ -2288,7 +2289,7 @@ async def format_water_status(user_id: int) -> str:
             "⚠️ Ви ще не обрали свій будинок.\n"
             "Натисніть «🏠 Обрати будинок» щоб голосувати по вашому будинку."
         )
-    if section_id not in VALID_SECTION_IDS:
+    if not is_valid_section_for_building(building_id, section_id):
         return (
             "💧 <b>Стан води</b>\n\n"
             f"🏠 {building['name']} ({building['address']})\n\n"

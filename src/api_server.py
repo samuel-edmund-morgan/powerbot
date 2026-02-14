@@ -63,7 +63,8 @@ from database import (
     db_get,
     db_set,
     default_section_for_building,
-    VALID_SECTION_IDS,
+    get_building_section_count,
+    is_valid_section_for_building,
 )
 
 
@@ -178,7 +179,7 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
             status=400
         )
 
-    # Валідація section_id (1..3). Для backward-compat дозволяємо відсутність (ставимо дефолт).
+    # Валідація section_id (1..N). Для backward-compat дозволяємо відсутність (ставимо дефолт).
     section_id = data.get("section_id")
     if section_id is None:
         section_id = default_section_for_building(building_id)
@@ -188,9 +189,10 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
             building_id,
             section_id,
         )
-    if not isinstance(section_id, int) or section_id not in VALID_SECTION_IDS:
+    max_sections = get_building_section_count(building_id)
+    if not isinstance(section_id, int) or not is_valid_section_for_building(building_id, section_id):
         return web.json_response(
-            {"status": "error", "message": "section_id must be integer 1..3"},
+            {"status": "error", "message": f"section_id must be integer 1..{max_sections}"},
             status=400,
         )
 
@@ -384,7 +386,7 @@ def _serialize_dt(value: datetime | None) -> str | None:
 
 
 async def _get_power_payload(building_id: int | None, section_id: int | None) -> dict:
-    if not building_id or section_id not in VALID_SECTION_IDS:
+    if not building_id or not is_valid_section_for_building(building_id, section_id):
         return {
             "building": None,
             "section_id": None,
@@ -452,7 +454,7 @@ def _strip_schedule_header(text: str) -> str:
 
 
 async def _get_schedule_payload(building_id: int | None, section_id: int | None) -> dict:
-    if not building_id or section_id not in VALID_SECTION_IDS:
+    if not building_id or not is_valid_section_for_building(building_id, section_id):
         return {"text": ""}
     try:
         text = await get_building_schedule_text(
@@ -605,15 +607,16 @@ async def webapp_building_handler(request: web.Request) -> web.Response:
     if not isinstance(building_id, int):
         return web.json_response({"status": "error", "message": "building_id must be integer"}, status=400)
 
-    section_id = data.get("section_id")
-    if section_id is None:
-        section_id = default_section_for_building(building_id)
-    if not isinstance(section_id, int) or section_id not in VALID_SECTION_IDS:
-        return web.json_response({"status": "error", "message": "section_id must be integer 1..3"}, status=400)
-
     building = await get_building_info(building_id)
     if not building:
         return web.json_response({"status": "error", "message": "Building not found"}, status=404)
+
+    section_id = data.get("section_id")
+    if section_id is None:
+        section_id = default_section_for_building(building_id)
+    max_sections = get_building_section_count(building_id)
+    if not isinstance(section_id, int) or not is_valid_section_for_building(building_id, section_id):
+        return web.json_response({"status": "error", "message": f"section_id must be integer 1..{max_sections}"}, status=400)
 
     user_id = int(user["id"])
     updated_building = await set_subscriber_building(user_id, building_id)
@@ -685,7 +688,7 @@ async def webapp_vote_handler(request: web.Request) -> web.Response:
 
     user_id = int(user["id"])
     building_id, section_id = await get_subscriber_building_and_section(user_id)
-    if not building_id or section_id not in VALID_SECTION_IDS:
+    if not building_id or not is_valid_section_for_building(building_id, section_id):
         return web.json_response({"status": "error", "message": "Select building and section first"}, status=400)
 
     if vote_type == "heating":
