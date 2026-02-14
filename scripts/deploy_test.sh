@@ -208,6 +208,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_p
 echo "Running business refund event smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_refund_event.py"
 
+# Automated smoke: admin manual refund fallback (for real Telegram Stars refunds that may not deliver updates).
+echo "Running business admin manual refund smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_admin_manual_refund.py"
+
 # Automated smoke: subscription lifecycle reconciliation (active -> past_due -> free).
 echo "Running business subscription lifecycle smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_subscription_lifecycle.py"

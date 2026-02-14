@@ -2521,6 +2521,89 @@ async def on_successful_payment(message: Message) -> None:
     )
 
 
+@router.message(F.refunded_payment)
+async def on_refunded_payment(message: Message) -> None:
+    refunded = getattr(message, "refunded_payment", None)
+    if not refunded:
+        return
+    await try_delete_user_message(message)
+    tg_user_id = message.from_user.id if message.from_user else message.chat.id
+
+    raw_payload_json = None
+    try:
+        raw_payload_json = refunded.model_dump_json(exclude_none=True)
+    except Exception:
+        raw_payload_json = None
+
+    try:
+        outcome = await cabinet_service.apply_telegram_stars_refund_update(
+            tg_user_id=int(tg_user_id),
+            invoice_payload=str(getattr(refunded, "invoice_payload", "") or ""),
+            total_amount=int(getattr(refunded, "total_amount", 0) or 0),
+            currency=str(getattr(refunded, "currency", "") or ""),
+            telegram_payment_charge_id=str(getattr(refunded, "telegram_payment_charge_id", "") or ""),
+            provider_payment_charge_id=str(getattr(refunded, "provider_payment_charge_id", "") or ""),
+            raw_payload_json=raw_payload_json,
+        )
+    except (ValidationError, AccessDeniedError, NotFoundError) as error:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=(
+                "⚠️ Не вдалося застосувати повернення автоматично.\n"
+                "Напиши адміністратору і додай скрін цього повідомлення.\n\n"
+                f"Деталі: {html.escape(str(error))}"
+            ),
+            reply_markup=build_main_menu(tg_user_id),
+        )
+        return
+    except Exception:
+        logger.exception("Failed to apply refunded payment for chat_id=%s", message.chat.id)
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=(
+                "⚠️ Сталась технічна помилка при обробці повернення.\n"
+                "Напиши адміністратору і додай скрін цього повідомлення."
+            ),
+            reply_markup=build_main_menu(tg_user_id),
+        )
+        return
+
+    place_id = int(outcome.get("place_id") or 0)
+    rows = await cabinet_service.list_user_businesses(int(tg_user_id))
+    item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
+    place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
+    current_tier = str(item.get("tier") if item else "free")
+    back_cb = f"{CB_MY_OPEN_PREFIX}{place_id}" if place_id > 0 else CB_MENU_PLANS
+
+    note = (
+        "ℹ️ Це повернення вже було оброблено раніше."
+        if outcome.get("duplicate")
+        else "↩️ Повернення отримано. Тариф скасовано."
+    )
+    if place_id > 0:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=f"{note}\n\nОбери тариф для <b>{place_name}</b>:",
+            reply_markup=build_plan_keyboard(
+                place_id,
+                current_tier,
+                back_callback_data=back_cb,
+                source="card",
+            ),
+        )
+        return
+
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text=note,
+        reply_markup=build_main_menu(tg_user_id),
+    )
+
+
 @router.message(Command("moderation"))
 async def show_moderation(
     message: Message,

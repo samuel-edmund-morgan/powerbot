@@ -81,6 +81,8 @@ CB_BIZ_SUBS_EXPORT = "abiz_subs_export"
 CB_BIZ_PAYMENTS = "abiz_payments"
 CB_BIZ_PAYMENTS_PAGE_PREFIX = "abiz_payments_page|"
 CB_BIZ_PAYMENTS_EXPORT = "abiz_payments_export"
+CB_BIZ_PAY_REFUND_PREFIX = "abiz_pay_refund|"
+CB_BIZ_PAY_REFUND_CONFIRM_PREFIX = "abiz_pay_refundc|"
 
 CB_BIZ_AUDIT = "abiz_audit"
 CB_BIZ_AUDIT_PAGE_PREFIX = "abiz_audit_page|"
@@ -1139,6 +1141,25 @@ async def _render_business_subscriptions(
         lines.append("")
 
     kb_rows: list[list[InlineKeyboardButton]] = []
+    # Admin fallback: allow marking successful payments as refunded (revokes entitlements).
+    for row in rows:
+        try:
+            event_id = int(row.get("id") or 0)
+        except Exception:
+            continue
+        if event_id <= 0:
+            continue
+        event_type = str(row.get("event_type") or "").strip().lower()
+        provider = str(row.get("provider") or "").strip().lower()
+        if event_type == "payment_succeeded" and provider == "telegram_stars":
+            kb_rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"↩️ Refund #{event_id}",
+                        callback_data=f"{CB_BIZ_PAY_REFUND_PREFIX}{event_id}|{safe_page}",
+                    )
+                ]
+            )
     if total_pages > 1:
         nav: list[InlineKeyboardButton] = []
         if safe_page > 0:
@@ -1275,6 +1296,7 @@ async def _render_business_payments(
     *,
     page: int,
     prefer_message_id: int | None,
+    note: str | None = None,
 ) -> None:
     admin_id = int(chat_id)
     offset = max(0, int(page)) * BIZ_PAYMENTS_PAGE_SIZE
@@ -1318,7 +1340,10 @@ async def _render_business_payments(
             offset=safe_page * BIZ_PAYMENTS_PAGE_SIZE,
         )
 
-    lines = ["💸 <b>Платіжні події</b>", "", f"Подій: <b>{int(total)}</b>", ""]
+    lines = ["💸 <b>Платіжні події</b>"]
+    if note:
+        lines.extend(["", escape(str(note).strip())])
+    lines.extend(["", f"Подій: <b>{int(total)}</b>", ""])
     for row in rows:
         event_id = int(row.get("id") or 0)
         place_id = int(row.get("place_id") or 0)
@@ -1476,6 +1501,154 @@ async def cb_business_payments_page(callback: CallbackQuery) -> None:
         callback.message.chat.id,
         page=page,
         prefer_message_id=callback.message.message_id,
+    )
+
+
+async def _render_business_payment_refund_confirm(
+    bot: Bot,
+    chat_id: int,
+    *,
+    event_id: int,
+    page: int,
+    prefer_message_id: int | None,
+) -> None:
+    admin_id = int(chat_id)
+    try:
+        row = await business_service.get_payment_event_admin(admin_id, event_id=int(event_id))
+    except BusinessAccessDeniedError as error:
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note=f"❌ {escape(str(error))}")
+        return
+    except BusinessNotFoundError as error:
+        await _render_business_payments(
+            bot,
+            chat_id,
+            page=int(page),
+            prefer_message_id=prefer_message_id,
+            note=f"❌ {escape(str(error))}",
+        )
+        return
+    except Exception:
+        logger.exception("Failed to load payment event for refund confirm")
+        await _render_business_payments(
+            bot,
+            chat_id,
+            page=int(page),
+            prefer_message_id=prefer_message_id,
+            note="❌ Не вдалося завантажити платіжну подію.",
+        )
+        return
+
+    provider = escape(str(row.get("provider") or "—"))
+    event_title = _payment_event_title(str(row.get("event_type") or ""))
+    status_title = _payment_status_title(str(row.get("status") or ""))
+    place_id = int(row.get("place_id") or 0)
+    place_name = escape(str(row.get("place_name") or f"ID {place_id}"))
+    amount = row.get("amount_stars")
+    amount_text = f"{int(amount)}⭐" if amount is not None else "—"
+    currency = escape(str(row.get("currency") or "XTR"))
+    external_payment_id = escape(_short_external_id(row.get("external_payment_id")))
+    created_at = escape(str(row.get("created_at") or "—"))
+
+    text = (
+        "↩️ <b>Повернення платежу (refund)</b>\n\n"
+        f"Подія: <code>#{int(event_id)}</code> {event_title}\n"
+        f"Заклад: <b>{place_name}</b> <code>#{place_id}</code>\n"
+        f"Сума: <code>{amount_text}</code> {currency} | {status_title}\n"
+        f"Провайдер: <code>{provider}</code>\n"
+        f"ext: <code>{external_payment_id}</code>\n"
+        f"<code>{created_at}</code>\n\n"
+        "Ця дія одразу переведе підписку в <b>Free</b> і вимкне <b>Verified</b>.\n"
+        "Підтвердити?"
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Підтвердити refund",
+                    callback_data=f"{CB_BIZ_PAY_REFUND_CONFIRM_PREFIX}{int(event_id)}|{int(page)}",
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад до платежів", callback_data=f"{CB_BIZ_PAYMENTS_PAGE_PREFIX}{int(page)}")],
+            [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+            [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+        ]
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PAY_REFUND_PREFIX))
+async def cb_business_payment_refund(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        raw = callback.data.split("|", 2)
+        event_id = int(raw[1]) if len(raw) > 1 else 0
+        page = int(raw[2]) if len(raw) > 2 else 0
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    await _render_business_payment_refund_confirm(
+        callback.bot,
+        callback.message.chat.id,
+        event_id=event_id,
+        page=page,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_PAY_REFUND_CONFIRM_PREFIX))
+async def cb_business_payment_refund_confirm(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer("⏳ Обробляю…")
+    admin_id = int(callback.from_user.id)
+    try:
+        raw = callback.data.split("|", 2)
+        event_id = int(raw[1]) if len(raw) > 1 else 0
+        page = int(raw[2]) if len(raw) > 2 else 0
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    if event_id <= 0:
+        await callback.answer("Некоректна подія", show_alert=True)
+        return
+
+    try:
+        outcome = await business_service.admin_mark_payment_refund(admin_id, event_id=event_id)
+    except BusinessAccessDeniedError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except (BusinessValidationError, BusinessNotFoundError) as error:
+        await _render_business_payment_refund_confirm(
+            callback.bot,
+            callback.message.chat.id,
+            event_id=event_id,
+            page=page,
+            prefer_message_id=callback.message.message_id,
+        )
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to mark payment refund event_id=%s", event_id)
+        await callback.answer("❌ Помилка обробки refund", show_alert=True)
+        return
+
+    note = "ℹ️ Refund вже був оброблений раніше." if outcome.get("duplicate") else "✅ Refund зафіксовано. Verified вимкнено."
+    await _render_business_payments(
+        callback.bot,
+        callback.message.chat.id,
+        page=int(page),
+        prefer_message_id=callback.message.message_id,
+        note=note,
     )
 
 

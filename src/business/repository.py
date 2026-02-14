@@ -1077,6 +1077,24 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def get_payment_event_admin_view(self, event_id: int) -> dict[str, Any] | None:
+        """Load a single payment event with place info for admin UI."""
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT e.id, e.place_id, e.provider, e.external_payment_id, e.event_type,
+                       e.amount_stars, e.currency, e.status, e.raw_payload_json, e.created_at, e.processed_at,
+                       p.name AS place_name, p.address AS place_address
+                  FROM business_payment_events e
+                  JOIN places p ON p.id = e.place_id
+                 WHERE e.id = ?
+                 LIMIT 1
+                """,
+                (int(event_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
     async def count_all_business_payment_events(self) -> int:
         async with open_business_db() as db:
             async with db.execute("SELECT COUNT(*) FROM business_payment_events") as cur:

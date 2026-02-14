@@ -861,6 +861,129 @@ class BusinessCabinetService:
         total = await self.repository.count_all_business_payment_events()
         return rows, total
 
+    async def get_payment_event_admin(
+        self,
+        admin_tg_user_id: int,
+        *,
+        event_id: int,
+    ) -> dict[str, Any]:
+        self._require_admin(admin_tg_user_id)
+        row = await self.repository.get_payment_event_admin_view(int(event_id))
+        if not row:
+            raise NotFoundError("Платіжну подію не знайдено.")
+        return row
+
+    async def admin_mark_payment_refund(
+        self,
+        admin_tg_user_id: int,
+        *,
+        event_id: int,
+    ) -> dict[str, Any]:
+        """Admin-only fallback: mark a successful payment as refunded and revoke entitlement.
+
+        This is used when Telegram does not deliver refund updates reliably (or for diagnostics).
+        We use the original payment event external id as the refund external id to keep idempotency.
+        """
+        self._require_admin(admin_tg_user_id)
+        row = await self.repository.get_payment_event_admin_view(int(event_id))
+        if not row:
+            raise NotFoundError("Платіжну подію не знайдено.")
+
+        provider = str(row.get("provider") or "").strip().lower()
+        event_type = str(row.get("event_type") or "").strip().lower()
+        if event_type != "payment_succeeded":
+            raise ValidationError("Refund можна позначати лише для успішної оплати.")
+
+        payment_external_id = str(row.get("external_payment_id") or "").strip()
+        if not payment_external_id:
+            raise ValidationError("Некоректний external id платежу.")
+
+        raw_payload: dict[str, Any] = {}
+        raw_text = str(row.get("raw_payload_json") or "").strip()
+        if raw_text:
+            try:
+                raw_payload = json.loads(raw_text)
+            except Exception:
+                raw_payload = {}
+
+        place_id = int(row.get("place_id") or 0)
+        if place_id <= 0:
+            raise ValidationError("Некоректний заклад у платіжній події.")
+
+        intent_external_payment_id = ""
+        tier = ""
+        amount_stars = row.get("amount_stars")
+        currency = str(row.get("currency") or "XTR")
+
+        if provider == PAYMENT_PROVIDER_TELEGRAM_STARS:
+            invoice_payload = str(raw_payload.get("invoice_payload") or "").strip()
+            if invoice_payload:
+                decoded = decode_telegram_stars_payload(invoice_payload)
+            else:
+                decoded = None
+            if decoded:
+                tier = str(decoded.tier).strip().lower()
+                intent_external_payment_id = str(decoded.external_payment_id).strip()
+                if int(decoded.place_id) != place_id:
+                    logger.warning(
+                        "Admin refund mismatch: event place_id=%s decoded place_id=%s event_id=%s",
+                        place_id,
+                        decoded.place_id,
+                        event_id,
+                    )
+            else:
+                # Fallback: use stored intent id if present (still better than nothing).
+                tier = str(raw_payload.get("tier") or "").strip().lower()
+                intent_external_payment_id = str(raw_payload.get("intent_external_payment_id") or "").strip()
+
+            if not intent_external_payment_id:
+                intent_external_payment_id = str(raw_payload.get("intent_external_payment_id") or "").strip()
+            if not tier:
+                # As last resort, use current subscription tier (for audit only).
+                sub = await self.repository.ensure_subscription(place_id)
+                tier = str(sub.get("tier") or "free").strip().lower()
+        elif provider == PAYMENT_PROVIDER_MOCK:
+            tier = str(raw_payload.get("tier") or "").strip().lower() or "free"
+            intent_external_payment_id = payment_external_id
+        else:
+            raise ValidationError("Невідомий провайдер платежу для refund.")
+
+        if not intent_external_payment_id:
+            raise ValidationError("Не вдалося визначити ідентифікатор сесії оплати.")
+
+        if amount_stars is None:
+            try:
+                amount_stars = self.get_plan_price_stars(tier)
+            except Exception:
+                amount_stars = 0
+
+        return await self.apply_payment_event(
+            tg_user_id=int(admin_tg_user_id),
+            place_id=int(place_id),
+            tier=str(tier or "free").strip().lower(),
+            provider=str(provider),
+            intent_external_payment_id=str(intent_external_payment_id),
+            payment_external_id=str(payment_external_id),
+            event_type="refund",
+            amount_stars=int(amount_stars or 0),
+            source="admin_manual_refund",
+            currency=currency,
+            status="processed",
+            raw_payload_json=_to_json(
+                {
+                    "source": "admin_manual_refund",
+                    "admin_tg_user_id": int(admin_tg_user_id),
+                    "original_event_id": int(event_id),
+                    "provider": str(provider),
+                    "payment_external_id": str(payment_external_id),
+                }
+            ),
+            audit_extra={
+                "admin_manual_refund": True,
+                "original_event_id": int(event_id),
+            },
+        )
+
     async def list_audit_logs_admin(
         self,
         admin_tg_user_id: int,
@@ -1661,3 +1784,87 @@ class BusinessCabinetService:
             },
             write_non_success_audit=True,
         )
+
+    async def apply_telegram_stars_refund_update(
+        self,
+        *,
+        tg_user_id: int,
+        invoice_payload: str | None,
+        total_amount: int | None,
+        currency: str | None,
+        telegram_payment_charge_id: str | None,
+        provider_payment_charge_id: str | None,
+        raw_payload_json: str | None,
+    ) -> dict[str, Any]:
+        """Apply refund update coming from Telegram (best-effort).
+
+        Telegram refund updates may include invoice_payload; if not, we try to resolve it
+        via previously stored successful payment events by telegram_payment_charge_id.
+        """
+        invoice_payload_value = str(invoice_payload or "").strip()
+        if invoice_payload_value:
+            return await self.apply_telegram_stars_terminal_event(
+                tg_user_id=int(tg_user_id),
+                invoice_payload=invoice_payload_value,
+                total_amount=int(total_amount or 0),
+                currency=str(currency or ""),
+                terminal_kind="refund",
+                telegram_payment_charge_id=str(telegram_payment_charge_id or ""),
+                provider_payment_charge_id=str(provider_payment_charge_id or ""),
+                raw_payload_json=raw_payload_json,
+                reason=None,
+            )
+
+        # Fallback: resolve invoice_payload from stored payment_succeeded raw payload.
+        candidates = [
+            str(telegram_payment_charge_id or "").strip(),
+            str(provider_payment_charge_id or "").strip(),
+        ]
+        candidates = [c for c in candidates if c]
+        for external_id in candidates:
+            try:
+                rows = await self.repository.get_payment_events_by_external_id(
+                    provider=PAYMENT_PROVIDER_TELEGRAM_STARS,
+                    external_payment_id=external_id,
+                )
+            except Exception:
+                rows = []
+            if not rows:
+                continue
+
+            invoice_candidate = ""
+            amount_candidate = 0
+            currency_candidate = ""
+            # Prefer payment_succeeded row (it stores invoice_payload + intent id).
+            for row in rows:
+                if str(row.get("event_type") or "").strip().lower() != "payment_succeeded":
+                    continue
+                amount_candidate = int(row.get("amount_stars") or 0)
+                currency_candidate = str(row.get("currency") or "")
+                raw_text = str(row.get("raw_payload_json") or "").strip()
+                if not raw_text:
+                    continue
+                try:
+                    raw = json.loads(raw_text)
+                except Exception:
+                    continue
+                invoice_candidate = str(raw.get("invoice_payload") or "").strip()
+                if invoice_candidate:
+                    break
+
+            if not invoice_candidate:
+                continue
+
+            return await self.apply_telegram_stars_terminal_event(
+                tg_user_id=int(tg_user_id),
+                invoice_payload=invoice_candidate,
+                total_amount=int(total_amount or amount_candidate or 0),
+                currency=str(currency or currency_candidate or ""),
+                terminal_kind="refund",
+                telegram_payment_charge_id=str(telegram_payment_charge_id or external_id),
+                provider_payment_charge_id=str(provider_payment_charge_id or ""),
+                raw_payload_json=raw_payload_json,
+                reason=None,
+            )
+
+        raise ValidationError("Не вдалося знайти дані для повернення платежу.")
