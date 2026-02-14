@@ -52,9 +52,6 @@ def _setup_temp_db(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
-        conn.execute(
-            "INSERT INTO buildings(id, name, address, has_sensor, sensor_count) VALUES(1, 'Ньюкасл', '24-в', 0, 0)"
-        )
         conn.commit()
     finally:
         conn.close()
@@ -81,6 +78,22 @@ async def _run_checks() -> None:
     admin_id = 1
     service.admin_ids.add(admin_id)
 
+    buildings = await repo.list_buildings()
+    if not buildings:
+        import aiosqlite  # noqa: WPS433
+
+        async with aiosqlite.connect(os.environ["DB_PATH"]) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO buildings(id, name, address, has_sensor, sensor_count) VALUES(1, 'Ньюкасл', '24-в', 0, 0)"
+            )
+            await db.commit()
+        buildings = await repo.list_buildings()
+    _assert(bool(buildings), "no buildings available for admin_create_place smoke")
+    selected_building = buildings[0]
+    building_id = int(selected_building.get("id") or 0)
+    _assert(building_id > 0, f"invalid building id: {selected_building}")
+    building_label = f"{selected_building.get('name', '—')} ({selected_building.get('address', '—')})"
+
     stamp = int(time.time())
     base_name = f"Smoke Lifecycle {stamp}"
     renamed_name = f"{base_name} Renamed"
@@ -97,7 +110,7 @@ async def _run_checks() -> None:
         service_id=service_id,
         name=f"Smoke Place {stamp}",
         description="Smoke description",
-        building_id=1,
+        building_id=building_id,
         address_details="-1 поверх",
         is_published=0,
     )
@@ -105,7 +118,7 @@ async def _run_checks() -> None:
     _assert(place_id > 0, f"invalid place: {place}")
     _assert(int(place.get("is_published") or 0) == 0, f"new place must be unpublished: {place}")
     _assert(
-        "Ньюкасл (24-в), -1 поверх" in str(place.get("address") or ""),
+        f"{building_label}, -1 поверх" in str(place.get("address") or ""),
         f"address must use building label + details: {place}",
     )
 

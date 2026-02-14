@@ -54,7 +54,8 @@ def _setup_temp_db(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
-        conn.execute("INSERT INTO general_services(name) VALUES(?)", ("Кав'ярні",))
+        conn.execute("INSERT INTO general_services(name) VALUES(?)", ("__smoke_bulk_claim_tokens__",))
+        service_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
         created_at = _now_iso()
         for idx in range(1, 4):
             conn.execute(
@@ -62,9 +63,9 @@ def _setup_temp_db(db_path: Path) -> None:
                 INSERT INTO places(
                     service_id, name, description, address, keywords,
                     is_published, is_verified, verified_tier, verified_until, business_enabled
-                ) VALUES(1, ?, 'Desc', 'Addr', ?, 1, 0, NULL, NULL, 0)
+                ) VALUES(?, ?, 'Desc', 'Addr', ?, 1, 0, NULL, NULL, 0)
                 """,
-                (f"Bulk Token Place {idx}", f"bulk{idx}"),
+                (service_id, f"Bulk Token Place {idx}", f"bulk{idx}"),
             )
             place_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             conn.execute(

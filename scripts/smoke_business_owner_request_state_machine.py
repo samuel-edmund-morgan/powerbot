@@ -50,7 +50,7 @@ def _setup_temp_db(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
-        conn.execute("INSERT INTO general_services(name) VALUES(?)", ("Кав'ярні",))
+        conn.execute("INSERT INTO general_services(name) VALUES(?)", ("__smoke_owner_requests__",))
         conn.commit()
     finally:
         conn.close()
@@ -82,6 +82,11 @@ async def _run_checks() -> None:
     non_admin_id = 999
     service.admin_ids.add(admin_id)
 
+    services = await repo.list_services()
+    _assert(bool(services), "no services available in temp DB")
+    service_id = int(services[0].get("id") or 0)
+    _assert(service_id > 0, f"invalid service id: {services[0]}")
+
     # Non-admin guard.
     try:
         await service.list_pending_owner_requests(non_admin_id)
@@ -94,7 +99,7 @@ async def _run_checks() -> None:
 
     created_a = await service.register_new_business(
         tg_user_id=71000 + stamp % 10000,
-        service_id=1,
+        service_id=service_id,
         place_name=f"State Machine Approve {stamp}",
         description="desc",
         address="addr",
@@ -119,7 +124,7 @@ async def _run_checks() -> None:
 
     created_b = await service.register_new_business(
         tg_user_id=72000 + stamp % 10000,
-        service_id=1,
+        service_id=service_id,
         place_name=f"State Machine Reject {stamp}",
         description="desc",
         address="addr",
