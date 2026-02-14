@@ -2034,7 +2034,7 @@ async def cb_places_category(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("place_"))
 async def cb_place_detail(callback: CallbackQuery):
     """Показати інформацію про заклад з картою."""
-    from database import get_place, get_general_service, has_liked_place, get_place_likes_count
+    from database import get_place, get_general_service, has_liked_place, get_place_likes_count, record_place_view
     from business import get_business_service, is_business_feature_enabled
     
     place_id = int(callback.data.split("_")[1])
@@ -2043,6 +2043,9 @@ async def cb_place_detail(callback: CallbackQuery):
     if not place:
         await callback.answer("Заклад не знайдено", show_alert=True)
         return
+
+    # Best-effort analytics: do not break UX on failure.
+    await record_place_view(place_id)
     
     service = await get_general_service(place["service_id"])
     admin_tag = CFG.admin_tag or "адміністратору"

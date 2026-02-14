@@ -2176,13 +2176,32 @@ async def cb_plan_menu(callback: CallbackQuery) -> None:
         return
     back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
     place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    extra_block = ""
+    if str(item.get("tier") or "").strip().lower() == "free":
+        try:
+            motivation = await cabinet_service.get_free_tier_click_motivation(callback.from_user.id, place_id)
+        except Exception:
+            motivation = None
+            logger.exception("Failed to load free-tier click motivation place_id=%s", place_id)
+        if motivation:
+            days = int(motivation.get("days") or 30)
+            own = int(motivation.get("own_views") or 0)
+            top = int(motivation.get("top_views") or 0)
+            bottom = int(motivation.get("bottom_views") or 0)
+            extra_block = (
+                "\n\n"
+                f"📊 <b>Статистика (за {days} днів)</b>\n"
+                f"👀 Ваш заклад: <b>{own}</b> переглядів картки\n"
+                f"🥇 Топ у категорії: <b>{top}</b>\n"
+                f"🐢 Найнижчий у категорії: <b>{bottom}</b>"
+            )
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         await ui_render(
             callback.message.bot,
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
-            text=f"Обери тариф для <b>{place_name}</b>:",
+            text=f"Обери тариф для <b>{place_name}</b>:{extra_block}",
             reply_markup=build_plan_keyboard(
                 place_id,
                 item["tier"],

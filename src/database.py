@@ -288,6 +288,17 @@ async def init_db():
                 FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
             )"""
         )
+        # Перегляди карток закладів (агрегація по днях) для бізнес-статистики.
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS place_views_daily (
+                place_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                views INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (place_id, day),
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_place_views_daily_day ON place_views_daily (day)")
         # Таблиця лайків укриттів
         await db.execute(
             """CREATE TABLE IF NOT EXISTS shelter_likes (
@@ -1944,6 +1955,33 @@ async def get_place(place_id: int) -> dict | None:
             if row:
                 return {"id": row[0], "service_id": row[1], "name": row[2], "description": row[3], "address": row[4], "keywords": row[5]}
             return None
+
+
+# ============ Функції для переглядів закладів ============
+
+async def record_place_view(place_id: int) -> None:
+    """Записати перегляд картки закладу (агрегація по днях).
+
+    Це best-effort метрика: якщо таблиці немає або БД тимчасово заблокована,
+    не повинно ламати основний UX.
+    """
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                """
+                INSERT INTO place_views_daily(place_id, day, views)
+                VALUES(?, date('now','localtime'), 1)
+                ON CONFLICT(place_id, day) DO UPDATE SET views = views + 1
+                """,
+                (place_id,),
+            )
+            await db.commit()
+
+    try:
+        await _with_sqlite_retry(_op)
+    except Exception:
+        logger.exception("Failed to record place view place_id=%s", place_id)
 
 
 # ============ Функції для лайків закладів ============

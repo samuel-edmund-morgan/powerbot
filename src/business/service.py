@@ -833,6 +833,49 @@ class BusinessCabinetService:
     async def list_user_businesses(self, tg_user_id: int) -> list[dict[str, Any]]:
         return await self.repository.list_user_businesses(tg_user_id)
 
+    async def get_free_tier_click_motivation(
+        self,
+        tg_user_id: int,
+        place_id: int,
+        *,
+        days: int = 30,
+        min_places: int = 5,
+    ) -> dict[str, Any] | None:
+        """Return anonymized category click stats for Free-tier upsell.
+
+        Guardrails:
+        - Only for approved owners.
+        - Only when category has at least `min_places` published places.
+        - Only when there is at least some views data (total_views > 0).
+        """
+        if not await self.repository.is_approved_owner(tg_user_id, place_id):
+            raise AccessDeniedError("Недостатньо прав.")
+
+        place = await self.repository.get_place(int(place_id))
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+
+        service_id = int(place.get("service_id") or 0)
+        if service_id <= 0:
+            return None
+
+        published_count = await self.repository.count_places_by_service_filtered(service_id, is_published=1)
+        if published_count < int(min_places):
+            return None
+
+        summary = await self.repository.get_service_views_summary(service_id, days=int(days))
+        if int(summary.get("total_views") or 0) <= 0:
+            return None
+
+        own_views = await self.repository.get_place_views_sum(int(place_id), days=int(days))
+        return {
+            "days": int(days),
+            "min_places": int(min_places),
+            "published_places": int(published_count),
+            "own_views": int(own_views),
+            **{k: int(v) for k, v in summary.items()},
+        }
+
     async def list_pending_owner_requests(self, admin_tg_user_id: int) -> list[dict[str, Any]]:
         self._require_admin(admin_tg_user_id)
         return await self.repository.list_pending_owner_requests()
