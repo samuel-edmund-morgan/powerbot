@@ -18,6 +18,7 @@ from aiogram.types import (
     PreCheckoutQuery,
 )
 from database import create_admin_job
+from tg_buttons import STYLE_PRIMARY, STYLE_SUCCESS, ikb
 
 from business.service import (
     AccessDeniedError,
@@ -107,7 +108,7 @@ CB_PAYMENT_RESULT_PREFIX = "bpayr:"
 PLAN_TITLES = {
     "free": "Free",
     "light": "Light",
-    "pro": "Pro",
+    "pro": "Premium",
     "partner": "Partner",
 }
 PLAN_STARS = {
@@ -128,6 +129,14 @@ SUBSCRIPTION_TITLES = {
     "past_due": "🟠 Потрібне продовження",
     "canceled": "🔴 Скасована",
 }
+
+_PAID_TIERS = {"light", "pro", "partner"}
+
+
+def _has_active_paid_subscription(item: dict) -> bool:
+    tier = str(item.get("tier") or "free").strip().lower()
+    status = str(item.get("subscription_status") or "inactive").strip().lower()
+    return tier in _PAID_TIERS and status == "active"
 
 
 class AddBusinessStates(StatesGroup):
@@ -560,6 +569,7 @@ def build_plan_keyboard(
     back_callback_data: str | None = None,
     source: str | None = None,
 ) -> InlineKeyboardMarkup:
+    normalized_current = str(current_tier or "").strip().lower() or "free"
     buttons = []
     first_row = []
     for tier in ("free", "light"):
@@ -567,10 +577,11 @@ def build_plan_keyboard(
         stars = PLAN_STARS.get(tier)
         if stars:
             title = f"{title} ({stars}⭐)"
-        if tier == current_tier:
+        if tier == normalized_current:
             title = f"• {title}"
         cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
-        first_row.append(InlineKeyboardButton(text=title, callback_data=cb))
+        style = STYLE_SUCCESS if tier == normalized_current else (STYLE_PRIMARY if tier != "free" else None)
+        first_row.append(ikb(text=title, callback_data=cb, style=style))
     buttons.append(first_row)
 
     second_row = []
@@ -579,10 +590,11 @@ def build_plan_keyboard(
         stars = PLAN_STARS.get(tier)
         if stars:
             title = f"{title} ({stars}⭐)"
-        if tier == current_tier:
+        if tier == normalized_current:
             title = f"• {title}"
         cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
-        second_row.append(InlineKeyboardButton(text=title, callback_data=cb))
+        style = STYLE_SUCCESS if tier == normalized_current else STYLE_PRIMARY
+        second_row.append(ikb(text=title, callback_data=cb, style=style))
     buttons.append(second_row)
     back_cb = back_callback_data or f"{CB_MY_OPEN_PREFIX}{place_id}"
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data=back_cb)])
@@ -808,14 +820,23 @@ async def render_place_card_updated(message: Message, *, place_id: int, note_tex
     if not item:
         await send_main_menu(message, message.chat.id)
         return
-    keyboard_rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"be:{place_id}"),
-            InlineKeyboardButton(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}"),
-        ],
-        [InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)],
-        [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
-    ]
+    keyboard_rows: list[list[InlineKeyboardButton]] = []
+    if item.get("ownership_status") == "approved":
+        can_edit = _has_active_paid_subscription(item)
+        edit_text = "✏️ Редагувати" if can_edit else f"🔒 Редагувати ({PLAN_TITLES['light']})"
+        edit_btn = (
+            InlineKeyboardButton(text=edit_text, callback_data=f"be:{place_id}")
+            if can_edit
+            else ikb(text=edit_text, callback_data=f"be:{place_id}", style=STYLE_PRIMARY)
+        )
+        keyboard_rows.append(
+            [
+                edit_btn,
+                ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
+            ]
+        )
+    keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
+    keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
@@ -1861,10 +1882,17 @@ async def cb_my_business_open(callback: CallbackQuery) -> None:
 
     keyboard_rows: list[list[InlineKeyboardButton]] = []
     if item.get("ownership_status") == "approved":
+        can_edit = _has_active_paid_subscription(item)
+        edit_text = "✏️ Редагувати" if can_edit else f"🔒 Редагувати ({PLAN_TITLES['light']})"
+        edit_btn = (
+            InlineKeyboardButton(text=edit_text, callback_data=f"be:{place_id}")
+            if can_edit
+            else ikb(text=edit_text, callback_data=f"be:{place_id}", style=STYLE_PRIMARY)
+        )
         keyboard_rows.append(
             [
-                InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"be:{place_id}"),
-                InlineKeyboardButton(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}"),
+                edit_btn,
+                ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
             ]
         )
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
@@ -1889,9 +1917,26 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
         return
     place_id = int(payload[1])
     user_id = callback.from_user.id
-    is_allowed = await cabinet_service.repository.is_approved_owner(user_id, place_id)
-    if not is_allowed:
+    rows = await cabinet_service.list_user_businesses(user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
         await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 Редагування доступне з активним тарифом Light або вище.", show_alert=True)
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            try:
+                await _render_place_plan_menu(
+                    callback.message,
+                    tg_user_id=user_id,
+                    place_id=place_id,
+                    source="card",
+                    prefer_message_id=callback.message.message_id,
+                    notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
         return
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
@@ -1913,9 +1958,28 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         return
     place_id = int(payload[1])
     field = payload[2]
-    is_allowed = await cabinet_service.repository.is_approved_owner(callback.from_user.id, place_id)
-    if not is_allowed:
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
         await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        await state.clear()
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 Редагування доступне з активним тарифом Light або вище.", show_alert=True)
+        await state.clear()
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            try:
+                await _render_place_plan_menu(
+                    callback.message,
+                    tg_user_id=callback.from_user.id,
+                    place_id=place_id,
+                    source="card",
+                    prefer_message_id=callback.message.message_id,
+                    notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
         return
     if field == "address":
         await state.set_state(EditPlaceStates.waiting_address_building)
@@ -1969,9 +2033,28 @@ async def cb_edit_building_pick(callback: CallbackQuery, state: FSMContext) -> N
         await callback.answer("Некоректні дані", show_alert=True)
         return
 
-    is_allowed = await cabinet_service.repository.is_approved_owner(callback.from_user.id, place_id)
-    if not is_allowed:
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
         await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        await state.clear()
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 Редагування доступне з активним тарифом Light або вище.", show_alert=True)
+        await state.clear()
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            try:
+                await _render_place_plan_menu(
+                    callback.message,
+                    tg_user_id=callback.from_user.id,
+                    place_id=place_id,
+                    source="card",
+                    prefer_message_id=callback.message.message_id,
+                    notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
         return
 
     building = await cabinet_service.repository.get_building(building_id)
@@ -2015,6 +2098,28 @@ async def cb_edit_building_change(callback: CallbackQuery, state: FSMContext) ->
         place_id = int(raw)
     except Exception:
         await callback.answer("Некоректні дані", show_alert=True)
+        return
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        await state.clear()
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 Редагування доступне з активним тарифом Light або вище.", show_alert=True)
+        await state.clear()
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        try:
+            await _render_place_plan_menu(
+                callback.message,
+                tg_user_id=callback.from_user.id,
+                place_id=place_id,
+                source="card",
+                prefer_message_id=callback.message.message_id,
+                notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+            )
+        except Exception:
+            pass
         return
     await state.set_state(EditPlaceStates.waiting_address_building)
     await state.update_data(place_id=place_id, field="address")
@@ -2066,6 +2171,20 @@ async def edit_place_address_details(message: Message, state: FSMContext) -> Non
             value=address,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        if isinstance(error, AccessDeniedError):
+            await try_delete_user_message(message)
+            await state.clear()
+            try:
+                await _render_place_plan_menu(
+                    message,
+                    tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+                    place_id=place_id,
+                    source="card",
+                    notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
+            return
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
@@ -2099,6 +2218,20 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
             value=message.text,
         )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        if isinstance(error, AccessDeniedError):
+            await try_delete_user_message(message)
+            await state.clear()
+            try:
+                await _render_place_plan_menu(
+                    message,
+                    tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+                    place_id=place_id,
+                    source="card",
+                    notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
+            return
         await ui_render(
             message.bot,
             chat_id=message.chat.id,
@@ -2146,6 +2279,57 @@ async def show_plans_menu(
     )
 
 
+async def _render_place_plan_menu(
+    message: Message,
+    *,
+    tg_user_id: int,
+    place_id: int,
+    source: str,
+    prefer_message_id: int | None = None,
+    notice: str | None = None,
+) -> None:
+    rows = await cabinet_service.list_user_businesses(tg_user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        raise AccessDeniedError("Недостатньо прав.")
+
+    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
+    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    extra_block = ""
+    if str(item.get("tier") or "").strip().lower() == "free":
+        try:
+            motivation = await cabinet_service.get_free_tier_click_motivation(tg_user_id, place_id)
+        except Exception:
+            motivation = None
+            logger.exception("Failed to load free-tier click motivation place_id=%s", place_id)
+        if motivation:
+            days = int(motivation.get("days") or 30)
+            own = int(motivation.get("own_views") or 0)
+            top = int(motivation.get("top_views") or 0)
+            bottom = int(motivation.get("bottom_views") or 0)
+            extra_block = (
+                "\n\n"
+                f"📊 <b>Статистика (за {days} днів)</b>\n"
+                f"👀 Ваш заклад: <b>{own}</b> переглядів картки\n"
+                f"🥇 Топ у категорії: <b>{top}</b>\n"
+                f"🐢 Найнижчий у категорії: <b>{bottom}</b>"
+            )
+
+    header = f"{notice}\n\n" if notice else ""
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text=f"{header}Обери тариф для <b>{place_name}</b>:{extra_block}",
+        reply_markup=build_plan_keyboard(
+            place_id,
+            item["tier"],
+            back_callback_data=back_cb,
+            source=source,
+        ),
+    )
+
+
 @router.callback_query(F.data.startswith(CB_PLANS_PAGE_PREFIX))
 async def cb_plans_page(callback: CallbackQuery) -> None:
     if not callback.message:
@@ -2169,46 +2353,19 @@ async def cb_plan_menu(callback: CallbackQuery) -> None:
         return
     place_id = int(payload[1])
     source = payload[2] if len(payload) == 3 else "card"
-    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
-    item = next((row for row in rows if row["place_id"] == place_id), None)
-    if not item or item["ownership_status"] != "approved":
-        await callback.answer("Недостатньо прав.", show_alert=True)
-        return
-    back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
-    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
-    extra_block = ""
-    if str(item.get("tier") or "").strip().lower() == "free":
-        try:
-            motivation = await cabinet_service.get_free_tier_click_motivation(callback.from_user.id, place_id)
-        except Exception:
-            motivation = None
-            logger.exception("Failed to load free-tier click motivation place_id=%s", place_id)
-        if motivation:
-            days = int(motivation.get("days") or 30)
-            own = int(motivation.get("own_views") or 0)
-            top = int(motivation.get("top_views") or 0)
-            bottom = int(motivation.get("bottom_views") or 0)
-            extra_block = (
-                "\n\n"
-                f"📊 <b>Статистика (за {days} днів)</b>\n"
-                f"👀 Ваш заклад: <b>{own}</b> переглядів картки\n"
-                f"🥇 Топ у категорії: <b>{top}</b>\n"
-                f"🐢 Найнижчий у категорії: <b>{bottom}</b>"
-            )
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
-        await ui_render(
-            callback.message.bot,
-            chat_id=callback.message.chat.id,
-            prefer_message_id=callback.message.message_id,
-            text=f"Обери тариф для <b>{place_name}</b>:{extra_block}",
-            reply_markup=build_plan_keyboard(
-                place_id,
-                item["tier"],
-                back_callback_data=back_cb,
+        try:
+            await _render_place_plan_menu(
+                callback.message,
+                tg_user_id=callback.from_user.id,
+                place_id=place_id,
                 source=source,
-            ),
-        )
+                prefer_message_id=callback.message.message_id,
+            )
+        except AccessDeniedError as error:
+            await callback.answer(str(error), show_alert=True)
+            return
     await callback.answer()
 
 

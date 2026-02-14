@@ -15,6 +15,7 @@ from aiogram.types import (
 )
 
 from config import CFG
+from tg_buttons import STYLE_DANGER, STYLE_SUCCESS, ikb
 from database import (
     create_admin_job,
     db_get,
@@ -1797,13 +1798,15 @@ async def cb_business_audit_page(callback: CallbackQuery) -> None:
 def _biz_moderation_keyboard(owner_id: int, *, index: int, total: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(
+            ikb(
                 text="✅ Підтвердити",
                 callback_data=f"{CB_BIZ_MOD_APPROVE_PREFIX}{int(owner_id)}|{int(index)}",
+                style=STYLE_SUCCESS,
             ),
-            InlineKeyboardButton(
+            ikb(
                 text="❌ Відхилити",
                 callback_data=f"{CB_BIZ_MOD_REJECT_PREFIX}{int(owner_id)}|{int(index)}",
+                style=STYLE_DANGER,
             ),
         ]
     ]
