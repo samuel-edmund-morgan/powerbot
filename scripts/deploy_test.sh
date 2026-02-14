@@ -123,11 +123,20 @@ else
   echo "BUSINESS_MODE=1" >> "${TEST_DIR}/.env"
 fi
 
-# У test завжди працюємо через mock-оплати (без реальних списань Stars).
-if grep -q "^BUSINESS_PAYMENT_PROVIDER=" "${TEST_DIR}/.env"; then
-  sed -i -E 's/^BUSINESS_PAYMENT_PROVIDER=.*/BUSINESS_PAYMENT_PROVIDER=mock/' "${TEST_DIR}/.env"
+# У test за замовчуванням працюємо через mock-оплати (без реальних списань Stars).
+# Якщо потрібно побачити реальний UI Telegram Stars у test, вистав в /opt/powerbot-test/.env:
+#   BUSINESS_TEST_ALLOW_TELEGRAM_STARS=1
+#   BUSINESS_PAYMENT_PROVIDER=telegram_stars
+allow_test_stars="$(get_env_value "BUSINESS_TEST_ALLOW_TELEGRAM_STARS" "${TEST_DIR}/.env")"
+if [[ "${allow_test_stars}" != "1" ]]; then
+  if grep -q "^BUSINESS_PAYMENT_PROVIDER=" "${TEST_DIR}/.env"; then
+    sed -i -E 's/^BUSINESS_PAYMENT_PROVIDER=.*/BUSINESS_PAYMENT_PROVIDER=mock/' "${TEST_DIR}/.env"
+  else
+    echo "BUSINESS_PAYMENT_PROVIDER=mock" >> "${TEST_DIR}/.env"
+  fi
 else
-  echo "BUSINESS_PAYMENT_PROVIDER=mock" >> "${TEST_DIR}/.env"
+  current_provider="$(get_env_value "BUSINESS_PAYMENT_PROVIDER" "${TEST_DIR}/.env")"
+  echo "BUSINESS_TEST_ALLOW_TELEGRAM_STARS=1; keeping BUSINESS_PAYMENT_PROVIDER=${current_provider:-<empty>}."
 fi
 
 cd "${TEST_DIR}"
