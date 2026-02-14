@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Dict
 import re
 
 from config import CFG
+from tg_buttons import STYLE_PRIMARY, STYLE_SUCCESS, ikb
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
@@ -1978,6 +1979,8 @@ async def cb_places_category(callback: CallbackQuery):
     
     # Показуємо кнопки з закладами
     buttons = []
+    used_partner_style = False
+    used_pro_style = False
     for place in places:
         place_id = int(place["id"])
         medal_prefix = medal_map.get(place_id)
@@ -1987,13 +1990,29 @@ async def cb_places_category(callback: CallbackQuery):
         
         # Показуємо кількість лайків
         likes_text = f" ❤️{place['likes_count']}" if place["likes_count"] > 0 else ""
-        
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{prefix}{place['name']}{likes_text}",
-                callback_data=f"place_{place['id']}"
-            )
-        ])
+
+        label = f"{prefix}{place['name']}{likes_text}"
+        cb = f"place_{place['id']}"
+
+        # Optional: highlight only top paid tiers to make them stand out,
+        # but keep it subtle (<=2 colored buttons per category).
+        btn: InlineKeyboardButton
+        btn_style: str | None = None
+        if business_enabled and has_verified and place.get("is_verified"):
+            tier = (place.get("verified_tier") or "").strip().lower()
+            if tier == "partner" and not used_partner_style:
+                btn_style = STYLE_PRIMARY
+                used_partner_style = True
+            elif tier == "pro" and not used_pro_style:
+                btn_style = STYLE_SUCCESS
+                used_pro_style = True
+
+        if btn_style:
+            btn = ikb(text=label, callback_data=cb, style=btn_style)
+        else:
+            btn = InlineKeyboardButton(text=label, callback_data=cb)
+
+        buttons.append([btn])
     
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data="places_menu")])
     
