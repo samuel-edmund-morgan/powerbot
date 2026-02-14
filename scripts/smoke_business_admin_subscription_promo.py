@@ -50,14 +50,6 @@ def _setup_temp_db(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
-        conn.execute("INSERT INTO buildings(id, name, address, has_sensor, sensor_count) VALUES(1, 'Ньюкасл', '24-в', 0, 0)")
-        conn.execute("INSERT INTO general_services(name) VALUES(?)", ("Кав'ярні",))
-        conn.execute(
-            """
-            INSERT INTO places(service_id, name, description, address, keywords, is_published, business_enabled)
-            VALUES(1, 'Promo Place', 'Desc', 'Ньюкасл (24-в)', 'promo', 1, 1)
-            """
-        )
         conn.commit()
     finally:
         conn.close()
@@ -92,8 +84,16 @@ async def _run_checks() -> None:
     service = BusinessCabinetService(repository=repo)
 
     admin_id = 1
-    place_id = 1
     service.admin_ids.add(admin_id)
+
+    service_id = await repo.get_or_create_service_id("__smoke_admin_subscription_promo__")
+    place_id = await repo.create_place(
+        service_id=service_id,
+        name="Promo Place",
+        description="Desc",
+        address="Ньюкасл (24-в)",
+    )
+    await repo.ensure_subscription(place_id)
 
     async def _assert_place_flags(*, is_verified: int, verified_tier: str | None) -> None:
         place = await repo.get_place(place_id)
