@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -12,10 +13,12 @@ import aiosqlite
 
 from config import DB_PATH
 from database import build_keywords
+from sqlite_lock_logger import log_sqlite_lock_event
 
 PRAGMA_BUSY_TIMEOUT_MS = 5000
 WRITE_RETRY_ATTEMPTS = 3
 WRITE_RETRY_BASE_DELAY_SEC = 0.05
+logger = logging.getLogger(__name__)
 
 
 def utc_now_iso() -> str:
@@ -55,9 +58,39 @@ async def execute_write_with_retry(
             if "database is locked" not in str(error).lower():
                 raise
             last_error = error
+            delay = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+            op = ""
+            table = ""
+            try:
+                cleaned = " ".join(str(query or "").strip().split()).lower()
+                # best-effort parse: "insert into <table>", "update <table>", "delete from <table>"
+                for prefix in ("insert into ", "update ", "delete from "):
+                    if cleaned.startswith(prefix):
+                        rest = cleaned[len(prefix):].lstrip()
+                        table = rest.split(" ", 1)[0].strip().strip('"')
+                        op = prefix.strip()
+                        break
+            except Exception:
+                op = ""
+                table = ""
+            logger.warning(
+                "SQLite locked; retry %s/%s in %.2fs (%s %s)",
+                attempt + 1,
+                WRITE_RETRY_ATTEMPTS,
+                delay,
+                op or "write",
+                table or "?",
+            )
+            log_sqlite_lock_event(
+                where="business.execute_write_with_retry",
+                exc=error,
+                attempt=attempt + 1,
+                retries=WRITE_RETRY_ATTEMPTS,
+                delay_sec=delay,
+                extra={"op": op or "write", "table": table or None},
+            )
             if attempt < WRITE_RETRY_ATTEMPTS - 1:
-                backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(delay)
                 continue
             raise
     if last_error is not None:
@@ -362,11 +395,16 @@ class BusinessRepository:
                 if "database is locked" not in str(error).lower():
                     raise
                 last_error = error
-                try:
-                    backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
-                except Exception:
-                    backoff = WRITE_RETRY_BASE_DELAY_SEC
-                await asyncio.sleep(backoff)
+                delay = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                logger.warning("SQLite locked; retry %s/%s in %.2fs (bulk_rotate_claim_tokens)", attempt + 1, WRITE_RETRY_ATTEMPTS, delay)
+                log_sqlite_lock_event(
+                    where="business.bulk_rotate_claim_tokens",
+                    exc=error,
+                    attempt=attempt + 1,
+                    retries=WRITE_RETRY_ATTEMPTS,
+                    delay_sec=delay,
+                )
+                await asyncio.sleep(delay)
                 continue
             except Exception as error:
                 last_error = error
@@ -494,8 +532,17 @@ class BusinessRepository:
                 if "database is locked" not in str(error).lower():
                     raise
                 last_error = error
-                backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
-                await asyncio.sleep(backoff)
+                delay = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                logger.warning("SQLite locked; retry %s/%s in %.2fs (delete_place_draft)", attempt + 1, WRITE_RETRY_ATTEMPTS, delay)
+                log_sqlite_lock_event(
+                    where="business.delete_place_draft",
+                    exc=error,
+                    attempt=attempt + 1,
+                    retries=WRITE_RETRY_ATTEMPTS,
+                    delay_sec=delay,
+                    extra={"place_id": pid},
+                )
+                await asyncio.sleep(delay)
                 continue
             except Exception as error:
                 last_error = error
@@ -953,8 +1000,17 @@ class BusinessRepository:
                 if "database is locked" not in str(error).lower():
                     raise
                 last_error = error
-                backoff = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
-                await asyncio.sleep(backoff)
+                delay = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                logger.warning("SQLite locked; retry %s/%s in %.2fs (write_audit_logs_bulk)", attempt + 1, WRITE_RETRY_ATTEMPTS, delay)
+                log_sqlite_lock_event(
+                    where="business.write_audit_logs_bulk",
+                    exc=error,
+                    attempt=attempt + 1,
+                    retries=WRITE_RETRY_ATTEMPTS,
+                    delay_sec=delay,
+                    extra={"rows": len(rows)},
+                )
+                await asyncio.sleep(delay)
                 continue
             except Exception as error:
                 last_error = error

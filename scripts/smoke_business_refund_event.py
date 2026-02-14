@@ -6,7 +6,7 @@ What it validates:
 - `apply_payment_event(..., event_type='refund')` is accepted and persisted.
 - duplicate refund for the same provider/external_payment_id is idempotent.
 - refund writes audit log entry with contextual payload.
-- refund does not silently activate/upgrade subscription state.
+- refund immediately revokes paid entitlement (tier -> free, status -> inactive, verified -> off).
 
 Run:
   python3 scripts/smoke_business_refund_event.py
@@ -184,11 +184,26 @@ async def _run_checks() -> None:
     _assert("tg-refund-001" in str(audit_row[1]), f"refund audit payload missing external id: {audit_row}")
     _assert("refund_reason" in str(audit_row[1]), f"refund audit payload missing refund_reason: {audit_row}")
 
-    # Current behavior contract: canonical refund event is recorded/audited,
-    # while subscription state remains unchanged until explicit entitlement policy is introduced.
     sub_after = await repo.ensure_subscription(1)
-    _assert(str(sub_after.get("tier")) == str(sub_before.get("tier")), f"refund changed tier unexpectedly: {sub_after}")
-    _assert(str(sub_after.get("status")) == str(sub_before.get("status")), f"refund changed status unexpectedly: {sub_after}")
+    _assert(str(sub_after.get("tier")) == "free", f"refund did not revoke tier: {sub_after}")
+    _assert(str(sub_after.get("status")) == "inactive", f"refund did not revoke status: {sub_after}")
+
+    import aiosqlite  # noqa: WPS433
+
+    async with aiosqlite.connect(os.environ["DB_PATH"]) as db:
+        async with db.execute(
+            """
+            SELECT business_enabled, is_verified, verified_tier, verified_until
+              FROM places
+             WHERE id = 1
+            """
+        ) as cur:
+            place_row = await cur.fetchone()
+    _assert(place_row is not None, "place row missing after refund")
+    _assert(int(place_row[0] or 0) == 1, f"business_enabled not set after refund: {place_row}")
+    _assert(int(place_row[1] or 0) == 0, f"is_verified not revoked after refund: {place_row}")
+    _assert(place_row[2] is None, f"verified_tier not cleared after refund: {place_row}")
+    _assert(place_row[3] is None, f"verified_until not cleared after refund: {place_row}")
 
 
 def main() -> None:

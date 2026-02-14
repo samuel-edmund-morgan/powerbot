@@ -3,7 +3,9 @@
 Static smoke-check: resident places UI BUSINESS_MODE policy in handlers.
 
 Policy goals:
-- In category list flow, business mode branch applies verified-first sorting.
+- In category list flow, business mode applies verified-first sorting only when
+  the category already contains at least one Verified place (to keep "stealth"
+  BUSINESS_MODE enablement UX-neutral when there are no verified places yet).
 - Legacy branch keeps likes-first medal behavior when business mode is off.
 - Place details add Verified badge only under business feature guard.
 
@@ -46,8 +48,10 @@ def main() -> None:
     # Category list: business branch + verified-first sort.
     if "business_enabled = is_business_feature_enabled()" not in text:
         violations.append("cb_places_category must derive business_enabled via feature guard")
-    if "if business_enabled:" not in text:
-        violations.append("cb_places_category must have business-enabled branch")
+    if "has_verified" not in text or "item.get(\"is_verified\")" not in text:
+        violations.append("cb_places_category must gate business ranking by presence of Verified places")
+    if "if business_enabled and has_verified" not in text:
+        violations.append("cb_places_category must apply business ranking only when has_verified")
     if "places.sort(" not in text or '0 if item.get("is_verified") else 1' not in text:
         violations.append("business-enabled branch must sort verified-first")
     if "_tier_rank(item.get(\"verified_tier\"))" not in text:

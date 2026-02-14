@@ -187,7 +187,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     _assert(str(fail_sub.get("tier")) == "free", f"fail changed tier: {fail_sub}")
     _assert(str(fail_sub.get("status")) == "inactive", f"fail changed status: {fail_sub}")
 
-    # 3) refund path (after success, entitlement remains stable by current contract)
+    # 3) refund path (after success, entitlement is revoked immediately)
     place_refund, tg_refund = pairs[2]
     refund_intent = await service.create_payment_intent(
         tg_user_id=int(tg_refund),
@@ -241,8 +241,8 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     _assert(bool(refund_dup.get("duplicate")), f"refund duplicate flag missing: {refund_dup}")
 
     after_refund = await repo.ensure_subscription(int(place_refund))
-    _assert(str(after_refund.get("tier")) == str(before_refund.get("tier")), f"refund changed tier unexpectedly: {after_refund}")
-    _assert(str(after_refund.get("status")) == str(before_refund.get("status")), f"refund changed status unexpectedly: {after_refund}")
+    _assert(str(after_refund.get("tier")) == "free", f"refund did not revoke tier: {after_refund}")
+    _assert(str(after_refund.get("status")) == "inactive", f"refund did not revoke status: {after_refund}")
 
     import aiosqlite  # noqa: WPS433
 

@@ -1956,7 +1956,12 @@ async def cb_places_category(callback: CallbackQuery):
     medals = ["🥇", "🥈", "🥉"]
     medal_map: dict[int, str] = {}
 
-    if business_enabled:
+    # Важливо для "тихого" ввімкнення BUSINESS_MODE:
+    # показувати business-рейтинг/медалі має сенс лише тоді, коли в категорії вже є хоча б 1 Verified.
+    # Інакше медалі в категоріях з 0 лайків виглядають випадково і створюють UX-регресію.
+    has_verified = bool(business_enabled and any(bool(item.get("is_verified")) for item in places))
+
+    if business_enabled and has_verified:
         def _tier_rank(value: str | None) -> int:
             tier = (value or "").strip().lower()
             return {"partner": 0, "pro": 1, "light": 2}.get(tier, 3)
@@ -1969,8 +1974,7 @@ async def cb_places_category(callback: CallbackQuery):
                 item.get("name") or "",
             )
         )
-        # У business-режимі медалі відображають місця в рейтингу (verified-first),
-        # навіть якщо в закладу ще немає лайків.
+        # У business-режимі медалі відображають місця в рейтингу (verified-first).
         for idx, item in enumerate(places[:3]):
             try:
                 medal_map[int(item["id"])] = medals[idx]
