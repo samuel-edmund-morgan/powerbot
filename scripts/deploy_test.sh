@@ -328,6 +328,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
 
+# Automated smoke: "stealth" rollout (businessbot enabled with token while resident UI stays legacy).
+echo "Running businessbot stealth smoke test in test container..."
+docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY=000000000:dummy python - < "${REPO_DIR}/scripts/smoke_businessbot_stealth.py"
+
 # Automated smoke: compare resident catalog OFF(no-op) vs ON(integration) business metadata path.
 echo "Running business mode catalog compare smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_mode_catalog_compare.py"
