@@ -23,8 +23,18 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+# Support execution via stdin inside container and local file execution.
+REPO_ROOT: Path | None = None
+for candidate in (
+    Path.cwd(),   # local repo root or container WORKDIR (/app)
+    Path("/app"), # container fallback
+):
+    if (candidate / "schema.sql").exists() and (candidate / "migrate_db.py").exists():
+        REPO_ROOT = candidate
+        sys.path.insert(0, str(candidate))
+        break
+if REPO_ROOT is None:
+    raise RuntimeError("Cannot locate repo root (schema.sql + migrate_db.py).")
 
 import migrate_db  # noqa: E402
 from migrate_db import DatabaseMigrator, prepare_schema_db  # noqa: E402
@@ -118,8 +128,7 @@ def _assert(cond: bool, msg: str) -> None:
 
 
 def main() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    schema_path = repo_root / "schema.sql"
+    schema_path = REPO_ROOT / "schema.sql"
     _assert(schema_path.exists(), f"schema.sql not found at {schema_path}")
 
     tmpdir = Path(tempfile.mkdtemp(prefix="powerbot-smoke-sections-"))

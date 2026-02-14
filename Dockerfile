@@ -14,6 +14,7 @@ RUN apt-get update \
 COPY src/ /app/src/
 COPY webapp/ /app/webapp/
 COPY schema.sql /app/schema.sql
+COPY migrate_db.py /app/migrate_db.py
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh
