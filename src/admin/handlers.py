@@ -35,6 +35,7 @@ from business.service import AccessDeniedError as BusinessAccessDeniedError
 from business.service import BusinessCabinetService
 from business.service import NotFoundError as BusinessNotFoundError
 from business.service import ValidationError as BusinessValidationError
+from business.ui import render as render_business_ui
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1623,11 +1624,11 @@ def _biz_moderation_keyboard(owner_id: int, *, index: int, total: int) -> Inline
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
-                text="✅ Approve",
+                text="✅ Підтвердити",
                 callback_data=f"{CB_BIZ_MOD_APPROVE_PREFIX}{int(owner_id)}|{int(index)}",
             ),
             InlineKeyboardButton(
-                text="❌ Reject",
+                text="❌ Відхилити",
                 callback_data=f"{CB_BIZ_MOD_REJECT_PREFIX}{int(owner_id)}|{int(index)}",
             ),
         ]
@@ -1791,7 +1792,15 @@ async def _notify_owner_via_business_bot(owner_tg_user_id: int, text: str) -> No
         kb = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="🏢 Відкрити бізнес‑кабінет", callback_data="bmenu:home")]]
         )
-        await bot.send_message(chat_id=int(owner_tg_user_id), text=text, reply_markup=kb)
+        # Keep owner's chat clean: business-bot is also single-message by default,
+        # so we render this notification as the current UI message (best-effort).
+        await render_business_ui(
+            bot,
+            chat_id=int(owner_tg_user_id),
+            text=str(text),
+            reply_markup=kb,
+            force_new_message=True,
+        )
     except Exception:
         # Owner may block the bot or have not started it.
         logger.exception("Failed to notify business owner %s", owner_tg_user_id)
