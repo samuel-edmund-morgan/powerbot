@@ -244,6 +244,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_busi
 echo "Running admin owner-alert UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_owner_alert_ui_policy.py"
 
+# Automated smoke: admin claim-token UI flow policy (callbacks + token screen nav).
+echo "Running admin claim-tokens UI policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_admin_business_claim_tokens_ui_policy.py"
+
 # Automated smoke: static write-retry policy for business repository.
 echo "Running business write-retry policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
