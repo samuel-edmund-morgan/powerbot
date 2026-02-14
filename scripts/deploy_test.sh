@@ -204,9 +204,25 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_r
 echo "Running business subscription lifecycle smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_subscription_lifecycle.py"
 
+# Automated smoke: admin promo/subscription tier transitions + verified sync.
+echo "Running business admin subscription promo smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_admin_subscription_promo.py"
+
+# Automated smoke: admin place lifecycle (create/publish/unpublish/delete draft).
+echo "Running business admin place lifecycle smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_admin_place_lifecycle.py"
+
 # Automated smoke: claim-token create/rotate/claim flow.
 echo "Running business claim-token smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_claim_tokens.py"
+
+# Automated smoke: bulk claim-token rotation for all places + audit.
+echo "Running business claim-token bulk rotation smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_claim_tokens_bulk_rotation.py"
+
+# Automated smoke: moderation status machine (pending -> approved/rejected terminal).
+echo "Running business owner-request state-machine smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_owner_request_state_machine.py"
 
 # Automated smoke: claim existing place -> pending -> approve flow.
 echo "Running business claim moderation flow smoke test in test container..."
@@ -248,9 +264,21 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_busi
 echo "Running admin owner-alert UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_owner_alert_ui_policy.py"
 
+# Automated smoke: admin moderation UI contract (owner contact + approve/reject flow).
+echo "Running admin business moderation UI policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_admin_business_moderation_ui_policy.py"
+
+# Automated smoke: admin places UI contract (publish/hide/delete/reject/edit/promo).
+echo "Running admin business places UI policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_admin_business_places_ui_policy.py"
+
 # Automated smoke: admin claim-token UI flow policy (callbacks + token screen nav).
 echo "Running admin claim-tokens UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_business_claim_tokens_ui_policy.py"
+
+# Automated smoke: business owner address edit must use building-picker flow.
+echo "Running business address edit policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_address_edit_policy.py"
 
 # Automated smoke: static write-retry policy for business repository.
 echo "Running business write-retry policy smoke test..."
