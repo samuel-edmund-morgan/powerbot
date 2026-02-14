@@ -1414,6 +1414,144 @@ class BusinessCabinetService:
         )
         return updated_place
 
+    async def update_place_business_profile_field(
+        self,
+        tg_user_id: int,
+        place_id: int,
+        field: str,
+        value: str,
+    ) -> dict[str, Any]:
+        """Owner-only update for optional business profile fields.
+
+        These fields are available only with an active paid subscription (Light+).
+        Value "-" clears the field.
+        """
+        allowed_fields = {"opening_hours", "link_url", "promo_code"}
+        normalized_field = str(field or "").strip().lower()
+        if normalized_field not in allowed_fields:
+            raise ValidationError("Поле недоступне для редагування.")
+
+        can_edit = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_edit:
+            raise AccessDeniedError("Ти можеш редагувати лише свої підтверджені заклади.")
+
+        subscription = await self.repository.get_subscription(place_id)
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        expires_at_dt = _parse_iso_utc(str(subscription.get("expires_at") or "").strip() or None)
+        if expires_at_dt and expires_at_dt <= _utc_now():
+            status = "inactive"
+
+        if tier not in PAID_TIERS or status != "active":
+            raise AccessDeniedError("Ця дія доступна лише з активною підпискою Light або вище.")
+
+        raw = str(value or "").strip()
+        clean_value = "" if raw == "-" else raw
+
+        if normalized_field == "opening_hours":
+            if clean_value and len(clean_value) > 220:
+                raise ValidationError("Години роботи занадто довгі.")
+        elif normalized_field == "promo_code":
+            if clean_value and len(clean_value) > 64:
+                raise ValidationError("Промокод занадто довгий.")
+        else:
+            # link_url
+            if clean_value and len(clean_value) > 300:
+                raise ValidationError("Посилання занадто довге.")
+            if clean_value:
+                lowered = clean_value.lower()
+                if not (
+                    lowered.startswith("http://")
+                    or lowered.startswith("https://")
+                    or lowered.startswith("tg://")
+                    or lowered.startswith("t.me/")
+                    or lowered.startswith("@")
+                ):
+                    raise ValidationError("Посилання має починатися з https://, t.me/ або @username.")
+
+        kwargs: dict[str, Any] = {normalized_field: clean_value}
+        updated_place = await self.repository.update_place_business_profile(place_id, **kwargs)
+        if not updated_place:
+            raise NotFoundError("Заклад не знайдено.")
+
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(tg_user_id),
+            action="place_business_profile_updated",
+            payload_json=_to_json({"field": normalized_field, "value": clean_value}),
+        )
+        return updated_place
+
+    async def update_place_contact(
+        self,
+        tg_user_id: int,
+        *,
+        place_id: int,
+        contact_type: str | None,
+        contact_value: str | None,
+    ) -> dict[str, Any]:
+        """Owner-only update for contact button settings (Light+).
+
+        Passing empty/None value clears both type and value.
+        """
+        can_edit = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_edit:
+            raise AccessDeniedError("Ти можеш редагувати лише свої підтверджені заклади.")
+
+        subscription = await self.repository.get_subscription(place_id)
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        expires_at_dt = _parse_iso_utc(str(subscription.get("expires_at") or "").strip() or None)
+        if expires_at_dt and expires_at_dt <= _utc_now():
+            status = "inactive"
+
+        if tier not in PAID_TIERS or status != "active":
+            raise AccessDeniedError("Ця дія доступна лише з активною підпискою Light або вище.")
+
+        ctype = str(contact_type or "").strip().lower()
+        cvalue_raw = str(contact_value or "").strip()
+        if cvalue_raw == "-":
+            cvalue_raw = ""
+
+        if not cvalue_raw:
+            updated_place = await self.repository.update_place_business_profile(
+                place_id,
+                contact_type=None,
+                contact_value=None,
+            )
+            if not updated_place:
+                raise NotFoundError("Заклад не знайдено.")
+            await self.repository.write_audit_log(
+                place_id=int(place_id),
+                actor_tg_user_id=int(tg_user_id),
+                action="place_contact_cleared",
+                payload_json=_to_json({}),
+            )
+            return updated_place
+
+        if ctype not in {"call", "chat"}:
+            raise ValidationError("Некоректний тип контакту.")
+
+        # Basic validation: keep storage flexible, normalize later in resident UI.
+        if len(cvalue_raw) > 220:
+            raise ValidationError("Контакт занадто довгий.")
+
+        updated_place = await self.repository.update_place_business_profile(
+            place_id,
+            contact_type=ctype,
+            contact_value=cvalue_raw,
+        )
+        if not updated_place:
+            raise NotFoundError("Заклад не знайдено.")
+
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(tg_user_id),
+            action="place_contact_updated",
+            payload_json=_to_json({"contact_type": ctype, "contact_value": cvalue_raw}),
+        )
+        return updated_place
+
     async def _activate_paid_subscription(
         self,
         *,

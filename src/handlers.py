@@ -9,6 +9,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
+import html
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -2035,6 +2036,83 @@ async def cb_places_category(callback: CallbackQuery):
     await callback.answer()
 
 
+def _normalize_place_link(raw: str | None) -> str | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    lowered = value.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("tg://"):
+        return value
+    if lowered.startswith("t.me/"):
+        return "https://" + value
+    if value.startswith("@"):
+        username = value[1:].strip()
+        if username:
+            return f"https://t.me/{username}"
+        return None
+    # Plain username (best-effort).
+    if re.fullmatch(r"[A-Za-z0-9_]{5,}", value):
+        return f"https://t.me/{value}"
+    return None
+
+
+def _normalize_tel_url(raw: str | None) -> str | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    # Keep digits and leading "+" only.
+    cleaned = "".join(ch for ch in value if ch.isdigit() or ch == "+")
+    if cleaned.startswith("00"):
+        cleaned = "+" + cleaned[2:]
+    digits = "".join(ch for ch in cleaned if ch.isdigit())
+    if len(digits) < 7:
+        return None
+    return f"tel:{cleaned}"
+
+
+def build_place_detail_keyboard(
+    place_enriched: dict,
+    *,
+    likes_count: int,
+    user_liked: bool,
+    business_enabled: bool,
+) -> InlineKeyboardMarkup:
+    place_id = int(place_enriched["id"])
+    service_id = int(place_enriched["service_id"])
+
+    # Contact/link buttons are shown only for Verified places in business mode.
+    top_row: list[InlineKeyboardButton] = []
+    if business_enabled and place_enriched.get("is_verified"):
+        contact_type = str(place_enriched.get("contact_type") or "").strip().lower()
+        contact_value = str(place_enriched.get("contact_value") or "").strip()
+        if contact_type == "call" and contact_value:
+            tel_url = _normalize_tel_url(contact_value)
+            if tel_url:
+                top_row.append(InlineKeyboardButton(text="📞 Подзвонити", url=tel_url))
+        elif contact_type == "chat" and contact_value:
+            chat_url = _normalize_place_link(contact_value)
+            if chat_url:
+                top_row.append(InlineKeyboardButton(text="💬 Написати", url=chat_url))
+
+        link_url = _normalize_place_link(place_enriched.get("link_url"))
+        if link_url:
+            top_row.append(InlineKeyboardButton(text="🔗 Посилання", url=link_url))
+
+    # Like button.
+    if user_liked:
+        like_btn = InlineKeyboardButton(text=f"💔 Забрати лайк ({likes_count})", callback_data=f"unlike_{place_id}")
+    else:
+        like_btn = InlineKeyboardButton(text=f"❤️ Подобається ({likes_count})", callback_data=f"like_{place_id}")
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if top_row:
+        # Keep at most 2 buttons in a row to avoid cramped UI.
+        rows.append(top_row[:2])
+    rows.append([like_btn])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{service_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.callback_query(F.data.startswith("place_"))
 async def cb_place_detail(callback: CallbackQuery):
     """Показати інформацію про заклад з картою."""
@@ -2065,6 +2143,14 @@ async def cb_place_detail(callback: CallbackQuery):
         tier = (place_enriched.get("verified_tier") or "").strip().upper()
         tier_text = f" {tier}" if tier else ""
         text += f"✅ <b>Verified{tier_text}</b>\n\n"
+
+        opening_hours = str(place_enriched.get("opening_hours") or "").strip()
+        if opening_hours:
+            text += f"⏰ <b>Години:</b> {html.escape(opening_hours)}\n\n"
+
+        promo_code = str(place_enriched.get("promo_code") or "").strip()
+        if promo_code:
+            text += f"🎟 <b>Промокод:</b> <code>{html.escape(promo_code)}</code>\n\n"
     
     if place_enriched["description"]:
         text += f"📝 {place_enriched['description']}\n\n"
@@ -2078,16 +2164,12 @@ async def cb_place_detail(callback: CallbackQuery):
     # Визначаємо карту за будинком з адреси
     map_file = get_map_file_for_address(place_enriched["address"])
     
-    # Кнопка лайку
-    if user_liked:
-        like_btn = InlineKeyboardButton(text=f"💔 Забрати лайк ({likes_count})", callback_data=f"unlike_{place_id}")
-    else:
-        like_btn = InlineKeyboardButton(text=f"❤️ Подобається ({likes_count})", callback_data=f"like_{place_id}")
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [like_btn],
-        [InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{place_enriched['service_id']}")],
-    ])
+    keyboard = build_place_detail_keyboard(
+        place_enriched,
+        likes_count=likes_count,
+        user_liked=user_liked,
+        business_enabled=is_business_feature_enabled(),
+    )
     
     if map_file:
         # Видаляємо старе повідомлення і відправляємо фото з підписом
@@ -2128,14 +2210,18 @@ async def cb_like_place(callback: CallbackQuery):
     else:
         await callback.answer("Ви вже лайкнули цей заклад")
     
-    # Оновлюємо кнопку
+    # Оновлюємо кнопку (+ optional paid buttons)
     place = await get_place(place_id)
     if place:
         likes_count = await get_place_likes_count(place_id)
-        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"💔 Забрати лайк ({likes_count})", callback_data=f"unlike_{place_id}")],
-            [InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{place['service_id']}")],
-        ])
+        from business import get_business_service, is_business_feature_enabled
+        place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+        new_keyboard = build_place_detail_keyboard(
+            place_enriched,
+            likes_count=likes_count,
+            user_liked=True,
+            business_enabled=is_business_feature_enabled(),
+        )
         
         try:
             if callback.message.photo:
@@ -2165,14 +2251,18 @@ async def cb_unlike_place(callback: CallbackQuery):
     else:
         await callback.answer("Ви не лайкали цей заклад")
     
-    # Оновлюємо кнопку
+    # Оновлюємо кнопку (+ optional paid buttons)
     place = await get_place(place_id)
     if place:
         likes_count = await get_place_likes_count(place_id)
-        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"❤️ Подобається ({likes_count})", callback_data=f"like_{place_id}")],
-            [InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{place['service_id']}")],
-        ])
+        from business import get_business_service, is_business_feature_enabled
+        place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+        new_keyboard = build_place_detail_keyboard(
+            place_enriched,
+            likes_count=likes_count,
+            user_liked=False,
+            business_enabled=is_business_feature_enabled(),
+        )
         
         try:
             if callback.message.photo:
