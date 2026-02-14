@@ -497,6 +497,58 @@ class BusinessRepository:
                 row = await cur.fetchone()
                 return dict(row) if row else None
 
+    async def get_place_views_sum(self, place_id: int, *, days: int) -> int:
+        """Get total place card views for the last N days (including today)."""
+        safe_days = max(1, min(int(days), 3650))
+        offset = f"-{safe_days - 1} days"
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT COALESCE(SUM(views), 0) AS cnt
+                  FROM place_views_daily
+                 WHERE place_id = ?
+                   AND day >= date('now','localtime', ?)
+                """,
+                (int(place_id), offset),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row and row[0] is not None else 0)
+
+    async def get_service_views_summary(self, service_id: int, *, days: int) -> dict[str, int]:
+        """Get views summary across published places in a category.
+
+        Returns: place_count, total_views, top_views, bottom_views.
+        """
+        safe_days = max(1, min(int(days), 3650))
+        offset = f"-{safe_days - 1} days"
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT p.id AS place_id,
+                       COALESCE(SUM(v.views), 0) AS views_cnt
+                  FROM places p
+                  LEFT JOIN place_views_daily v
+                         ON v.place_id = p.id
+                        AND v.day >= date('now','localtime', ?)
+                 WHERE p.service_id = ?
+                   AND p.is_published = 1
+                 GROUP BY p.id
+                """,
+                (offset, int(service_id)),
+            ) as cur:
+                rows = await cur.fetchall()
+
+        views = [int(r["views_cnt"] or 0) for r in rows]
+        if not views:
+            return {"place_count": 0, "total_views": 0, "top_views": 0, "bottom_views": 0}
+        total = int(sum(views))
+        return {
+            "place_count": int(len(views)),
+            "total_views": total,
+            "top_views": int(max(views)),
+            "bottom_views": int(min(views)),
+        }
+
     async def delete_place_draft(self, place_id: int) -> bool:
         """Delete an unpublished place and its related business rows.
 
@@ -869,6 +921,7 @@ class BusinessRepository:
             async with db.execute(
                 """SELECT bo.id AS owner_id, bo.place_id, bo.role, bo.status AS ownership_status,
                           bo.created_at AS ownership_created_at,
+                          p.service_id AS place_service_id,
                           p.name AS place_name, p.description AS place_description, p.address AS place_address,
                           p.business_enabled, p.is_verified, p.verified_tier, p.verified_until,
                           COALESCE(bs.tier, 'free') AS tier,

@@ -183,6 +183,10 @@ if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
 fi
 
+# Automated smoke: place click stats (DB-backed views counters).
+echo "Running place click stats smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_place_click_stats.py"
+
 # Automated smoke: business mock payments state machine + idempotency.
 # Run inside container (all runtime deps are present there).
 echo "Running business payments smoke test in test container..."

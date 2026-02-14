@@ -210,6 +210,17 @@ CREATE TABLE IF NOT EXISTS place_likes (
     FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
 );
 
+-- Перегляди карток закладів (агрегація по днях)
+-- day = локальна дата (YYYY-MM-DD), щоб зручно рахувати за "останні 30 днів".
+CREATE TABLE IF NOT EXISTS place_views_daily (
+    place_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    views INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (place_id, day),
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_place_views_daily_day ON place_views_daily (day);
+
 -- Лайки укриттів
 CREATE TABLE IF NOT EXISTS shelter_likes (
     place_id INTEGER NOT NULL,

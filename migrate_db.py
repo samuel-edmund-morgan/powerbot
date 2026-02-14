@@ -51,6 +51,7 @@ USER_DATA_TABLES = {
     "water_votes",
     "heating_votes",
     "place_likes",
+    "place_views_daily",
     "events",
     "active_notifications",
     "last_bot_message",
