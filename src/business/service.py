@@ -308,7 +308,51 @@ class BusinessCabinetService:
                 expires_at=expires_at,
                 audit_extra=success_audit_extra,
             )
-        elif write_non_success_audit and normalized_event in {"payment_failed", "payment_canceled", "refund"}:
+        elif normalized_event == "refund":
+            before = await self.repository.ensure_subscription(int(place_id))
+            subscription = await self.repository.update_subscription(
+                place_id=int(place_id),
+                tier="free",
+                status="inactive",
+                starts_at=None,
+                expires_at=None,
+            )
+            await self.repository.update_place_business_flags(
+                int(place_id),
+                business_enabled=1,
+                is_verified=0,
+                verified_tier=None,
+                verified_until=None,
+            )
+            refund_payload: dict[str, Any] = {
+                "provider": str(provider),
+                "intent_external_payment_id": str(intent_external_payment_id or ""),
+                "payment_external_id": payment_event_external_id,
+                "tier": str(tier).strip().lower(),
+                "amount_stars": int(amount_stars),
+                "source": str(source or "card"),
+                "before_subscription": {
+                    "tier": str(before.get("tier") or ""),
+                    "status": str(before.get("status") or ""),
+                    "starts_at": before.get("starts_at"),
+                    "expires_at": before.get("expires_at"),
+                },
+                "after_subscription": {
+                    "tier": str(subscription.get("tier") or ""),
+                    "status": str(subscription.get("status") or ""),
+                    "starts_at": subscription.get("starts_at"),
+                    "expires_at": subscription.get("expires_at"),
+                },
+            }
+            if audit_extra:
+                refund_payload.update(audit_extra)
+            await self.repository.write_audit_log(
+                place_id=int(place_id),
+                actor_tg_user_id=int(tg_user_id),
+                action="refund",
+                payload_json=_to_json(refund_payload),
+            )
+        elif write_non_success_audit and normalized_event in {"payment_failed", "payment_canceled"}:
             non_success_payload: dict[str, Any] = {
                 "provider": str(provider),
                 "intent_external_payment_id": str(intent_external_payment_id or ""),

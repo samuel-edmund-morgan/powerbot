@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import aiosqlite
 
 from config import DB_PATH
+from sqlite_lock_logger import log_sqlite_lock_event
 
 
 # Список всіх будинків ЖК "Нова Англія"
@@ -52,6 +53,7 @@ DEFAULT_SECTION_OTHER_BUILDINGS = 1
 DEFAULT_SECTION_NEWCASTLE = 2
 VALID_SECTION_IDS = {1, 2, 3}
 SQLITE_BUSY_TIMEOUT_MS = 5000
+logger = logging.getLogger(__name__)
 
 
 def default_section_for_building(building_id: int | None) -> int | None:
@@ -707,7 +709,26 @@ async def _with_sqlite_retry(fn, *, retries: int = 3, base_delay: float = 0.05):
         except Exception as exc:
             if not _is_sqlite_locked_error(exc) or attempt >= retries:
                 raise
-            await asyncio.sleep(base_delay * (2**attempt))
+            delay = base_delay * (2**attempt)
+            extra: dict[str, object] = {}
+            try:
+                code = getattr(fn, "__code__", None)
+                if code is not None:
+                    extra["fn_file"] = str(code.co_filename)
+                    extra["fn_line"] = int(code.co_firstlineno)
+                    extra["fn_name"] = str(getattr(fn, "__name__", ""))
+            except Exception:
+                extra = {}
+            logger.warning("SQLite locked; retry %s/%s in %.2fs", attempt + 1, retries, delay)
+            log_sqlite_lock_event(
+                where="database._with_sqlite_retry",
+                exc=exc,
+                attempt=attempt + 1,
+                retries=retries,
+                delay_sec=delay,
+                extra={k: v for k, v in extra.items() if v},
+            )
+            await asyncio.sleep(delay)
             attempt += 1
 
 
