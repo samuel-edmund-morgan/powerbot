@@ -580,8 +580,8 @@ def build_plan_keyboard(
         if tier == normalized_current:
             title = f"• {title}"
         cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
-        style = STYLE_SUCCESS if tier == normalized_current else (STYLE_PRIMARY if tier != "free" else None)
-        first_row.append(ikb(text=title, callback_data=cb, style=style))
+        # Keep Light as default style to avoid "too salesy" UI; only highlight top tiers.
+        first_row.append(ikb(text=title, callback_data=cb, style=None))
     buttons.append(first_row)
 
     second_row = []
@@ -593,7 +593,7 @@ def build_plan_keyboard(
         if tier == normalized_current:
             title = f"• {title}"
         cb = f"bp:{place_id}:{tier}:{source}" if source else f"bp:{place_id}:{tier}"
-        style = STYLE_SUCCESS if tier == normalized_current else STYLE_PRIMARY
+        style = STYLE_PRIMARY if tier == "pro" else STYLE_SUCCESS
         second_row.append(ikb(text=title, callback_data=cb, style=style))
     buttons.append(second_row)
     back_cb = back_callback_data or f"{CB_MY_OPEN_PREFIX}{place_id}"
