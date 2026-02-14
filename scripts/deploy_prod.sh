@@ -27,15 +27,10 @@ get_env_value() {
 ensure_required_prod_profiles() {
   # From 2026-02: prod always runs 3 bots (powerbot + adminbot + businessbot).
   local env_file="$1"
-  local mode business_token admin_token
-  mode="$(get_env_value "BUSINESS_MODE" "$env_file")"
+  local business_token admin_token
   business_token="$(get_env_value "BUSINESS_BOT_API_KEY" "$env_file")"
   admin_token="$(get_env_value "ADMIN_BOT_API_KEY" "$env_file")"
 
-  if [[ "${mode}" != "1" ]]; then
-    echo "ERROR: BUSINESS_MODE must be 1 in ${env_file} (prod always runs businessbot/adminbot)."
-    exit 1
-  fi
   if [[ -z "${business_token}" ]]; then
     echo "ERROR: BUSINESS_BOT_API_KEY is empty in ${env_file} (prod always runs businessbot)."
     exit 1

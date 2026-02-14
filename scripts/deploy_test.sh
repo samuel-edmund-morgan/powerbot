@@ -26,10 +26,9 @@ get_env_value() {
 
 should_enable_business_profile() {
   local env_file="$1"
-  local mode token
-  mode="$(get_env_value "BUSINESS_MODE" "$env_file")"
+  local token
   token="$(get_env_value "BUSINESS_BOT_API_KEY" "$env_file")"
-  [[ "$mode" == "1" && -n "$token" ]]
+  [[ -n "$token" ]]
 }
 
 should_enable_admin_profile() {
@@ -150,10 +149,10 @@ fi
 
 profiles=()
 if should_enable_business_profile "${TEST_DIR}/.env"; then
-  echo "Business profile enabled (BUSINESS_MODE=1 and BUSINESS_BOT_API_KEY is set)."
+  echo "Business profile enabled (BUSINESS_BOT_API_KEY is set)."
   profiles+=(--profile business)
 else
-  echo "Business profile disabled (missing BUSINESS_BOT_API_KEY or BUSINESS_MODE!=1)."
+  echo "Business profile disabled (missing BUSINESS_BOT_API_KEY)."
 fi
 if should_enable_admin_profile "${TEST_DIR}/.env"; then
   echo "Admin profile enabled (ADMIN_BOT_API_KEY is set)."
