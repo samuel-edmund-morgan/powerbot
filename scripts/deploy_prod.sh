@@ -24,19 +24,44 @@ get_env_value() {
   strip_quotes "$raw"
 }
 
-should_enable_business_profile() {
+ensure_required_prod_profiles() {
+  # From 2026-02: prod always runs 3 bots (powerbot + adminbot + businessbot).
   local env_file="$1"
-  local mode token
+  local mode business_token admin_token
   mode="$(get_env_value "BUSINESS_MODE" "$env_file")"
-  token="$(get_env_value "BUSINESS_BOT_API_KEY" "$env_file")"
-  [[ "$mode" == "1" && -n "$token" ]]
+  business_token="$(get_env_value "BUSINESS_BOT_API_KEY" "$env_file")"
+  admin_token="$(get_env_value "ADMIN_BOT_API_KEY" "$env_file")"
+
+  if [[ "${mode}" != "1" ]]; then
+    echo "ERROR: BUSINESS_MODE must be 1 in ${env_file} (prod always runs businessbot/adminbot)."
+    exit 1
+  fi
+  if [[ -z "${business_token}" ]]; then
+    echo "ERROR: BUSINESS_BOT_API_KEY is empty in ${env_file} (prod always runs businessbot)."
+    exit 1
+  fi
+  if [[ -z "${admin_token}" ]]; then
+    echo "ERROR: ADMIN_BOT_API_KEY is empty in ${env_file} (prod always runs adminbot)."
+    exit 1
+  fi
 }
 
-should_enable_admin_profile() {
-  local env_file="$1"
-  local token
-  token="$(get_env_value "ADMIN_BOT_API_KEY" "$env_file")"
-  [[ -n "$token" ]]
+assert_service_running() {
+  local svc="$1"
+  local cid running
+  cid="$(docker compose ps -q "$svc" 2>/dev/null || true)"
+  if [[ -z "${cid}" ]]; then
+    echo "ERROR: service ${svc} has no container (expected to be running)."
+    docker compose ps || true
+    exit 1
+  fi
+  running="$(docker inspect -f '{{.State.Running}}' "${cid}" 2>/dev/null || echo "false")"
+  if [[ "${running}" != "true" ]]; then
+    echo "ERROR: service ${svc} container is not running."
+    docker compose ps || true
+    docker logs --tail=120 "${cid}" 2>/dev/null || true
+    exit 1
+  fi
 }
 
 setup_docker_auth() {
@@ -104,6 +129,8 @@ cd "${PROD_DIR}"
 
 echo "NOTE: deploy_prod no longer forces light_notifications_global=off."
 
+ensure_required_prod_profiles "${PROD_DIR}/.env"
+
 # Freeze sensors automatically around deploy to avoid false "down/up" due to compose down/pull/up.
 # We freeze only sensors that are not already frozen (or whose freeze is expired).
 # After the stack is up, we wait a bit for sensors to report heartbeat, then unfreeze only those
@@ -163,18 +190,8 @@ if [[ "${MIGRATE}" == "1" ]]; then
 fi
 
 profiles=()
-if should_enable_business_profile "${PROD_DIR}/.env"; then
-  echo "Business profile enabled (BUSINESS_MODE=1 and BUSINESS_BOT_API_KEY is set)."
-  profiles+=(--profile business)
-else
-  echo "Business profile disabled (missing BUSINESS_BOT_API_KEY or BUSINESS_MODE!=1)."
-fi
-if should_enable_admin_profile "${PROD_DIR}/.env"; then
-  echo "Admin profile enabled (ADMIN_BOT_API_KEY is set)."
-  profiles+=(--profile admin)
-else
-  echo "Admin profile disabled (missing ADMIN_BOT_API_KEY)."
-fi
+echo "Prod profiles forced: admin + business."
+profiles+=(--profile admin --profile business)
 docker compose "${profiles[@]}" up -d
 
 docker compose ps
@@ -197,6 +214,11 @@ SENSOR_API_KEY="$(grep -m1 "^SENSOR_API_KEY=" .env | sed 's/^SENSOR_API_KEY=//')
 if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18081/api/v1/sensors >/dev/null
 fi
+
+echo "Ensuring all prod bot services are running..."
+assert_service_running "powerbot"
+assert_service_running "adminbot"
+assert_service_running "businessbot"
 
 # Unfreeze sensors we froze for this deploy (best-effort).
 if [[ -n "${FREEZE_AT}" && "${FROZEN_BY_DEPLOY_COUNT}" != "0" && -f "${PROD_DIR}/state.db" ]]; then
