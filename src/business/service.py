@@ -1386,6 +1386,19 @@ class BusinessCabinetService:
         if not can_edit:
             raise AccessDeniedError("Ти можеш редагувати лише свої підтверджені заклади.")
 
+        subscription = await self.repository.get_subscription(place_id)
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        expires_at_dt = _parse_iso_utc(str(subscription.get("expires_at") or "").strip() or None)
+        if expires_at_dt and expires_at_dt <= _utc_now():
+            status = "inactive"
+
+        if tier not in PAID_TIERS or status != "active":
+            raise AccessDeniedError(
+                "Редагування картки доступне лише з активною підпискою Light або вище.\n"
+                "Відкрий «Плани», щоб підключити тариф."
+            )
+
         updated_place = await self.repository.update_place_profile_field(
             place_id=place_id,
             field=field,

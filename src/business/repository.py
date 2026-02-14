@@ -838,6 +838,28 @@ class BusinessRepository:
                     raise RuntimeError("Failed to read subscription")
                 return dict(row)
 
+    async def get_subscription(self, place_id: int) -> dict[str, Any]:
+        """Return subscription row for place (or default free/inactive if missing)."""
+        async with open_business_db() as db:
+            async with db.execute(
+                """SELECT place_id, tier, status, starts_at, expires_at, created_at, updated_at
+                     FROM business_subscriptions
+                    WHERE place_id = ?""",
+                (int(place_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    return dict(row)
+        return {
+            "place_id": int(place_id),
+            "tier": "free",
+            "status": "inactive",
+            "starts_at": None,
+            "expires_at": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+
     async def list_subscriptions_for_reconcile(
         self,
         *,
