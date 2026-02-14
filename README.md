@@ -33,6 +33,11 @@ cd /opt/powerbot
 - `.env` — створити з `.env.example` (з репозиторію) і заповнити свої значення.
 - `state.db` — створити порожній файл (бот ініціалізує структуру сам).
 
+Примітка про Traefik:
+- `/opt/powerbot/.env` містить лише змінні, потрібні powerbot стеку (labels/network/router/rule).
+- env для Traefik контейнера (ACME email, DNS provider, CF token, Docker API version) тримаємо окремо в `/opt/traefik/.env`.
+  Шаблон: `traefik/.env.example` в репозиторії.
+
 ```bash
 touch state.db
 ```
