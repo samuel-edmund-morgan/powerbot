@@ -104,6 +104,8 @@ CB_TOKG_PLACE_ROTATE_PREFIX = "btokg_r:"
 CB_EDIT_BUILDING_PICK_PREFIX = "bebld:"
 CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
 CB_PAYMENT_RESULT_PREFIX = "bpayr:"
+CB_CONTACT_PICK_PREFIX = "bec:"
+CB_CONTACT_CLEAR_PREFIX = "bec_clear:"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -155,6 +157,8 @@ class EditPlaceStates(StatesGroup):
     waiting_value = State()
     waiting_address_building = State()
     waiting_address_details = State()
+    waiting_contact_type = State()
+    waiting_contact_value = State()
 
 
 def build_main_menu(user_id: int) -> InlineKeyboardMarkup:
@@ -531,6 +535,26 @@ def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="⏰ Години",
+                    callback_data=f"bef:{place_id}:opening_hours",
+                ),
+                InlineKeyboardButton(
+                    text="📞 Контакт",
+                    callback_data=f"bef:{place_id}:contact",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔗 Посилання",
+                    callback_data=f"bef:{place_id}:link_url",
+                ),
+                InlineKeyboardButton(
+                    text="🎟 Промокод",
+                    callback_data=f"bef:{place_id}:promo_code",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="« Назад",
                     callback_data=f"{CB_MY_OPEN_PREFIX}{place_id}",
                 )
@@ -655,14 +679,32 @@ def build_moderation_keyboard(owner_id: int) -> InlineKeyboardMarkup:
 def format_business_card(item: dict) -> str:
     place_name = html.escape(str(item.get("place_name") or "—"))
     place_address = html.escape(str(item.get("place_address") or "—"))
+    opening_hours = html.escape(str(item.get("place_opening_hours") or "").strip())
+    contact_type = str(item.get("place_contact_type") or "").strip().lower()
+    contact_value = html.escape(str(item.get("place_contact_value") or "").strip())
+    link_url = html.escape(str(item.get("place_link_url") or "").strip())
+    promo_code = html.escape(str(item.get("place_promo_code") or "").strip())
     owner_status = OWNERSHIP_TITLES.get(item["ownership_status"], item["ownership_status"])
     sub_status = SUBSCRIPTION_TITLES.get(item["subscription_status"], item["subscription_status"])
     tier = PLAN_TITLES.get(item["tier"], item["tier"])
     verified = "✅ Активна" if item["is_verified"] else "—"
     expires = item["subscription_expires_at"] or "—"
+    profile_lines: list[str] = []
+    if opening_hours:
+        profile_lines.append(f"⏰ Години: {opening_hours}")
+    if contact_value:
+        label = "📞 Контакт" if contact_type == "call" else "💬 Контакт" if contact_type == "chat" else "📌 Контакт"
+        profile_lines.append(f"{label}: {contact_value}")
+    if link_url:
+        profile_lines.append(f"🔗 Посилання: {link_url}")
+    if promo_code:
+        profile_lines.append(f"🎟 Промокод: <code>{promo_code}</code>")
+    profile_block = ("\n" + "\n".join(profile_lines)) if profile_lines else ""
+
     return (
         f"🏢 <b>{place_name}</b>\n"
         f"📍 {place_address}\n"
+        f"{profile_block}\n"
         f"📌 Статус доступу: {owner_status}\n"
         f"💳 Тариф: <b>{tier}</b>\n"
         f"🔁 Стан підписки: {sub_status}\n"
@@ -1994,8 +2036,46 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             )
         await callback.answer()
         return
+    if field == "contact":
+        await state.set_state(EditPlaceStates.waiting_contact_type)
+        await state.update_data(place_id=place_id, field=field)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📞 Подзвонити",
+                        callback_data=f"{CB_CONTACT_PICK_PREFIX}{place_id}:call",
+                    ),
+                    InlineKeyboardButton(
+                        text="💬 Написати",
+                        callback_data=f"{CB_CONTACT_PICK_PREFIX}{place_id}:chat",
+                    ),
+                ],
+                [InlineKeyboardButton(text="❌ Прибрати контакт", callback_data=f"{CB_CONTACT_CLEAR_PREFIX}{place_id}")],
+                [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+                [InlineKeyboardButton(text="« Назад", callback_data=f"be:{place_id}")],
+            ]
+        )
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            await ui_render(
+                callback.message.bot,
+                chat_id=callback.message.chat.id,
+                prefer_message_id=callback.message.message_id,
+                text="Оберіть тип контактної кнопки:",
+                reply_markup=keyboard,
+            )
+        await callback.answer()
+        return
 
-    field_label = {"name": "назву", "description": "опис", "address": "адресу"}.get(field, field)
+    field_label = {
+        "name": "назву",
+        "description": "опис",
+        "address": "адресу",
+        "opening_hours": "години роботи",
+        "link_url": "посилання",
+        "promo_code": "промокод",
+    }.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
     keyboard = InlineKeyboardMarkup(
@@ -2006,11 +2086,14 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     )
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        extra_note = ""
+        if field in {"opening_hours", "link_url", "promo_code"}:
+            extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
         await ui_render(
             callback.message.bot,
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
-            text=f"Надішли нову {field_label}.",
+            text=f"Надішли нову {field_label}.{extra_note}",
             reply_markup=keyboard,
         )
     await callback.answer()
@@ -2133,6 +2216,166 @@ async def cb_edit_building_change(callback: CallbackQuery, state: FSMContext) ->
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith(CB_CONTACT_PICK_PREFIX))
+async def cb_edit_contact_type_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    if await state.get_state() != EditPlaceStates.waiting_contact_type.state:
+        await callback.answer("Це меню вже неактуальне. Натисни /start.", show_alert=True)
+        return
+    raw = callback.data.removeprefix(CB_CONTACT_PICK_PREFIX)
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[0])
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    ctype = str(parts[1] or "").strip().lower()
+    if ctype not in {"call", "chat"}:
+        await callback.answer("Некоректний тип контакту", show_alert=True)
+        return
+
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        await state.clear()
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 Доступно з активним тарифом Light або вище.", show_alert=True)
+        await state.clear()
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        try:
+            await _render_place_plan_menu(
+                callback.message,
+                tg_user_id=callback.from_user.id,
+                place_id=place_id,
+                source="card",
+                prefer_message_id=callback.message.message_id,
+                notice="🔒 Контактні кнопки доступні з активним тарифом Light або вище.",
+            )
+        except Exception:
+            pass
+        return
+
+    await state.set_state(EditPlaceStates.waiting_contact_value)
+    await state.update_data(place_id=place_id, field="contact", contact_type=ctype)
+
+    prompt = (
+        "Надішли номер телефону (наприклад <code>+380671234567</code>)"
+        if ctype == "call"
+        else "Надішли @username або посилання на Telegram (t.me/...)"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+            [InlineKeyboardButton(text="« Назад", callback_data=f"be:{place_id}")],
+        ]
+    )
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=f"{prompt}\n\nНадішли <code>-</code>, щоб прибрати контакт.",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_CONTACT_CLEAR_PREFIX))
+async def cb_edit_contact_clear(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_CONTACT_CLEAR_PREFIX)
+    try:
+        place_id = int(raw)
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+
+    rows = await cabinet_service.list_user_businesses(callback.from_user.id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await callback.answer("Недостатньо прав.", show_alert=True)
+        await state.clear()
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 Доступно з активним тарифом Light або вище.", show_alert=True)
+        await state.clear()
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        try:
+            await _render_place_plan_menu(
+                callback.message,
+                tg_user_id=callback.from_user.id,
+                place_id=place_id,
+                source="card",
+                prefer_message_id=callback.message.message_id,
+                notice="🔒 Контактні кнопки доступні з активним тарифом Light або вище.",
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        await cabinet_service.update_place_contact(
+            callback.from_user.id,
+            place_id=place_id,
+            contact_type=None,
+            contact_value=None,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    await state.clear()
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await render_place_card_updated(callback.message, place_id=place_id, note_text="✅ Контакт прибрано.")
+    await callback.answer("Готово")
+
+
+@router.message(EditPlaceStates.waiting_contact_value, F.text)
+async def edit_place_contact_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    place_id = int(data.get("place_id") or 0)
+    ctype = str(data.get("contact_type") or "").strip().lower()
+    value = str(message.text or "").strip()
+    await try_delete_user_message(message)
+    if place_id <= 0:
+        await state.clear()
+        await send_main_menu(message, message.chat.id)
+        return
+    try:
+        await cabinet_service.update_place_contact(
+            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+            place_id=place_id,
+            contact_type=ctype,
+            contact_value=value,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+                [InlineKeyboardButton(text="« Назад", callback_data=f"be:{place_id}")],
+            ]
+        )
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=keyboard,
+        )
+        return
+
+    await state.clear()
+    await render_place_card_updated(message, place_id=place_id, note_text="✅ Контакт оновлено.")
+
+
 @router.message(EditPlaceStates.waiting_address_building, F.text)
 async def edit_place_address_building_text(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
@@ -2211,12 +2454,20 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
     place_id = int(data["place_id"])
     field = str(data["field"])
     try:
-        updated_place = await cabinet_service.update_place_field(
-            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
-            place_id=place_id,
-            field=field,
-            value=message.text,
-        )
+        if field in {"opening_hours", "link_url", "promo_code"}:
+            updated_place = await cabinet_service.update_place_business_profile_field(
+                tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+                place_id=place_id,
+                field=field,
+                value=message.text,
+            )
+        else:
+            updated_place = await cabinet_service.update_place_field(
+                tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+                place_id=place_id,
+                field=field,
+                value=message.text,
+            )
     except (ValidationError, NotFoundError, AccessDeniedError) as error:
         if isinstance(error, AccessDeniedError):
             await try_delete_user_message(message)

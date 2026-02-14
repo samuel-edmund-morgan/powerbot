@@ -64,6 +64,11 @@ CREATE TABLE IF NOT EXISTS places (
     verified_tier TEXT DEFAULT NULL,         -- Рівень підписки (light/pro/partner)
     verified_until TEXT DEFAULT NULL,        -- Дата завершення Verified (ISO 8601)
     business_enabled INTEGER DEFAULT 0,      -- Дозвіл на бізнес-функції (1/0)
+    opening_hours TEXT DEFAULT NULL,         -- Години роботи (для verified/paid)
+    contact_type TEXT DEFAULT NULL,          -- call/chat
+    contact_value TEXT DEFAULT NULL,         -- телефон або @username/посилання
+    link_url TEXT DEFAULT NULL,              -- 1 URL (сайт/інстаграм/меню)
+    promo_code TEXT DEFAULT NULL,            -- 1 активний промокод
     FOREIGN KEY (service_id) REFERENCES general_services(id) ON DELETE CASCADE
 );
 

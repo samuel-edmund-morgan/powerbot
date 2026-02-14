@@ -1985,14 +1985,50 @@ async def search_places_by_service(query: str, service_id: int) -> list[dict]:
 async def get_place(place_id: int) -> dict | None:
     """Отримати заклад за ID."""
     async with open_db() as db:
-        async with db.execute(
-            "SELECT id, service_id, name, description, address, keywords FROM places WHERE id=? AND is_published=1",
-            (place_id,)
-        ) as cur:
-            row = await cur.fetchone()
-            if row:
-                return {"id": row[0], "service_id": row[1], "name": row[2], "description": row[3], "address": row[4], "keywords": row[5]}
+        # Backward compatible: older DB might not yet have business profile columns.
+        try:
+            async with db.execute(
+                """
+                SELECT id, service_id, name, description, address, keywords,
+                       opening_hours, contact_type, contact_value, link_url, promo_code
+                  FROM places
+                 WHERE id=? AND is_published=1
+                """,
+                (place_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        except Exception:
+            async with db.execute(
+                "SELECT id, service_id, name, description, address, keywords FROM places WHERE id=? AND is_published=1",
+                (place_id,),
+            ) as cur:
+                row = await cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "service_id": row[1],
+                "name": row[2],
+                "description": row[3],
+                "address": row[4],
+                "keywords": row[5],
+            }
+
+        if not row:
             return None
+        return {
+            "id": row[0],
+            "service_id": row[1],
+            "name": row[2],
+            "description": row[3],
+            "address": row[4],
+            "keywords": row[5],
+            "opening_hours": row[6],
+            "contact_type": row[7],
+            "contact_value": row[8],
+            "link_url": row[9],
+            "promo_code": row[10],
+        }
 
 
 # ============ Функції для переглядів закладів ============

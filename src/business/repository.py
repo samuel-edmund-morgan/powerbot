@@ -20,6 +20,8 @@ WRITE_RETRY_ATTEMPTS = 3
 WRITE_RETRY_BASE_DELAY_SEC = 0.05
 logger = logging.getLogger(__name__)
 
+_UNSET = object()
+
 
 def utc_now_iso() -> str:
     """Current UTC timestamp in ISO-8601."""
@@ -488,6 +490,7 @@ class BusinessRepository:
                 """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
                           p.is_published,
                           p.is_verified, p.verified_tier, p.verified_until, p.business_enabled,
+                          p.opening_hours, p.contact_type, p.contact_value, p.link_url, p.promo_code,
                           s.name AS service_name
                      FROM places p
                      JOIN general_services s ON s.id = p.service_id
@@ -945,6 +948,11 @@ class BusinessRepository:
                           bo.created_at AS ownership_created_at,
                           p.service_id AS place_service_id,
                           p.name AS place_name, p.description AS place_description, p.address AS place_address,
+                          p.opening_hours AS place_opening_hours,
+                          p.contact_type AS place_contact_type,
+                          p.contact_value AS place_contact_value,
+                          p.link_url AS place_link_url,
+                          p.promo_code AS place_promo_code,
                           p.business_enabled, p.is_verified, p.verified_tier, p.verified_until,
                           COALESCE(bs.tier, 'free') AS tier,
                           COALESCE(bs.status, 'inactive') AS subscription_status,
@@ -1023,6 +1031,50 @@ class BusinessRepository:
             ) as cur:
                 updated = await cur.fetchone()
                 return dict(updated) if updated else None
+
+    async def update_place_business_profile(
+        self,
+        place_id: int,
+        *,
+        opening_hours: str | None = _UNSET,  # type: ignore[assignment]
+        contact_type: str | None = _UNSET,  # type: ignore[assignment]
+        contact_value: str | None = _UNSET,  # type: ignore[assignment]
+        link_url: str | None = _UNSET,  # type: ignore[assignment]
+        promo_code: str | None = _UNSET,  # type: ignore[assignment]
+    ) -> dict[str, Any] | None:
+        """Update optional business profile fields in `places`.
+
+        All parameters are tri-state:
+        - omitted: keep existing value
+        - None/"" : clear (set NULL)
+        - non-empty string: set
+        """
+        updates: list[str] = []
+        params: list[Any] = []
+
+        def _maybe_set(column: str, value: object) -> None:
+            if value is _UNSET:
+                return
+            updates.append(f"{column} = ?")
+            clean = str(value).strip() if value is not None else ""
+            params.append(clean if clean else None)
+
+        _maybe_set("opening_hours", opening_hours)
+        _maybe_set("contact_type", contact_type)
+        _maybe_set("contact_value", contact_value)
+        _maybe_set("link_url", link_url)
+        _maybe_set("promo_code", promo_code)
+
+        if not updates:
+            return await self.get_place(int(place_id))
+
+        async with open_business_db() as db:
+            await execute_write_with_retry(
+                db,
+                f"UPDATE places SET {', '.join(updates)} WHERE id = ?",
+                tuple(params + [int(place_id)]),
+            )
+        return await self.get_place(int(place_id))
 
     async def write_audit_log(
         self,
