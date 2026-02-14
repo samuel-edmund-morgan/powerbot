@@ -2001,10 +2001,10 @@ async def cb_places_category(callback: CallbackQuery):
         if business_enabled and has_verified and place.get("is_verified"):
             tier = (place.get("verified_tier") or "").strip().lower()
             if tier == "partner" and not used_partner_style:
-                btn_style = STYLE_PRIMARY
+                btn_style = STYLE_SUCCESS
                 used_partner_style = True
             elif tier == "pro" and not used_pro_style:
-                btn_style = STYLE_SUCCESS
+                btn_style = STYLE_PRIMARY
                 used_pro_style = True
 
         if btn_style:
