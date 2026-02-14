@@ -239,8 +239,13 @@ def is_business_mode_enabled() -> bool:
 
 
 def is_business_bot_enabled() -> bool:
-    """Business bot process is enabled only with flag + token."""
-    return CFG.business_mode and bool(CFG.business_bot_api_key)
+    """Business bot process is enabled only with a non-empty token.
+
+    Note: BUSINESS_MODE is a feature-flag for the *main (resident) bot UI/logic*.
+    Business bot runtime can be enabled independently to allow "stealth" rollout
+    (businessbot running while resident UI stays legacy with BUSINESS_MODE=0).
+    """
+    return bool(CFG.business_bot_api_key)
 
 
 def is_admin_bot_enabled() -> bool:

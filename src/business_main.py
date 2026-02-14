@@ -21,7 +21,7 @@ async def main() -> None:
     """Entry point for standalone business bot runtime."""
     if not is_business_bot_enabled():
         logger.warning(
-            "Business bot disabled: requires BUSINESS_MODE=1 and non-empty BUSINESS_BOT_API_KEY."
+            "Business bot disabled: requires non-empty BUSINESS_BOT_API_KEY."
         )
         return
 
