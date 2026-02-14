@@ -200,6 +200,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_t
 echo "Running business Telegram Stars terminal-events smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_telegram_stars_terminal_events.py"
 
+# Automated smoke: telegram_stars refund update handler (fallback via charge_id, invoice_payload may be missing).
+echo "Running business Telegram Stars refund-update smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_telegram_stars_refund_update.py"
+
 # Automated smoke: parity mock vs telegram_stars for non-success outcomes.
 echo "Running business payment-provider parity smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_payment_provider_parity.py"
