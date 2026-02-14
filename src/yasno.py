@@ -18,7 +18,7 @@ _BASE_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 _PLANNED_OUTAGES_KEY = "yasno:planned_outages"
 _PLANNED_OUTAGES_TTL = 600  # 10 хвилин
 _ADDRESS_CACHE_TTL = 6 * 3600  # 6 годин
-_LAST_CONFIG: dict[tuple[int, int], tuple[str | None, tuple[str, ...]]] = {}
+_LAST_CONFIG: dict[tuple[int, int], tuple[tuple[str, ...], tuple[str, ...]]] = {}
 
 
 def _now_ts() -> float:
@@ -60,32 +60,31 @@ def _parse_queries(value: str | None) -> list[str]:
     return parts
 
 
-def _get_building_queries(building_id: int, section_id: int | None) -> tuple[str | None, list[str]]:
+def _get_building_queries(building_id: int, section_id: int | None) -> tuple[list[str], list[str]]:
     prefix = _building_env_prefix(building_id)
-    street_query = os.getenv(f"{prefix}_STREET_QUERY")
+    street_queries_raw = os.getenv(f"{prefix}_STREET_QUERY")
     house_queries_raw = None
     if section_id in (1, 2, 3):
         house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES_SEC_{section_id}")
     if not house_queries_raw:
         # Backward-compatible fallback for old env var (same schedule for all sections).
         house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES")
-    if street_query:
-        street_query = street_query.strip().strip('"').strip("'")
+    street_queries = _parse_queries(street_queries_raw)
     house_queries = _parse_queries(house_queries_raw)
-    if not street_query:
-        street_query = os.getenv("YASNO_STREET_QUERY_DEFAULT", "").strip().strip('"').strip("'")
+    if not street_queries:
+        street_queries = _parse_queries(os.getenv("YASNO_STREET_QUERY_DEFAULT", ""))
     if not house_queries:
-        return None, []
-    return street_query or None, house_queries
+        return [], []
+    return street_queries, house_queries
 
 
 def _log_config_if_changed(
     building_id: int,
     section_id: int,
-    street_query: str | None,
+    street_queries: list[str],
     house_queries: list[str],
 ) -> None:
-    current = (street_query, tuple(house_queries))
+    current = (tuple(street_queries), tuple(house_queries))
     previous = _LAST_CONFIG.get((building_id, section_id))
     if previous == current:
         return
@@ -94,7 +93,7 @@ def _log_config_if_changed(
         "yasno: config building=%s section=%s street_query=%s house_queries=%s",
         building_id,
         section_id,
-        street_query,
+        "|".join(street_queries),
         "|".join(house_queries),
     )
 
@@ -317,60 +316,87 @@ async def _get_building_schedule_data(
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not CFG.yasno_enabled:
         return None, "ℹ️ Графіки не ввімкнені."
-    street_query, house_queries = _get_building_queries(building_id, section_id)
-    if not street_query or not house_queries:
+    street_queries, house_queries = _get_building_queries(building_id, section_id)
+    if not street_queries or not house_queries:
         return None, "ℹ️ Графіки для цього будинку не налаштовані."
     if section_id in (1, 2, 3):
-        _log_config_if_changed(building_id, int(section_id), street_query, house_queries)
+        _log_config_if_changed(building_id, int(section_id), street_queries, house_queries)
 
     planned = await get_planned_outages()
     if not planned:
         return None, "⚠️ Дані про графіки від ЯСНО недоступні."
 
-    street_id = await _get_street_id(street_query)
-    if not street_id:
-        return None, "⚠️ Не вдалося отримати адресу для графіків."
-    if log_context:
-        logger.info(
-            "yasno: building=%s street_query=%s street_id=%s house_queries=%s",
-            building_id,
-            street_query,
-            street_id,
-            "|".join(house_queries),
-        )
-
-    queues = []
-    seen_house_ids: set[int] = set()
-    for house_query in house_queries:
-        houses = await _get_house_ids(street_id, house_query)
-        for house in houses:
-            house_id = house.get("id")
-            if not house_id or house_id in seen_house_ids:
+    def _queues_have_any_data(queues: list[dict[str, Any]]) -> bool:
+        for queue in queues:
+            qdata = queue.get("data") if isinstance(queue, dict) else None
+            if not qdata or not isinstance(qdata, dict):
                 continue
-            seen_house_ids.add(house_id)
-            group_info = await _get_group_info(street_id, house_id)
-            if not group_info:
-                continue
-            group_key = f"{group_info['group']}.{group_info['subgroup']}"
-            if log_context:
-                logger.info(
-                    "yasno: building=%s house_query=%s house_id=%s group=%s",
-                    building_id,
-                    house.get("value") or house_query,
-                    house_id,
-                    group_key,
-                )
-            queues.append({
-                "key": group_key,
-                "label": house.get("value") or house_query,
-                "data": planned.get(group_key),
-            })
+            for day_key in ("today", "tomorrow"):
+                outage = qdata.get(day_key)
+                status = outage.get("status") if isinstance(outage, dict) else None
+                if _status_has_data(status):
+                    return True
+        return False
 
-    if not queues:
-        return None, "⚠️ Графіки для цього будинку недоступні."
+    last_street_error: str | None = None
+    for street_query in street_queries:
+        street_id = await _get_street_id(street_query)
+        if not street_id:
+            last_street_error = "⚠️ Не вдалося отримати адресу для графіків."
+            continue
+        if log_context:
+            logger.info(
+                "yasno: building=%s street_query=%s street_id=%s house_queries=%s",
+                building_id,
+                street_query,
+                street_id,
+                "|".join(house_queries),
+            )
 
-    building = get_building_by_id(building_id)
-    return {"building": building, "section_id": section_id, "queues": queues}, None
+        queues = []
+        seen_house_ids: set[int] = set()
+        for house_query in house_queries:
+            houses = await _get_house_ids(street_id, house_query)
+            for house in houses:
+                house_id = house.get("id")
+                if not house_id or house_id in seen_house_ids:
+                    continue
+                seen_house_ids.add(house_id)
+                group_info = await _get_group_info(street_id, house_id)
+                if not group_info:
+                    continue
+                group_key = f"{group_info['group']}.{group_info['subgroup']}"
+                if log_context:
+                    logger.info(
+                        "yasno: building=%s house_query=%s house_id=%s group=%s",
+                        building_id,
+                        house.get("value") or house_query,
+                        house_id,
+                        group_key,
+                    )
+                queues.append({
+                    "key": group_key,
+                    "label": house.get("value") or house_query,
+                    "data": planned.get(group_key),
+                })
+
+        if not queues:
+            last_street_error = "⚠️ Графіки для цього будинку недоступні."
+            continue
+        # If we resolved address/group but still have no schedule data at all, try next street query.
+        if not _queues_have_any_data(queues) and len(street_queries) > 1:
+            last_street_error = "⚠️ Немає даних графіків для цієї адреси."
+            continue
+
+        building = get_building_by_id(building_id)
+        return {
+            "building": building,
+            "section_id": section_id,
+            "queues": queues,
+            "street_query_used": street_query,
+        }, None
+
+    return None, last_street_error or "⚠️ Не вдалося отримати адресу для графіків."
 
 
 async def get_building_schedule_text(
