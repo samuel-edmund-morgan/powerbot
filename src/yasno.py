@@ -9,7 +9,7 @@ from typing import Any
 import aiohttp
 
 from config import CFG
-from database import db_get, db_set, get_building_by_id
+from database import db_get, db_set, get_building_by_id, get_building_section_ids, is_valid_section_for_building
 
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def _get_building_queries(building_id: int, section_id: int | None) -> tuple[lis
     prefix = _building_env_prefix(building_id)
     street_queries_raw = os.getenv(f"{prefix}_STREET_QUERY")
     house_queries_raw = None
-    if section_id in (1, 2, 3):
+    if is_valid_section_for_building(building_id, section_id):
         house_queries_raw = os.getenv(f"{prefix}_HOUSE_QUERIES_SEC_{section_id}")
     if not house_queries_raw:
         # Backward-compatible fallback for old env var (same schedule for all sections).
@@ -319,7 +319,7 @@ async def _get_building_schedule_data(
     street_queries, house_queries = _get_building_queries(building_id, section_id)
     if not street_queries or not house_queries:
         return None, "ℹ️ Графіки для цього будинку не налаштовані."
-    if section_id in (1, 2, 3):
+    if is_valid_section_for_building(building_id, section_id):
         _log_config_if_changed(building_id, int(section_id), street_queries, house_queries)
 
     planned = await get_planned_outages()
@@ -494,7 +494,7 @@ async def yasno_schedule_monitor_loop(bot) -> None:
 
             for building in BUILDINGS:
                 building_id = building["id"]
-                for section_id in (1, 2, 3):
+                for section_id in get_building_section_ids(building_id):
                     data, error = await _get_building_schedule_data(
                         building_id,
                         section_id,

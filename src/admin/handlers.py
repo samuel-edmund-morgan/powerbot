@@ -27,6 +27,7 @@ from database import (
     get_subscribers_stats_by_building_section,
     list_admin_jobs,
     get_building_by_id,
+    get_building_section_ids,
     default_section_for_building,
 )
 from admin.ui import escape, render, try_delete_user_message
@@ -780,8 +781,8 @@ async def cb_subs(callback: CallbackQuery) -> None:
             text += f"\n• <b>{escape(bname)}</b>: {b_total}\n"
 
             by_section = stats.get(bid) or {}
-            # Prefer stable order 1..3; keep legacy NULL at the end.
-            for sid in [1, 2, 3]:
+            # Prefer stable order 1..N (building-specific); keep legacy NULL at the end.
+            for sid in get_building_section_ids(int(bid)):
                 if sid in by_section:
                     text += f"  секція {sid}: {int(by_section[sid])}\n"
             if None in by_section:
