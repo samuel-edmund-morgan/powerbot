@@ -31,6 +31,8 @@ JOB_KIND_LIGHT_NOTIFY = "light_notify"
 JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
 JOB_KIND_SENSORS_FREEZE_ALL = "sensors_freeze_all"
 JOB_KIND_SENSORS_UNFREEZE_ALL = "sensors_unfreeze_all"
+SENSORS_FREEZE_FOREVER_MODE = "forever"
+SENSORS_FREEZE_FOREVER_UNTIL = datetime(9999, 12, 31, 23, 59, 59)
 
 # Best-effort cache for admin bot username used in deep-links.
 _ADMIN_BOT_USERNAME_CACHE: str | None = None
@@ -95,12 +97,17 @@ async def _handle_broadcast(bot: Bot, job: dict) -> tuple[int, int]:
 
 async def _handle_sensors_freeze_all(job: dict) -> tuple[int, int]:
     payload = job.get("payload") or {}
-    try:
-        seconds = int(payload.get("seconds", 6 * 3600))
-    except Exception:
-        seconds = 6 * 3600
-    if seconds < 60 or seconds > 7 * 24 * 3600:
-        raise ValueError("sensors_freeze_all requires payload.seconds within 60..604800")
+    mode = str(payload.get("mode") or "").strip().lower()
+    is_forever = mode == SENSORS_FREEZE_FOREVER_MODE
+    if is_forever:
+        seconds = None
+    else:
+        try:
+            seconds = int(payload.get("seconds", 6 * 3600))
+        except Exception:
+            seconds = 6 * 3600
+        if seconds < 60 or seconds > 7 * 24 * 3600:
+            raise ValueError("sensors_freeze_all requires payload.seconds within 60..604800")
 
     sensors = await get_all_active_sensors()
     total = len(sensors)
@@ -125,7 +132,7 @@ async def _handle_sensors_freeze_all(job: dict) -> tuple[int, int]:
 
         ok = await freeze_sensor(
             str(sensor["uuid"]),
-            frozen_until=now + timedelta(seconds=seconds),
+            frozen_until=(SENSORS_FREEZE_FOREVER_UNTIL if is_forever else (now + timedelta(seconds=int(seconds or 0)))),
             frozen_is_up=frozen_is_up,
             frozen_at=now,
         )

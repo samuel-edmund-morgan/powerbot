@@ -51,6 +51,8 @@ BIZ_PAYMENTS_PAGE_SIZE = 8
 BIZ_AUDIT_PAGE_SIZE = 8
 CB_ADMIN_NOOP = "admin_noop"
 SENSORS_FREEZE_ALL_DEFAULT_SEC = 6 * 3600
+SENSORS_FREEZE_FOREVER_TOKEN = "forever"
+SENSORS_FREEZE_FOREVER_UNTIL = datetime(9999, 12, 31, 23, 59, 59)
 
 CB_BIZ_MENU = "admin_business"
 CB_BIZ_MOD = "abiz_mod"
@@ -147,6 +149,20 @@ async def _require_admin_callback(callback: CallbackQuery) -> bool:
             pass
         return False
     return True
+
+
+def _is_freeze_forever(frozen_until: datetime | None) -> bool:
+    return bool(frozen_until and frozen_until.year >= 9999)
+
+
+def _parse_freeze_token(raw_token: str) -> tuple[int | None, bool]:
+    token = str(raw_token or "").strip().lower()
+    if token == SENSORS_FREEZE_FOREVER_TOKEN:
+        return None, True
+    seconds = int(token)
+    if seconds < 60 or seconds > 7 * 24 * 3600:
+        raise ValueError("freeze seconds out of range")
+    return seconds, False
 
 
 def _menu_keyboard(light_enabled: bool) -> InlineKeyboardMarkup:
@@ -408,13 +424,8 @@ async def cb_sensor_freeze(callback: CallbackQuery) -> None:
 
     uuid = parts[1]
     try:
-        seconds = int(parts[2])
+        seconds, is_forever = _parse_freeze_token(parts[2])
     except Exception:
-        await callback.answer("❌ Некоректна тривалість", show_alert=True)
-        return
-
-    # Safety bounds: prevent accidental huge freeze values.
-    if seconds < 60 or seconds > 7 * 24 * 3600:
         await callback.answer("❌ Некоректна тривалість", show_alert=True)
         return
 
@@ -439,14 +450,18 @@ async def cb_sensor_freeze(callback: CallbackQuery) -> None:
 
     ok = await freeze_sensor(
         uuid,
-        frozen_until=now + timedelta(seconds=seconds),
+        frozen_until=(
+            SENSORS_FREEZE_FOREVER_UNTIL
+            if is_forever
+            else (now + timedelta(seconds=int(seconds or 0)))
+        ),
         frozen_is_up=frozen_is_up,
         frozen_at=now,
     )
     if not ok:
         await callback.answer("❌ Не вдалося заморозити", show_alert=True)
     else:
-        await callback.answer("🧊 Заморожено")
+        await callback.answer("🧊 Заморожено до розморозки" if is_forever else "🧊 Заморожено")
 
     await _render_sensor_detail(
         callback.bot,
@@ -565,12 +580,10 @@ async def _render_sensors_page(
                 text="🧊 Заморозити всі (6 год)",
                 callback_data=f"admin_sensors_freeze_all|{SENSORS_FREEZE_ALL_DEFAULT_SEC}",
             ),
-            InlineKeyboardButton(
-                text="✅ Розморозити всі",
-                callback_data="admin_sensors_unfreeze_all",
-            ),
+            InlineKeyboardButton(text="🧊 Всі до розморозки", callback_data=f"admin_sensors_freeze_all|{SENSORS_FREEZE_FOREVER_TOKEN}"),
         ]
     )
+    rows.append([InlineKeyboardButton(text="✅ Розморозити всі", callback_data="admin_sensors_unfreeze_all")])
     rows.append([InlineKeyboardButton(text="🔄 Оновити", callback_data=f"admin_sensors_page|{offset}")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")])
 
@@ -590,24 +603,28 @@ async def cb_sensors_freeze_all(callback: CallbackQuery) -> None:
     if not await _require_admin_callback(callback):
         return
     try:
-        seconds = int(callback.data.split("|", 1)[1])
+        seconds, is_forever = _parse_freeze_token(callback.data.split("|", 1)[1])
     except Exception:
-        seconds = SENSORS_FREEZE_ALL_DEFAULT_SEC
-
-    if seconds < 60 or seconds > 7 * 24 * 3600:
         await callback.answer("❌ Некоректна тривалість", show_alert=True)
         return
 
     await callback.answer("⏳ Ставлю в чергу…")
+    payload: dict[str, int | str]
+    if is_forever:
+        payload = {"mode": SENSORS_FREEZE_FOREVER_TOKEN}
+        duration_line = "Тривалість: <b>до ручної розморозки</b>"
+    else:
+        payload = {"seconds": int(seconds or SENSORS_FREEZE_ALL_DEFAULT_SEC)}
+        hours = round((seconds or 0) / 3600, 2)
+        duration_line = f"Тривалість: <b>{hours} год</b>"
     job_id = await create_admin_job(
         "sensors_freeze_all",
-        {"seconds": int(seconds)},
+        payload,
         created_by=int(callback.from_user.id),
     )
-    hours = round(seconds / 3600, 2)
     note = (
         "✅ Додано в чергу: <b>Заморозити всі сенсори</b>\n"
-        f"Тривалість: <b>{hours} год</b>\n"
+        f"{duration_line}\n"
         f"Job: <code>#{job_id}</code>"
     )
     await _render_sensors_page(
@@ -700,7 +717,7 @@ async def _render_sensor_detail(bot: Bot, chat_id: int, *, uuid: str, prefer_mes
         text += f"comment: <code>{escape(comment)}</code>\n"
 
     if frozen_active:
-        until_str = frozen_until.strftime("%d.%m %H:%M")
+        until_str = "до ручної розморозки" if _is_freeze_forever(frozen_until) else frozen_until.strftime("%d.%m %H:%M")
         if frozen_is_up is True:
             eff = "✅ UP"
         elif frozen_is_up is False:
@@ -725,8 +742,10 @@ async def _render_sensor_detail(bot: Bot, chat_id: int, *, uuid: str, prefer_mes
             [
                 InlineKeyboardButton(text="🧊 +15 хв", callback_data=f"admin_sensor_freeze|{uuid}|900"),
                 InlineKeyboardButton(text="🧊 +1 год", callback_data=f"admin_sensor_freeze|{uuid}|3600"),
+                InlineKeyboardButton(text="🧊 +6 год", callback_data=f"admin_sensor_freeze|{uuid}|21600"),
             ]
         )
+        rows.append([InlineKeyboardButton(text="🧊 До розморозки", callback_data=f"admin_sensor_freeze|{uuid}|{SENSORS_FREEZE_FOREVER_TOKEN}")])
     else:
         rows.append(
             [
@@ -735,6 +754,7 @@ async def _render_sensor_detail(bot: Bot, chat_id: int, *, uuid: str, prefer_mes
                 InlineKeyboardButton(text="🧊 6 год", callback_data=f"admin_sensor_freeze|{uuid}|21600"),
             ]
         )
+        rows.append([InlineKeyboardButton(text="🧊 До розморозки", callback_data=f"admin_sensor_freeze|{uuid}|{SENSORS_FREEZE_FOREVER_TOKEN}")])
 
     rows.append([InlineKeyboardButton(text="🔄 Оновити", callback_data=f"admin_sensor|{uuid}")])
     rows.append([InlineKeyboardButton(text="🔙 До сенсорів", callback_data="admin_sensors")])
