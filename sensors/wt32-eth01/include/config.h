@@ -26,19 +26,19 @@
 // ═══════════════════════════════════════════════════════════════
 
 // ID будинку (1-14, див. список нижче)
-#define BUILDING_ID     2
+#define BUILDING_ID     11
 
 // Номер секції (1..3) в межах будинку
 #define SECTION_ID      1
 
 // Опціональна примітка (наприклад: "кв 123"). Залиш порожнім якщо не потрібно.
-#define SENSOR_COMMENT  "SENSOR IN OXFORD TRANSFORMER ROOM 24-B"
+#define SENSOR_COMMENT  "SENSOR IN LONDON TRANSFORMER ROOM 28-E"
 
 // Унікальний ідентифікатор сенсора
-#define SENSOR_UUID     "esp32-bristol-001"
+#define SENSOR_UUID     "esp32-london-001"
 
 // Назва будинку (для логів)
-#define BUILDING_NAME   "Bristol"
+#define BUILDING_NAME   "London"
 
 // ═══════════════════════════════════════════════════════════════
 // ТАЙМІНГИ
