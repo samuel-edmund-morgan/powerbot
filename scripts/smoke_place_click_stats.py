@@ -73,13 +73,12 @@ async def _ensure_service_and_places() -> tuple[int, list[int]]:
 
         _assert(len(place_ids) == 5, "expected 5 smoke places")
 
-        # Reset today's counters for deterministic assertions.
+        # Reset counters for these smoke places on all days for deterministic assertions.
         placeholders = ",".join("?" for _ in place_ids)
         await db.execute(
             f"""
             DELETE FROM place_views_daily
-             WHERE day = date('now','localtime')
-               AND place_id IN ({placeholders})
+             WHERE place_id IN ({placeholders})
             """,
             tuple(place_ids),
         )
@@ -121,4 +120,3 @@ if __name__ == "__main__":
     import asyncio
 
     asyncio.run(_main())
-
