@@ -863,17 +863,47 @@ class BusinessCabinetService:
         if published_count < int(min_places):
             return None
 
-        summary = await self.repository.get_service_views_summary(service_id, days=int(days))
-        if int(summary.get("total_views") or 0) <= 0:
+        views_rows = await self.repository.list_service_place_views(service_id, days=int(days))
+        if not views_rows:
             return None
 
+        total_views = int(sum(int(row.get("views_cnt") or 0) for row in views_rows))
+        if total_views <= 0:
+            return None
+
+        top_bucket_size = min(3, len(views_rows))
+        top_bucket_views = int(sum(int(row.get("views_cnt") or 0) for row in views_rows[:top_bucket_size]))
+        others_views = max(0, total_views - top_bucket_views)
+        top_share_pct = int(round((top_bucket_views * 100.0) / total_views)) if total_views > 0 else 0
+        others_share_pct = max(0, 100 - top_share_pct)
+
         own_views = await self.repository.get_place_views_sum(int(place_id), days=int(days))
+        own_rank = next(
+            (
+                index + 1
+                for index, row in enumerate(views_rows)
+                if int(row.get("place_id") or 0) == int(place_id)
+            ),
+            int(len(views_rows)),
+        )
+
         return {
             "days": int(days),
             "min_places": int(min_places),
             "published_places": int(published_count),
+            "service_name": str(place.get("service_name") or "").strip(),
             "own_views": int(own_views),
-            **{k: int(v) for k, v in summary.items()},
+            "own_rank": int(own_rank),
+            "top_bucket_size": int(top_bucket_size),
+            "top_bucket_views": int(top_bucket_views),
+            "others_views": int(others_views),
+            "top_share_pct": int(top_share_pct),
+            "others_share_pct": int(others_share_pct),
+            "own_in_top_bucket": bool(own_rank <= top_bucket_size),
+            "place_count": int(len(views_rows)),
+            "total_views": int(total_views),
+            "top_views": int(max(int(row.get("views_cnt") or 0) for row in views_rows)),
+            "bottom_views": int(min(int(row.get("views_cnt") or 0) for row in views_rows)),
         }
 
     async def list_pending_owner_requests(self, admin_tg_user_id: int) -> list[dict[str, Any]]:

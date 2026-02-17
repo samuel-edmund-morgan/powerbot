@@ -517,11 +517,8 @@ class BusinessRepository:
                 row = await cur.fetchone()
                 return int(row[0] if row and row[0] is not None else 0)
 
-    async def get_service_views_summary(self, service_id: int, *, days: int) -> dict[str, int]:
-        """Get views summary across published places in a category.
-
-        Returns: place_count, total_views, top_views, bottom_views.
-        """
+    async def list_service_place_views(self, service_id: int, *, days: int) -> list[dict[str, int]]:
+        """Get per-place views for published places in a category, sorted by popularity."""
         safe_days = max(1, min(int(days), 3650))
         offset = f"-{safe_days - 1} days"
         async with open_business_db() as db:
@@ -536,11 +533,25 @@ class BusinessRepository:
                  WHERE p.service_id = ?
                    AND p.is_published = 1
                  GROUP BY p.id
+                 ORDER BY views_cnt DESC, p.id ASC
                 """,
                 (offset, int(service_id)),
             ) as cur:
                 rows = await cur.fetchall()
+                return [
+                    {
+                        "place_id": int(row["place_id"]),
+                        "views_cnt": int(row["views_cnt"] or 0),
+                    }
+                    for row in rows
+                ]
 
+    async def get_service_views_summary(self, service_id: int, *, days: int) -> dict[str, int]:
+        """Get views summary across published places in a category.
+
+        Returns: place_count, total_views, top_views, bottom_views.
+        """
+        rows = await self.list_service_place_views(int(service_id), days=int(days))
         views = [int(r["views_cnt"] or 0) for r in rows]
         if not views:
             return {"place_count": 0, "total_views": 0, "top_views": 0, "bottom_views": 0}

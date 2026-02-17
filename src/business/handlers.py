@@ -2555,15 +2555,30 @@ async def _render_place_plan_menu(
             logger.exception("Failed to load free-tier click motivation place_id=%s", place_id)
         if motivation:
             days = int(motivation.get("days") or 30)
+            service_name = html.escape(str(motivation.get("service_name") or "вашій категорії"))
+            total_views = int(motivation.get("total_views") or 0)
             own = int(motivation.get("own_views") or 0)
-            top = int(motivation.get("top_views") or 0)
-            bottom = int(motivation.get("bottom_views") or 0)
+            own_rank = int(motivation.get("own_rank") or 0)
+            place_count = int(motivation.get("place_count") or 0)
+            top_bucket_size = int(motivation.get("top_bucket_size") or 3)
+            top_bucket_views = int(motivation.get("top_bucket_views") or 0)
+            others_views = int(motivation.get("others_views") or 0)
+            top_share_pct = int(motivation.get("top_share_pct") or 0)
+            others_share_pct = int(motivation.get("others_share_pct") or 0)
+            own_in_top_bucket = bool(motivation.get("own_in_top_bucket"))
+            cta_line = (
+                "🚀 Ви вже в топі. Тариф Light допоможе закріпитись вище (✅ Verified + пріоритет)."
+                if own_in_top_bucket
+                else "🚀 Щоб піднятись у топ, просіть гостей ставити ❤️ у боті або підключіть Light (✅ Verified + пріоритет)."
+            )
             extra_block = (
                 "\n\n"
-                f"📊 <b>Статистика (за {days} днів)</b>\n"
-                f"👀 Ваш заклад: <b>{own}</b> переглядів картки\n"
-                f"🥇 Топ у категорії: <b>{top}</b>\n"
-                f"🐢 Найнижчий у категорії: <b>{bottom}</b>"
+                f"📊 <b>Попит у категорії за {days} днів</b>\n"
+                f"У категорії «{service_name}» картки відкривали <b>{total_views}</b> разів.\n"
+                f"🥇 Топ-{top_bucket_size}: <b>{top_bucket_views}</b> ({top_share_pct}%)\n"
+                f"📍 Інші заклади: <b>{others_views}</b> ({others_share_pct}%)\n"
+                f"🏪 Ваш заклад: <b>{own}</b> переглядів • місце <b>#{own_rank}</b> з {place_count}\n"
+                f"{cta_line}"
             )
 
     header = f"{notice}\n\n" if notice else ""

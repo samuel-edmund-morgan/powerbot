@@ -26,8 +26,11 @@ for candidate in (
         sys.path.insert(0, str(candidate))
         break
 
+from datetime import datetime, timezone
+
 from database import build_keywords, open_db, record_place_view  # noqa: E402
 from business.repository import BusinessRepository  # noqa: E402
+from business.service import BusinessCabinetService  # noqa: E402
 
 
 def _assert(cond: bool, message: str) -> None:
@@ -37,6 +40,7 @@ def _assert(cond: bool, message: str) -> None:
 
 SERVICE_NAME = "SMOKE: Click stats"
 PLACE_NAMES = [f"SMOKE Place {idx}" for idx in range(1, 6)]
+SMOKE_OWNER_ID = 900001111
 
 
 async def _ensure_service_and_places() -> tuple[int, list[int]]:
@@ -84,6 +88,24 @@ async def _ensure_service_and_places() -> tuple[int, list[int]]:
         )
         await db.commit()
 
+        # Ensure one approved owner to validate free-tier motivation flow.
+        owner_place_id = int(place_ids[3])
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            """
+            INSERT INTO business_owners(
+                place_id, tg_user_id, role, status, created_at, approved_at, approved_by
+            ) VALUES(?, ?, 'owner', 'approved', ?, ?, ?)
+            ON CONFLICT(place_id, tg_user_id) DO UPDATE SET
+                role='owner',
+                status='approved',
+                approved_at=excluded.approved_at,
+                approved_by=excluded.approved_by
+            """,
+            (owner_place_id, SMOKE_OWNER_ID, now_iso, now_iso, SMOKE_OWNER_ID),
+        )
+        await db.commit()
+
         return service_id, place_ids
 
 
@@ -93,25 +115,55 @@ async def _main() -> None:
     # Make the ranking deterministic:
     # - place_ids[0] gets 10 views
     # - place_ids[1] gets 2 views
-    # - others get 0 views
+    # - place_ids[2] gets 1 view
+    # - place_ids[3] gets 1 view
+    # - place_ids[4] gets 0 views
     for _ in range(10):
         await record_place_view(place_ids[0])
     for _ in range(2):
         await record_place_view(place_ids[1])
+    await record_place_view(place_ids[2])
+    await record_place_view(place_ids[3])
 
     repo = BusinessRepository()
     summary = await repo.get_service_views_summary(service_id, days=30)
     _assert(summary["place_count"] >= 5, f"unexpected place_count: {summary}")
     _assert(summary["top_views"] == 10, f"unexpected top_views: {summary}")
     _assert(summary["bottom_views"] == 0, f"unexpected bottom_views: {summary}")
-    _assert(summary["total_views"] == 12, f"unexpected total_views: {summary}")
+    _assert(summary["total_views"] == 14, f"unexpected total_views: {summary}")
+
+    rows = await repo.list_service_place_views(service_id, days=30)
+    _assert(len(rows) >= 5, f"unexpected rows: {rows}")
+    _assert(int(rows[0]["views_cnt"]) == 10, f"top row mismatch: {rows}")
+    top3 = int(sum(int(r["views_cnt"]) for r in rows[:3]))
+    others = int(sum(int(r["views_cnt"]) for r in rows[3:]))
+    _assert(top3 == 13, f"unexpected top3 sum: top3={top3}, rows={rows}")
+    _assert(others == 1, f"unexpected others sum: others={others}, rows={rows}")
 
     own_top = await repo.get_place_views_sum(place_ids[0], days=30)
     own_mid = await repo.get_place_views_sum(place_ids[1], days=30)
-    own_zero = await repo.get_place_views_sum(place_ids[2], days=30)
+    own_low = await repo.get_place_views_sum(place_ids[3], days=30)
+    own_zero = await repo.get_place_views_sum(place_ids[4], days=30)
     _assert(own_top == 10, f"unexpected own_top: {own_top}")
     _assert(own_mid == 2, f"unexpected own_mid: {own_mid}")
+    _assert(own_low == 1, f"unexpected own_low: {own_low}")
     _assert(own_zero == 0, f"unexpected own_zero: {own_zero}")
+
+    service = BusinessCabinetService()
+    motivation = await service.get_free_tier_click_motivation(
+        tg_user_id=SMOKE_OWNER_ID,
+        place_id=place_ids[3],
+        days=30,
+    )
+    _assert(motivation is not None, "free-tier motivation must be available for smoke owner")
+    _assert(int(motivation["total_views"]) == 14, f"unexpected motivation total_views: {motivation}")
+    _assert(int(motivation["top_bucket_size"]) == 3, f"unexpected top_bucket_size: {motivation}")
+    _assert(int(motivation["top_bucket_views"]) == 13, f"unexpected top_bucket_views: {motivation}")
+    _assert(int(motivation["others_views"]) == 1, f"unexpected others_views: {motivation}")
+    _assert(int(motivation["own_views"]) == 1, f"unexpected own_views: {motivation}")
+    _assert(int(motivation["own_rank"]) >= 4, f"unexpected own_rank: {motivation}")
+    pct_sum = int(motivation["top_share_pct"]) + int(motivation["others_share_pct"])
+    _assert(pct_sum == 100, f"unexpected motivation pct sum: {motivation}")
 
     print("OK: place click stats smoke passed.")
 
