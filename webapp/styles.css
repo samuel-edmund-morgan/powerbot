@@ -872,6 +872,10 @@ body::after {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
+
+  .nav-item-full {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 980px) and (min-width: 701px) {
