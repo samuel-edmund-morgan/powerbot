@@ -73,7 +73,6 @@ webapp_logger = logging.getLogger("handlers")
 
 WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 MAPS_DIR = Path(__file__).resolve().parent / "maps"
-DONATE_URL = "https://send.monobank.ua/jar/7d56pmvjEB"
 
 
 def _filter_places_by_query(
@@ -560,7 +559,6 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
             "electrician_phone": CFG.electrician_phone,
             "elevator_phones": CFG.elevator_phones,
         },
-        "donate_url": DONATE_URL,
     })
 
 

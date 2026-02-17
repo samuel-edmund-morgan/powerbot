@@ -49,7 +49,6 @@
     scheduleToggle: document.getElementById("scheduleToggle"),
     quietSelect: document.getElementById("quietSelect"),
     saveSettings: document.getElementById("saveSettings"),
-    donateLink: document.getElementById("donateLink"),
     toast: document.getElementById("toast"),
   };
 

@@ -88,7 +88,6 @@
     renderCategories(payload.categories);
     renderServices(payload.services);
     renderSettings(payload.settings);
-    elements.donateLink.href = payload.donate_url;
     applyRevealAnimations();
 
     // Keep sections dropdown in sync with selected building.
