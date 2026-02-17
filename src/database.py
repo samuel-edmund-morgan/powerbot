@@ -15,7 +15,7 @@ from sqlite_lock_logger import log_sqlite_lock_event
 
 # Список всіх будинків ЖК "Нова Англія"
 BUILDINGS = [
-    {"id": 1, "name": "Ньюкасл", "address": "24-в", "has_sensor": True},
+    {"id": 1, "name": "Ньюкасл", "address": "24-в", "has_sensor": False},
     {"id": 2, "name": "Оксфорд", "address": "28-б", "has_sensor": False},
     {"id": 3, "name": "Кембрідж", "address": "26", "has_sensor": False},
     {"id": 4, "name": "Ліверпуль", "address": "24-а", "has_sensor": False},
@@ -758,6 +758,9 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_business_claim_token_status_expires ON business_claim_tokens (status, expires_at)"
         )
         
+        # buildings.has_sensor / buildings.sensor_count мають бути похідними
+        # від активних записів sensors, а не "ручним" статичним станом.
+        await _sync_building_sensor_stats_in_tx(db)
         await db.commit()
 
     # Після міграцій перебудовуємо keywords для всіх закладів
@@ -2703,6 +2706,52 @@ async def delete_last_bot_message_record(chat_id: int):
 
 # ============ Сенсори ESP32 ============
 
+
+async def _sync_building_sensor_stats_in_tx(
+    db: aiosqlite.Connection,
+    building_ids: set[int] | list[int] | tuple[int, ...] | None = None,
+) -> None:
+    """Sync derived fields buildings.has_sensor/sensor_count inside current transaction."""
+    if building_ids is None:
+        async with db.execute("SELECT id FROM buildings ORDER BY id") as cur:
+            rows = await cur.fetchall()
+        ids = [int(r[0]) for r in rows]
+    else:
+        ids = sorted({int(bid) for bid in building_ids if bid is not None})
+
+    for bid in ids:
+        async with db.execute(
+            "SELECT COUNT(*) FROM sensors WHERE building_id=? AND is_active=1",
+            (bid,),
+        ) as cur:
+            row = await cur.fetchone()
+        sensor_count = int(row[0]) if row and row[0] is not None else 0
+        has_sensor = 1 if sensor_count > 0 else 0
+        await db.execute(
+            """
+            UPDATE buildings
+               SET has_sensor=?,
+                   sensor_count=?
+             WHERE id=?
+               AND (has_sensor IS NOT ? OR sensor_count IS NOT ?)
+            """,
+            (has_sensor, sensor_count, bid, has_sensor, sensor_count),
+        )
+
+
+async def sync_building_sensor_stats(building_id: int | None = None) -> None:
+    """Force-sync sensor counters for one building or for all buildings."""
+
+    async def _op() -> None:
+        async with open_db() as db:
+            if building_id is None:
+                await _sync_building_sensor_stats_in_tx(db)
+            else:
+                await _sync_building_sensor_stats_in_tx(db, {int(building_id)})
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
+
 async def upsert_sensor_heartbeat(
     uuid: str,
     building_id: int,
@@ -2717,8 +2766,14 @@ async def upsert_sensor_heartbeat(
     async def _op() -> bool:
         async with open_db() as db:
             now = datetime.now().isoformat()
-            async with db.execute("SELECT 1 FROM sensors WHERE uuid=?", (uuid,)) as cur:
-                existed = await cur.fetchone() is not None
+            async with db.execute(
+                "SELECT building_id, is_active FROM sensors WHERE uuid=?",
+                (uuid,),
+            ) as cur:
+                prev_row = await cur.fetchone()
+            existed = prev_row is not None
+            prev_building_id = int(prev_row[0]) if prev_row and prev_row[0] is not None else None
+            prev_is_active = bool(prev_row[1]) if prev_row and prev_row[1] is not None else False
 
             await db.execute(
                 """
@@ -2734,6 +2789,18 @@ async def upsert_sensor_heartbeat(
                 """,
                 (uuid, building_id, section_id, name, comment, now, now),
             )
+
+            sync_building_ids: set[int] = set()
+            if not existed:
+                sync_building_ids.add(int(building_id))
+            else:
+                if prev_building_id is not None and prev_building_id != int(building_id):
+                    sync_building_ids.add(prev_building_id)
+                    sync_building_ids.add(int(building_id))
+                elif not prev_is_active:
+                    sync_building_ids.add(int(building_id))
+            if sync_building_ids:
+                await _sync_building_sensor_stats_in_tx(db, sync_building_ids)
             await db.commit()
             return not existed
 
@@ -2750,15 +2817,28 @@ async def register_sensor(uuid: str, building_id: int, name: str | None = None) 
             now = datetime.now().isoformat()
 
             # Перевіряємо чи сенсор вже існує
-            async with db.execute("SELECT uuid FROM sensors WHERE uuid=?", (uuid,)) as cur:
-                exists = await cur.fetchone()
+            async with db.execute(
+                "SELECT building_id, is_active FROM sensors WHERE uuid=?",
+                (uuid,),
+            ) as cur:
+                prev_row = await cur.fetchone()
 
-            if exists:
+            if prev_row:
+                prev_building_id = int(prev_row[0]) if prev_row[0] is not None else None
+                prev_is_active = bool(prev_row[1]) if prev_row[1] is not None else False
                 # Оновлюємо існуючий сенсор
                 await db.execute(
                     "UPDATE sensors SET building_id=?, name=?, is_active=1 WHERE uuid=?",
                     (building_id, name, uuid)
                 )
+                sync_building_ids: set[int] = set()
+                if prev_building_id is not None and prev_building_id != int(building_id):
+                    sync_building_ids.add(prev_building_id)
+                    sync_building_ids.add(int(building_id))
+                elif not prev_is_active:
+                    sync_building_ids.add(int(building_id))
+                if sync_building_ids:
+                    await _sync_building_sensor_stats_in_tx(db, sync_building_ids)
                 await db.commit()
                 return False
 
@@ -2767,6 +2847,7 @@ async def register_sensor(uuid: str, building_id: int, name: str | None = None) 
                 "INSERT INTO sensors(uuid, building_id, name, created_at, is_active) VALUES(?, ?, ?, ?, 1)",
                 (uuid, building_id, name, now)
             )
+            await _sync_building_sensor_stats_in_tx(db, {int(building_id)})
             await db.commit()
             return True
 
@@ -3081,7 +3162,14 @@ async def deactivate_sensor(uuid: str):
     """Деактивувати сенсор."""
     async def _op() -> None:
         async with open_db() as db:
+            async with db.execute(
+                "SELECT building_id, is_active FROM sensors WHERE uuid=?",
+                (uuid,),
+            ) as cur:
+                row = await cur.fetchone()
             await db.execute("UPDATE sensors SET is_active=0 WHERE uuid=?", (uuid,))
+            if row and bool(row[1]) and row[0] is not None:
+                await _sync_building_sensor_stats_in_tx(db, {int(row[0])})
             await db.commit()
 
     await _with_sqlite_retry(_op)

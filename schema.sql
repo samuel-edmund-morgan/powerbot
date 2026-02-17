@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS buildings (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,                      -- Назва будинку
     address TEXT NOT NULL,                   -- Адреса
-    has_sensor INTEGER DEFAULT 0,            -- Чи є датчик (1/0)
-    sensor_count INTEGER DEFAULT 0           -- Кількість датчиків
+    has_sensor INTEGER DEFAULT 0,            -- Похідне поле (1/0), синхронізується з sensors.is_active
+    sensor_count INTEGER DEFAULT 0           -- Похідне поле, кількість активних сенсорів
 );
 
 -- Key-Value сховище для налаштувань
@@ -367,7 +367,7 @@ CREATE INDEX IF NOT EXISTS idx_business_claim_token_status_expires
 
 -- Будинки (актуальний перелік ЖК "Нова Англія")
 INSERT OR IGNORE INTO buildings (id, name, address, has_sensor, sensor_count) VALUES
-    (1, 'Ньюкасл', '24-в', 1, 1),
+    (1, 'Ньюкасл', '24-в', 0, 0),
     (2, 'Оксфорд', '28-б', 0, 0),
     (3, 'Кембрідж', '26', 0, 0),
     (4, 'Ліверпуль', '24-а', 0, 0),
