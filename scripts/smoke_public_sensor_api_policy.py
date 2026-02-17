@@ -4,7 +4,7 @@ Static smoke-check: public sensor status API contract.
 
 Policy:
 - Public status API must use a dedicated read-only key (`SENSOR_PUBLIC_API_KEY`).
-- Public routes must exist for all sensors and single sensor by UUID.
+- Public routes must exist for all sensors and single sensor by numeric ID.
 - Public status must be computed from heartbeat age only (freeze-independent).
 
 Run:
@@ -76,7 +76,7 @@ def main() -> None:
     # Routes contract.
     for snippet in (
         'app.router.add_get("/api/v1/public/sensors/status", public_sensors_status_handler)',
-        'app.router.add_get("/api/v1/public/sensors/{sensor_uuid}/status", public_sensor_status_handler)',
+        'app.router.add_get("/api/v1/public/sensors/{sensor_id:\\\\d+}/status", public_sensor_status_handler)',
     ):
         if snippet not in api:
             violations.append(f"{API_FILE}: missing public route `{snippet}`")

@@ -2770,7 +2770,8 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT uuid, building_id, section_id, name, comment,
+            SELECT rowid AS id,
+                   uuid, building_id, section_id, name, comment,
                    frozen_until, frozen_is_up, frozen_at,
                    last_heartbeat, created_at, is_active
               FROM sensors
@@ -2781,6 +2782,41 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
             row = await cur.fetchone()
             if row:
                 return {
+                    "id": row["id"],
+                    "uuid": row["uuid"],
+                    "building_id": row["building_id"],
+                    "section_id": row["section_id"],
+                    "name": row["name"],
+                    "comment": row["comment"],
+                    "frozen_until": datetime.fromisoformat(row["frozen_until"]) if row["frozen_until"] else None,
+                    "frozen_is_up": (bool(row["frozen_is_up"]) if row["frozen_is_up"] is not None else None),
+                    "frozen_at": datetime.fromisoformat(row["frozen_at"]) if row["frozen_at"] else None,
+                    "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
+                    "created_at": datetime.fromisoformat(row["created_at"]),
+                    "is_active": bool(row["is_active"]),
+                }
+            return None
+
+
+async def get_sensor_by_id(sensor_id: int) -> dict | None:
+    """Отримати сенсор за числовим ID (SQLite rowid)."""
+    async with open_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT rowid AS id,
+                   uuid, building_id, section_id, name, comment,
+                   frozen_until, frozen_is_up, frozen_at,
+                   last_heartbeat, created_at, is_active
+              FROM sensors
+             WHERE rowid=?
+            """,
+            (sensor_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return {
+                    "id": row["id"],
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
                     "section_id": row["section_id"],
@@ -2868,7 +2904,8 @@ async def get_all_active_sensors() -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT uuid, building_id, section_id, name, comment,
+            SELECT rowid AS id,
+                   uuid, building_id, section_id, name, comment,
                    frozen_until, frozen_is_up, frozen_at,
                    last_heartbeat, created_at
               FROM sensors
@@ -2878,6 +2915,7 @@ async def get_all_active_sensors() -> list[dict]:
             rows = await cur.fetchall()
             return [
                 {
+                    "id": row["id"],
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
                     "section_id": row["section_id"],
