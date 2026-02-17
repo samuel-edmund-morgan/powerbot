@@ -56,6 +56,9 @@ class Config:
     sensor_api_key: str  # API ключ для сенсорів
     sensor_public_api_key: str  # API ключ для read-only публічних ендпоінтів статусу сенсорів
     sensor_timeout: int  # Таймаут в секундах для визначення відключення
+    # Canonical sensor mapping by UUID:
+    # sensor_uuid -> canonical building_id used by backend (source of truth).
+    sensor_uuid_building_map: dict[str, int]
     # Sensor aliases: treat heartbeat from one (building, section) as present for others.
     # Mapping: (src_building_id, src_section_id) -> [(dst_building_id, dst_section_id), ...]
     sensor_aliases: dict[tuple[int, int], list[tuple[int, int]]]
@@ -189,6 +192,70 @@ def parse_sensor_aliases_from_env() -> dict[tuple[int, int], list[tuple[int, int
     return mapping
 
 
+DEFAULT_SENSOR_UUID_BUILDING_MAP: dict[str, int] = {
+    # Rollout map: flashed "sensor table IDs" are not equal to canonical DB building IDs.
+    # Keep this mapping stable so heartbeat never drifts sensors to wrong buildings.
+    "esp32-newcastle-001": 1,   # Ньюкасл
+    "esp32-bristol-001": 5,     # Брістоль
+    "esp32-liverpool-001": 4,   # Ліверпуль
+    "esp32-nottingham-001": 13, # Ноттінгем
+    "esp32-manchester-001": 8,  # Манчестер
+    "esp32-cambridge-001": 3,   # Кембрідж
+    "esp32-brighton-001": 9,    # Брайтон
+    "esp32-birmingham-001": 6,  # Бермінгем
+    "esp32-windsor-001": 12,    # Віндзор
+    "esp32-chester-001": 7,     # Честер
+    "esp32-london-001": 10,     # Лондон
+    "esp32-oxford-001": 2,      # Оксфорд
+    "esp32-lincoln-001": 11,    # Лінкольн
+    "esp32-preston-001": 14,    # Престон
+}
+
+
+def parse_sensor_uuid_building_map_from_env(
+    default_map: dict[str, int] | None = None,
+) -> dict[str, int]:
+    """Parse SENSOR_UUID_BUILDING_MAP env var.
+
+    Format:
+      SENSOR_UUID_BUILDING_MAP="esp32-foo-001:5,esp32-bar-001:3"
+
+    Notes:
+    - Supports separators `, ;` and whitespace between tokens.
+    - Supports `:` or `=` between uuid and building_id.
+    - Values from env override defaults.
+    """
+    mapping: dict[str, int] = dict(default_map or {})
+    raw = os.getenv("SENSOR_UUID_BUILDING_MAP", "")
+    value = (raw or "").strip().strip('"').strip("'")
+    if not value:
+        return mapping
+
+    tokens = re.split(r"[,\s;]+", value)
+    for token in tokens:
+        item = token.strip().strip('"').strip("'")
+        if not item:
+            continue
+        if ":" in item:
+            uuid_part, bid_part = item.split(":", 1)
+        elif "=" in item:
+            uuid_part, bid_part = item.split("=", 1)
+        else:
+            continue
+        sensor_uuid = uuid_part.strip().lower()
+        bid_raw = bid_part.strip()
+        if not sensor_uuid:
+            continue
+        if not bid_raw.isdigit():
+            continue
+        bid = int(bid_raw)
+        if bid <= 0:
+            continue
+        mapping[sensor_uuid] = bid
+
+    return mapping
+
+
 CFG = Config(
     token=os.environ["BOT_TOKEN"],
     admin_ids=parse_admin_ids(os.getenv("ADMIN_IDS", "")),
@@ -215,6 +282,7 @@ CFG = Config(
     sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),
     sensor_public_api_key=os.getenv("SENSOR_PUBLIC_API_KEY", "").strip().strip('"').strip("'"),
     sensor_timeout=int(os.getenv("SENSOR_TIMEOUT_SEC", "150")),
+    sensor_uuid_building_map=parse_sensor_uuid_building_map_from_env(DEFAULT_SENSOR_UUID_BUILDING_MAP),
     sensor_aliases=parse_sensor_aliases_from_env(),
     web_app_enabled=parse_bool(os.getenv("WEB_APP", "0")),
     web_app_url=os.getenv("WEB_APP_URL", "").strip().strip('"').strip("'"),

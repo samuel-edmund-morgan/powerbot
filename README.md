@@ -189,6 +189,11 @@ curl -X POST http://new-england.morgan-dev.com:18081/api/v1/heartbeat \
   -d '{"api_key":"<SENSOR_API_KEY>","building_id":1,"section_id":2,"sensor_uuid":"esp32-newcastle-001","comment":"кв. 123"}'
 ```
 
+Важливо про `building_id` у heartbeat:
+- бекенд має канонічне зіставлення `sensor_uuid -> building_id` для rollout‑сенсорів `esp32-*-001`;
+- якщо сенсор надіслав інший `building_id`, бекенд застосує канонічний (`uuid` є source of truth);
+- додаткові/кастомні override можна задати через `SENSOR_UUID_BUILDING_MAP` у `.env`.
+
 ## 5) Public Sensor Status API (для сторонніх розробників)
 
 Окремий read-only API для статусів сенсорів (щоб не видавати `SENSOR_API_KEY`).
