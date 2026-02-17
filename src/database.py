@@ -549,6 +549,33 @@ async def init_db():
             )
         except Exception:
             pass
+
+        # Стабільні публічні числові ID сенсорів для external read-only API.
+        # Не використовуємо rowid напряму (може мати "дірки"/бути нестабільним для зовнішніх інтеграцій).
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS sensor_public_ids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sensor_uuid TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (sensor_uuid) REFERENCES sensors(uuid) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sensor_public_ids_sensor_uuid ON sensor_public_ids (sensor_uuid)"
+        )
+        try:
+            now_iso = datetime.now().isoformat()
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO sensor_public_ids(sensor_uuid, created_at)
+                SELECT s.uuid, COALESCE(s.created_at, ?)
+                  FROM sensors s
+                 ORDER BY s.rowid
+                """,
+                (now_iso,),
+            )
+        except Exception:
+            pass
         
         # Таблиця для стану будинків (світло є/немає)
         await db.execute(
@@ -2770,8 +2797,7 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT rowid AS id,
-                   uuid, building_id, section_id, name, comment,
+            SELECT uuid, building_id, section_id, name, comment,
                    frozen_until, frozen_is_up, frozen_at,
                    last_heartbeat, created_at, is_active
               FROM sensors
@@ -2782,7 +2808,6 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
             row = await cur.fetchone()
             if row:
                 return {
-                    "id": row["id"],
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
                     "section_id": row["section_id"],
@@ -2798,25 +2823,50 @@ async def get_sensor_by_uuid(uuid: str) -> dict | None:
             return None
 
 
-async def get_sensor_by_id(sensor_id: int) -> dict | None:
-    """Отримати сенсор за числовим ID (SQLite rowid)."""
+async def _ensure_sensor_public_ids(active_only: bool = False) -> None:
+    """Backfill mapping table sensor_public_ids for existing sensors."""
+    where_clause = "WHERE s.is_active=1" if active_only else ""
+    now_iso = datetime.now().isoformat()
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                f"""
+                INSERT OR IGNORE INTO sensor_public_ids(sensor_uuid, created_at)
+                SELECT s.uuid, COALESCE(s.created_at, ?)
+                  FROM sensors s
+                  {where_clause}
+                 ORDER BY s.rowid
+                """,
+                (now_iso,),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
+
+
+async def get_active_sensor_by_public_id(public_id: int) -> dict | None:
+    """Отримати активний сенсор за стабільним публічним ID."""
+    await _ensure_sensor_public_ids(active_only=True)
     async with open_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT rowid AS id,
-                   uuid, building_id, section_id, name, comment,
-                   frozen_until, frozen_is_up, frozen_at,
-                   last_heartbeat, created_at, is_active
-              FROM sensors
-             WHERE rowid=?
+            SELECT spi.id AS public_id,
+                   s.uuid, s.building_id, s.section_id, s.name, s.comment,
+                   s.frozen_until, s.frozen_is_up, s.frozen_at,
+                   s.last_heartbeat, s.created_at, s.is_active
+              FROM sensor_public_ids spi
+              JOIN sensors s ON s.uuid = spi.sensor_uuid
+             WHERE spi.id=?
+               AND s.is_active=1
             """,
-            (sensor_id,),
+            (public_id,),
         ) as cur:
             row = await cur.fetchone()
             if row:
                 return {
-                    "id": row["id"],
+                    "public_id": row["public_id"],
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
                     "section_id": row["section_id"],
@@ -2830,6 +2880,42 @@ async def get_sensor_by_id(sensor_id: int) -> dict | None:
                     "is_active": bool(row["is_active"]),
                 }
             return None
+
+
+async def get_all_active_sensors_with_public_ids() -> list[dict]:
+    """Отримати всі активні сенсори разом зі стабільним публічним ID."""
+    await _ensure_sensor_public_ids(active_only=True)
+    async with open_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT spi.id AS public_id,
+                   s.uuid, s.building_id, s.section_id, s.name, s.comment,
+                   s.frozen_until, s.frozen_is_up, s.frozen_at,
+                   s.last_heartbeat, s.created_at
+              FROM sensor_public_ids spi
+              JOIN sensors s ON s.uuid = spi.sensor_uuid
+             WHERE s.is_active=1
+             ORDER BY spi.id
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "public_id": row["public_id"],
+                    "uuid": row["uuid"],
+                    "building_id": row["building_id"],
+                    "section_id": row["section_id"],
+                    "name": row["name"],
+                    "comment": row["comment"],
+                    "frozen_until": datetime.fromisoformat(row["frozen_until"]) if row["frozen_until"] else None,
+                    "frozen_is_up": (bool(row["frozen_is_up"]) if row["frozen_is_up"] is not None else None),
+                    "frozen_at": datetime.fromisoformat(row["frozen_at"]) if row["frozen_at"] else None,
+                    "last_heartbeat": datetime.fromisoformat(row["last_heartbeat"]) if row["last_heartbeat"] else None,
+                    "created_at": datetime.fromisoformat(row["created_at"]),
+                }
+                for row in rows
+            ]
 
 
 async def get_sensors_by_building(building_id: int) -> list[dict]:
@@ -2904,8 +2990,7 @@ async def get_all_active_sensors() -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT rowid AS id,
-                   uuid, building_id, section_id, name, comment,
+            SELECT uuid, building_id, section_id, name, comment,
                    frozen_until, frozen_is_up, frozen_at,
                    last_heartbeat, created_at
               FROM sensors
@@ -2915,7 +3000,6 @@ async def get_all_active_sensors() -> list[dict]:
             rows = await cur.fetchall()
             return [
                 {
-                    "id": row["id"],
                     "uuid": row["uuid"],
                     "building_id": row["building_id"],
                     "section_id": row["section_id"],

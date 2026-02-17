@@ -29,7 +29,8 @@ from config import CFG
 from yasno import get_planned_outages, get_building_schedule_text
 from database import (
     get_sensor_by_uuid,
-    get_sensor_by_id,
+    get_active_sensor_by_public_id,
+    get_all_active_sensors_with_public_ids,
     upsert_sensor_heartbeat,
     get_building_by_id,
     add_subscriber,
@@ -349,13 +350,11 @@ async def public_sensors_status_handler(request: web.Request) -> web.Response:
     if not ok:
         return error
 
-    from database import get_all_active_sensors
-
-    sensors = await get_all_active_sensors()
+    sensors = await get_all_active_sensors_with_public_ids()
     payload = []
     for sensor in sensors:
         is_up, _age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
-        sensor_id = sensor.get("id")
+        sensor_id = sensor.get("public_id")
         if sensor_id is None:
             continue
         payload.append(
@@ -393,7 +392,7 @@ async def public_sensor_status_handler(request: web.Request) -> web.Response:
             status=400,
         )
 
-    sensor = await get_sensor_by_id(sensor_id)
+    sensor = await get_active_sensor_by_public_id(sensor_id)
     if not sensor:
         return web.json_response(
             {"status": "error", "message": "Sensor not found"},
@@ -401,7 +400,7 @@ async def public_sensor_status_handler(request: web.Request) -> web.Response:
         )
 
     is_up, _age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
-    return web.json_response({"id": int(sensor["id"]), "is_up": bool(is_up)})
+    return web.json_response({"id": int(sensor["public_id"]), "is_up": bool(is_up)})
 
 
 async def yasno_outages_handler(request: web.Request) -> web.Response:
