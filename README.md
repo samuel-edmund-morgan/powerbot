@@ -189,7 +189,36 @@ curl -X POST http://new-england.morgan-dev.com:18081/api/v1/heartbeat \
   -d '{"api_key":"<SENSOR_API_KEY>","building_id":1,"section_id":2,"sensor_uuid":"esp32-newcastle-001","comment":"кв. 123"}'
 ```
 
-## 5) Business Mode: ізоляція та перемикання
+## 5) Public Sensor Status API (для сторонніх розробників)
+
+Окремий read-only API для статусів сенсорів (щоб не видавати `SENSOR_API_KEY`).
+
+У `.env`:
+```bash
+SENSOR_PUBLIC_API_KEY="<окремий read-only ключ>"
+```
+
+Ендпоінти:
+- `GET /api/v1/public/sensors/status` — статус усіх активних сенсорів.
+- `GET /api/v1/public/sensors/{sensor_uuid}/status` — статус одного сенсора.
+
+Авторизація (будь-який один спосіб):
+- заголовок `X-API-Key: <SENSOR_PUBLIC_API_KEY>` (рекомендовано)
+- або `Authorization: Bearer <SENSOR_PUBLIC_API_KEY>`
+- або query `?api_key=<SENSOR_PUBLIC_API_KEY>`
+
+Приклади:
+```bash
+curl -s -H "X-API-Key: <SENSOR_PUBLIC_API_KEY>" \
+  "http://sensors-new-england.morgan-dev.com:18081/api/v1/public/sensors/status"
+
+curl -s -H "X-API-Key: <SENSOR_PUBLIC_API_KEY>" \
+  "http://sensors-new-england.morgan-dev.com:18081/api/v1/public/sensors/esp32-newcastle-001/status"
+```
+
+Важливо: ці ендпоінти свідомо ігнорують `freeze` (заморозку сенсора в адмінці) і рахують `is_up` тільки за `last_heartbeat` та `SENSOR_TIMEOUT_SEC`.
+
+## 6) Business Mode: ізоляція та перемикання
 
 Бізнес-функціонал ізольований feature-flag’ом і за замовчуванням не впливає на мешканців.
 
@@ -207,7 +236,7 @@ curl -X POST http://new-england.morgan-dev.com:18081/api/v1/heartbeat \
   - у test рекомендовано `BUSINESS_PAYMENT_PROVIDER=mock`;
   - у prod для реальних оплат: `BUSINESS_PAYMENT_PROVIDER=telegram_stars`.
 
-### 5.1 Перемикання в test (`/opt/powerbot-test/.env`)
+### 6.1 Перемикання в test (`/opt/powerbot-test/.env`)
 
 1. Встановити:
 ```bash
@@ -228,7 +257,7 @@ BUSINESS_BOT_API_KEY=
 ```
 і знову прогнати test deploy.
 
-### 5.2 Перемикання в prod (`/opt/powerbot/.env`)
+### 6.2 Перемикання в prod (`/opt/powerbot/.env`)
 
 Безпечний дефолт для прода:
 ```bash

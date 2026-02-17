@@ -75,6 +75,34 @@ WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 MAPS_DIR = Path(__file__).resolve().parent / "maps"
 
 
+def _extract_api_key_from_request(request: web.Request) -> str:
+    """Extract API key from X-API-Key header, Bearer auth, or query param."""
+    header_key = str(request.headers.get("X-API-Key") or "").strip()
+    if header_key:
+        return header_key
+
+    auth_header = str(request.headers.get("Authorization") or "").strip()
+    if auth_header.lower().startswith("bearer "):
+        bearer = auth_header[7:].strip()
+        if bearer:
+            return bearer
+
+    query_key = str(request.query.get("api_key") or "").strip()
+    if query_key:
+        return query_key
+
+    return ""
+
+
+def _sensor_is_online_by_heartbeat_only(sensor: dict) -> tuple[bool, int | None]:
+    """Return online status using only last_heartbeat and timeout (ignores freeze)."""
+    last_heartbeat = sensor.get("last_heartbeat")
+    if not last_heartbeat:
+        return False, None
+    age_seconds = max(0, int((datetime.now() - last_heartbeat).total_seconds()))
+    return age_seconds < int(CFG.sensor_timeout), age_seconds
+
+
 def _filter_places_by_query(
     places: list[dict],
     query: str,
@@ -293,6 +321,93 @@ async def sensors_info_handler(request: web.Request) -> web.Response:
         ],
         "total": len(sensors),
     })
+
+
+def _validate_public_sensor_api_key(request: web.Request) -> tuple[bool, web.Response | None]:
+    """Validate read-only public sensor API key."""
+    configured_key = str(CFG.sensor_public_api_key or "").strip()
+    if not configured_key:
+        return False, web.json_response(
+            {"status": "error", "message": "Public sensor API key is not configured"},
+            status=503,
+        )
+
+    api_key = _extract_api_key_from_request(request)
+    if not api_key or api_key != configured_key:
+        return False, web.json_response(
+            {"status": "error", "message": "Unauthorized"},
+            status=401,
+        )
+
+    return True, None
+
+
+async def public_sensors_status_handler(request: web.Request) -> web.Response:
+    """Read-only status of all active sensors (freeze-independent)."""
+    ok, error = _validate_public_sensor_api_key(request)
+    if not ok:
+        return error
+
+    from database import get_all_active_sensors
+
+    sensors = await get_all_active_sensors()
+    payload = []
+    for sensor in sensors:
+        is_up, age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
+        payload.append(
+            {
+                "sensor_uuid": sensor["uuid"],
+                "building_id": sensor["building_id"],
+                "section_id": sensor.get("section_id"),
+                "is_up": bool(is_up),
+                "age_seconds": age_seconds,
+                "last_heartbeat": sensor["last_heartbeat"].isoformat() if sensor.get("last_heartbeat") else None,
+            }
+        )
+
+    return web.json_response(
+        {
+            "status": "ok",
+            "timeout_seconds": int(CFG.sensor_timeout),
+            "total": len(payload),
+            "sensors": payload,
+        }
+    )
+
+
+async def public_sensor_status_handler(request: web.Request) -> web.Response:
+    """Read-only status of a single sensor by UUID (freeze-independent)."""
+    ok, error = _validate_public_sensor_api_key(request)
+    if not ok:
+        return error
+
+    sensor_uuid = str(request.match_info.get("sensor_uuid") or "").strip()
+    if not sensor_uuid:
+        return web.json_response(
+            {"status": "error", "message": "sensor_uuid is required"},
+            status=400,
+        )
+
+    sensor = await get_sensor_by_uuid(sensor_uuid)
+    if not sensor:
+        return web.json_response(
+            {"status": "error", "message": "Sensor not found"},
+            status=404,
+        )
+
+    is_up, age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
+    return web.json_response(
+        {
+            "status": "ok",
+            "sensor_uuid": sensor["uuid"],
+            "building_id": sensor["building_id"],
+            "section_id": sensor.get("section_id"),
+            "is_up": bool(is_up),
+            "age_seconds": age_seconds,
+            "last_heartbeat": sensor["last_heartbeat"].isoformat() if sensor.get("last_heartbeat") else None,
+            "timeout_seconds": int(CFG.sensor_timeout),
+        }
+    )
 
 
 async def yasno_outages_handler(request: web.Request) -> web.Response:
@@ -876,6 +991,8 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/v1/heartbeat", heartbeat_handler)
     app.router.add_get("/api/v1/health", health_handler)
     app.router.add_get("/api/v1/sensors", sensors_info_handler)
+    app.router.add_get("/api/v1/public/sensors/status", public_sensors_status_handler)
+    app.router.add_get("/api/v1/public/sensors/{sensor_uuid}/status", public_sensor_status_handler)
     app.router.add_get("/api/v1/yasno/outages", yasno_outages_handler)
 
     # Web App API

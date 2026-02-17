@@ -54,6 +54,7 @@ class Config:
     # API сервер для ESP32 сенсорів
     api_port: int  # Порт для HTTP API сервера
     sensor_api_key: str  # API ключ для сенсорів
+    sensor_public_api_key: str  # API ключ для read-only публічних ендпоінтів статусу сенсорів
     sensor_timeout: int  # Таймаут в секундах для визначення відключення
     # Sensor aliases: treat heartbeat from one (building, section) as present for others.
     # Mapping: (src_building_id, src_section_id) -> [(dst_building_id, dst_section_id), ...]
@@ -212,6 +213,7 @@ CFG = Config(
     # API сервер
     api_port=int(os.getenv("API_PORT", "8080")),
     sensor_api_key=os.getenv("SENSOR_API_KEY", "").strip().strip('"').strip("'"),
+    sensor_public_api_key=os.getenv("SENSOR_PUBLIC_API_KEY", "").strip().strip('"').strip("'"),
     sensor_timeout=int(os.getenv("SENSOR_TIMEOUT_SEC", "150")),
     sensor_aliases=parse_sensor_aliases_from_env(),
     web_app_enabled=parse_bool(os.getenv("WEB_APP", "0")),
