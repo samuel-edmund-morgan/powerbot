@@ -200,7 +200,7 @@ SENSOR_PUBLIC_API_KEY="<окремий read-only ключ>"
 
 Ендпоінти:
 - `GET /api/v1/public/sensors/status` — статус усіх активних сенсорів.
-- `GET /api/v1/public/sensors/{sensor_uuid}/status` — статус одного сенсора.
+- `GET /api/v1/public/sensors/{sensor_id}/status` — статус одного сенсора за числовим ID.
 
 Авторизація (будь-який один спосіб):
 - заголовок `X-API-Key: <SENSOR_PUBLIC_API_KEY>` (рекомендовано)
@@ -213,8 +213,12 @@ curl -s -H "X-API-Key: <SENSOR_PUBLIC_API_KEY>" \
   "http://sensors-new-england.morgan-dev.com:18081/api/v1/public/sensors/status"
 
 curl -s -H "X-API-Key: <SENSOR_PUBLIC_API_KEY>" \
-  "http://sensors-new-england.morgan-dev.com:18081/api/v1/public/sensors/esp32-newcastle-001/status"
+  "http://sensors-new-england.morgan-dev.com:18081/api/v1/public/sensors/1/status"
 ```
+
+Формат відповіді:
+- `GET /public/sensors/status` → `{"sensors":[{"id":1,"is_up":true}, ...]}`
+- `GET /public/sensors/{sensor_id}/status` → `{"id":1,"is_up":true}`
 
 Важливо: ці ендпоінти свідомо ігнорують `freeze` (заморозку сенсора в адмінці) і рахують `is_up` тільки за `last_heartbeat` та `SENSOR_TIMEOUT_SEC`.
 

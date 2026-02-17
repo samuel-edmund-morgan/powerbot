@@ -29,6 +29,7 @@ from config import CFG
 from yasno import get_planned_outages, get_building_schedule_text
 from database import (
     get_sensor_by_uuid,
+    get_sensor_by_id,
     upsert_sensor_heartbeat,
     get_building_by_id,
     add_subscriber,
@@ -353,61 +354,54 @@ async def public_sensors_status_handler(request: web.Request) -> web.Response:
     sensors = await get_all_active_sensors()
     payload = []
     for sensor in sensors:
-        is_up, age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
+        is_up, _age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
+        sensor_id = sensor.get("id")
+        if sensor_id is None:
+            continue
         payload.append(
             {
-                "sensor_uuid": sensor["uuid"],
-                "building_id": sensor["building_id"],
-                "section_id": sensor.get("section_id"),
+                "id": int(sensor_id),
                 "is_up": bool(is_up),
-                "age_seconds": age_seconds,
-                "last_heartbeat": sensor["last_heartbeat"].isoformat() if sensor.get("last_heartbeat") else None,
             }
         )
 
-    return web.json_response(
-        {
-            "status": "ok",
-            "timeout_seconds": int(CFG.sensor_timeout),
-            "total": len(payload),
-            "sensors": payload,
-        }
-    )
+    return web.json_response({"sensors": payload})
 
 
 async def public_sensor_status_handler(request: web.Request) -> web.Response:
-    """Read-only status of a single sensor by UUID (freeze-independent)."""
+    """Read-only status of a single sensor by numeric ID (freeze-independent)."""
     ok, error = _validate_public_sensor_api_key(request)
     if not ok:
         return error
 
-    sensor_uuid = str(request.match_info.get("sensor_uuid") or "").strip()
-    if not sensor_uuid:
+    sensor_id_raw = str(request.match_info.get("sensor_id") or "").strip()
+    if not sensor_id_raw:
         return web.json_response(
-            {"status": "error", "message": "sensor_uuid is required"},
+            {"status": "error", "message": "sensor_id is required"},
+            status=400,
+        )
+    try:
+        sensor_id = int(sensor_id_raw)
+    except ValueError:
+        return web.json_response(
+            {"status": "error", "message": "sensor_id must be a positive integer"},
+            status=400,
+        )
+    if sensor_id <= 0:
+        return web.json_response(
+            {"status": "error", "message": "sensor_id must be a positive integer"},
             status=400,
         )
 
-    sensor = await get_sensor_by_uuid(sensor_uuid)
+    sensor = await get_sensor_by_id(sensor_id)
     if not sensor:
         return web.json_response(
             {"status": "error", "message": "Sensor not found"},
             status=404,
         )
 
-    is_up, age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
-    return web.json_response(
-        {
-            "status": "ok",
-            "sensor_uuid": sensor["uuid"],
-            "building_id": sensor["building_id"],
-            "section_id": sensor.get("section_id"),
-            "is_up": bool(is_up),
-            "age_seconds": age_seconds,
-            "last_heartbeat": sensor["last_heartbeat"].isoformat() if sensor.get("last_heartbeat") else None,
-            "timeout_seconds": int(CFG.sensor_timeout),
-        }
-    )
+    is_up, _age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
+    return web.json_response({"id": int(sensor["id"]), "is_up": bool(is_up)})
 
 
 async def yasno_outages_handler(request: web.Request) -> web.Response:
@@ -992,7 +986,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/v1/health", health_handler)
     app.router.add_get("/api/v1/sensors", sensors_info_handler)
     app.router.add_get("/api/v1/public/sensors/status", public_sensors_status_handler)
-    app.router.add_get("/api/v1/public/sensors/{sensor_uuid}/status", public_sensor_status_handler)
+    app.router.add_get("/api/v1/public/sensors/{sensor_id:\\d+}/status", public_sensor_status_handler)
     app.router.add_get("/api/v1/yasno/outages", yasno_outages_handler)
 
     # Web App API
