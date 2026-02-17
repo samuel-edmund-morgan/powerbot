@@ -99,6 +99,22 @@ CREATE TABLE IF NOT EXISTS business_subscriptions (
     FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
 );
 
+-- Історія paid-періодів підписок (для прозорого аудиту та справедливого purge лайків при downgrade)
+CREATE TABLE IF NOT EXISTS business_subscription_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    tier TEXT NOT NULL,                      -- light/pro/partner
+    started_at TEXT NOT NULL,                -- Початок paid-періоду (ISO 8601)
+    paid_until TEXT NOT NULL,                -- Оплачено до (ISO 8601)
+    source TEXT DEFAULT NULL,                -- Джерело активації: payment/admin/manual
+    created_at TEXT NOT NULL,                -- Час створення запису (ISO 8601)
+    updated_at TEXT NOT NULL,                -- Час останнього оновлення (ISO 8601)
+    closed_at TEXT DEFAULT NULL,             -- Коли період закрито (ISO 8601)
+    close_reason TEXT DEFAULT NULL,          -- refund/manual/admin/maintenance/...
+    purge_processed_at TEXT DEFAULT NULL,    -- Коли застосовано purge лайків за цей період
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+
 -- Аудит чутливих бізнес-змін
 CREATE TABLE IF NOT EXISTS business_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,6 +338,10 @@ CREATE INDEX IF NOT EXISTS idx_business_owners_place_status
 
 CREATE INDEX IF NOT EXISTS idx_business_subscriptions_status_expires
     ON business_subscriptions (status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_business_sub_periods_place_started
+    ON business_subscription_periods (place_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_business_sub_periods_place_purge
+    ON business_subscription_periods (place_id, purge_processed_at);
 
 CREATE INDEX IF NOT EXISTS idx_business_audit_place_created
     ON business_audit_log (place_id, created_at);

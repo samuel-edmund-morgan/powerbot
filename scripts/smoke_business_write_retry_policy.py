@@ -43,6 +43,7 @@ ALLOWED_DIRECT_DML_FUNCS = {
     "rotate_active_claim_tokens_bulk",
     "delete_place_draft",
     "write_audit_logs_bulk",
+    "purge_paid_period_likes",
 }
 
 DEF_RE = re.compile(r"^\s*async\s+def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")

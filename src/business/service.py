@@ -310,19 +310,11 @@ class BusinessCabinetService:
             )
         elif normalized_event == "refund":
             before = await self.repository.ensure_subscription(int(place_id))
-            subscription = await self.repository.update_subscription(
+            subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
                 place_id=int(place_id),
-                tier="free",
-                status="inactive",
-                starts_at=None,
-                expires_at=None,
-            )
-            await self.repository.update_place_business_flags(
-                int(place_id),
-                business_enabled=1,
-                is_verified=0,
-                verified_tier=None,
-                verified_until=None,
+                reason="refund",
+                fallback_starts_at=before.get("starts_at"),
+                fallback_paid_until=before.get("expires_at"),
             )
             refund_payload: dict[str, Any] = {
                 "provider": str(provider),
@@ -343,6 +335,9 @@ class BusinessCabinetService:
                     "starts_at": subscription.get("starts_at"),
                     "expires_at": subscription.get("expires_at"),
                 },
+                "downgraded_at": downgraded_at,
+                "likes_purged": int(purge_stats.get("removed_likes") or 0),
+                "purge_windows": int(purge_stats.get("windows_used") or 0),
             }
             if audit_extra:
                 refund_payload.update(audit_extra)
@@ -792,19 +787,11 @@ class BusinessCabinetService:
 
                 grace_deadline = expires_at_dt + timedelta(days=safe_grace_days)
                 if status == "past_due" and grace_deadline <= now:
-                    await self.repository.update_subscription(
+                    subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
                         place_id=place_id,
-                        tier="free",
-                        status="inactive",
-                        starts_at=None,
-                        expires_at=None,
-                    )
-                    await self.repository.update_place_business_flags(
-                        place_id,
-                        business_enabled=1,
-                        is_verified=0,
-                        verified_tier=None,
-                        verified_until=None,
+                        reason="maintenance_past_due_to_free",
+                        fallback_starts_at=row.get("starts_at"),
+                        fallback_paid_until=expires_at_raw,
                     )
                     await self.repository.write_audit_log(
                         place_id=place_id,
@@ -815,6 +802,15 @@ class BusinessCabinetService:
                                 "previous_tier": tier,
                                 "previous_expires_at": expires_at_raw,
                                 "grace_days": safe_grace_days,
+                                "after_subscription": {
+                                    "tier": str(subscription.get("tier") or ""),
+                                    "status": str(subscription.get("status") or ""),
+                                    "starts_at": subscription.get("starts_at"),
+                                    "expires_at": subscription.get("expires_at"),
+                                },
+                                "downgraded_at": downgraded_at,
+                                "likes_purged": int(purge_stats.get("removed_likes") or 0),
+                                "purge_windows": int(purge_stats.get("windows_used") or 0),
                             }
                         ),
                     )
@@ -1357,6 +1353,7 @@ class BusinessCabinetService:
             is_verified = 0
             verified_tier = None
             verified_until = None
+            before = await self.repository.ensure_subscription(int(place_id))
         else:
             sub_status = "active"
             starts_at = now.isoformat()
@@ -1365,20 +1362,37 @@ class BusinessCabinetService:
             verified_tier = normalized_tier
             verified_until = expires_at
 
-        subscription = await self.repository.update_subscription(
-            place_id=int(place_id),
-            tier=normalized_tier,
-            status=sub_status,
-            starts_at=starts_at,
-            expires_at=expires_at,
-        )
-        await self.repository.update_place_business_flags(
-            int(place_id),
-            business_enabled=1,
-            is_verified=is_verified,
-            verified_tier=verified_tier,
-            verified_until=verified_until,
-        )
+        if normalized_tier == "free":
+            subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
+                place_id=int(place_id),
+                reason="admin_downgrade_free",
+                fallback_starts_at=before.get("starts_at"),
+                fallback_paid_until=before.get("expires_at"),
+            )
+        else:
+            subscription = await self.repository.update_subscription(
+                place_id=int(place_id),
+                tier=normalized_tier,
+                status=sub_status,
+                starts_at=starts_at,
+                expires_at=expires_at,
+            )
+            await self.repository.update_place_business_flags(
+                int(place_id),
+                business_enabled=1,
+                is_verified=is_verified,
+                verified_tier=verified_tier,
+                verified_until=verified_until,
+            )
+            await self.repository.create_subscription_period(
+                place_id=int(place_id),
+                tier=normalized_tier,
+                started_at=str(starts_at),
+                paid_until=str(expires_at),
+                source="admin",
+            )
+            purge_stats = {"removed_likes": 0, "periods_marked": 0, "windows_used": 0}
+            downgraded_at = None
         await self.repository.write_audit_log(
             place_id=int(place_id),
             actor_tg_user_id=int(admin_tg_user_id),
@@ -1390,6 +1404,9 @@ class BusinessCabinetService:
                     "months": safe_months,
                     "starts_at": starts_at,
                     "expires_at": expires_at,
+                    "downgraded_at": downgraded_at,
+                    "likes_purged": int(purge_stats.get("removed_likes") or 0),
+                    "purge_windows": int(purge_stats.get("windows_used") or 0),
                 }
             ),
         )
@@ -1628,6 +1645,14 @@ class BusinessCabinetService:
             verified_tier=normalized_tier,
             verified_until=effective_expires,
         )
+        activation_source = str((audit_extra or {}).get("source") or "activation").strip() or "activation"
+        await self.repository.create_subscription_period(
+            place_id=int(place_id),
+            tier=normalized_tier,
+            started_at=starts_at,
+            paid_until=effective_expires,
+            source=activation_source,
+        )
         payload: dict[str, Any] = {
             "tier": normalized_tier,
             "status": "active",
@@ -1644,6 +1669,38 @@ class BusinessCabinetService:
         )
         return subscription
 
+    async def _downgrade_to_free_and_purge_paid_likes(
+        self,
+        *,
+        place_id: int,
+        reason: str,
+        fallback_starts_at: str | None,
+        fallback_paid_until: str | None,
+    ) -> tuple[dict[str, Any], dict[str, int], str]:
+        now_iso = _utc_now().isoformat()
+        subscription = await self.repository.update_subscription(
+            place_id=int(place_id),
+            tier="free",
+            status="inactive",
+            starts_at=None,
+            expires_at=None,
+        )
+        await self.repository.update_place_business_flags(
+            int(place_id),
+            business_enabled=1,
+            is_verified=0,
+            verified_tier=None,
+            verified_until=None,
+        )
+        purge_stats = await self.repository.purge_paid_period_likes(
+            place_id=int(place_id),
+            effective_at=now_iso,
+            reason=str(reason or "downgrade_to_free"),
+            fallback_starts_at=fallback_starts_at,
+            fallback_paid_until=fallback_paid_until,
+        )
+        return subscription, purge_stats, now_iso
+
     async def change_subscription_tier(
         self,
         tg_user_id: int,
@@ -1659,26 +1716,15 @@ class BusinessCabinetService:
             raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
 
         if normalized_tier == "free":
-            now = _utc_now()
+            before = await self.repository.ensure_subscription(int(place_id))
             sub_status = "inactive"
             starts_at = None
             expires_at = None
-            is_verified = 0
-            verified_tier = None
-            verified_until = None
-            subscription = await self.repository.update_subscription(
+            subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
                 place_id=place_id,
-                tier=normalized_tier,
-                status=sub_status,
-                starts_at=starts_at,
-                expires_at=expires_at,
-            )
-            await self.repository.update_place_business_flags(
-                place_id,
-                business_enabled=1,
-                is_verified=is_verified,
-                verified_tier=verified_tier,
-                verified_until=verified_until,
+                reason="owner_downgrade_free",
+                fallback_starts_at=before.get("starts_at"),
+                fallback_paid_until=before.get("expires_at"),
             )
             await self.repository.write_audit_log(
                 place_id=place_id,
@@ -1686,10 +1732,19 @@ class BusinessCabinetService:
                 action="subscription_tier_changed",
                 payload_json=_to_json(
                     {
+                        "before_subscription": {
+                            "tier": str(before.get("tier") or ""),
+                            "status": str(before.get("status") or ""),
+                            "starts_at": before.get("starts_at"),
+                            "expires_at": before.get("expires_at"),
+                        },
                         "tier": normalized_tier,
                         "status": sub_status,
                         "starts_at": starts_at,
                         "expires_at": expires_at,
+                        "downgraded_at": downgraded_at,
+                        "likes_purged": int(purge_stats.get("removed_likes") or 0),
+                        "purge_windows": int(purge_stats.get("windows_used") or 0),
                     }
                 ),
             )

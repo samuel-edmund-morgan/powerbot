@@ -63,6 +63,7 @@ USER_DATA_TABLES = {
     "yasno_schedule_state_v2",
     "business_owners",
     "business_subscriptions",
+    "business_subscription_periods",
     "business_audit_log",
     "business_payment_events",
     "business_claim_tokens",
