@@ -220,6 +220,8 @@ curl -s -H "X-API-Key: <SENSOR_PUBLIC_API_KEY>" \
 - `GET /public/sensors/status` → `{"sensors":[{"id":1,"is_up":true}, ...]}`
 - `GET /public/sensors/{sensor_id}/status` → `{"id":1,"is_up":true}`
 
+Примітка: `id` — це стабільний публічний numeric ID сенсора (окрема таблиця мапінгу), а не `uuid` і не SQLite `rowid`.
+
 Важливо: ці ендпоінти свідомо ігнорують `freeze` (заморозку сенсора в адмінці) і рахують `is_up` тільки за `last_heartbeat` та `SENSOR_TIMEOUT_SEC`.
 
 ## 6) Business Mode: ізоляція та перемикання
