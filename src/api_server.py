@@ -184,28 +184,42 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
             status=401
         )
     
-    # Валідація building_id
+    # Валідація building_id з payload (може бути нормалізований пізніше по uuid).
     building_id = data.get("building_id")
     if not isinstance(building_id, int):
         return web.json_response(
             {"status": "error", "message": "building_id must be an integer"},
             status=400
         )
-    
-    # Перевіряємо що будинок існує
-    building = get_building_by_id(building_id)
-    if not building:
-        return web.json_response(
-            {"status": "error", "message": f"Building {building_id} not found"},
-            status=404
-        )
-    
+
     # Валідація sensor_uuid
     sensor_uuid = data.get("sensor_uuid")
     if not sensor_uuid or not isinstance(sensor_uuid, str):
         return web.json_response(
             {"status": "error", "message": "sensor_uuid is required and must be a string"},
             status=400
+        )
+    sensor_uuid = sensor_uuid.strip()
+    sensor_uuid_key = sensor_uuid.lower()
+
+    # Канонічне зіставлення uuid -> building_id.
+    # Це захищає від розбіжності "прошивочного ID" vs канонічного ID будинку в БД.
+    canonical_building_id = CFG.sensor_uuid_building_map.get(sensor_uuid_key)
+    if canonical_building_id is not None and canonical_building_id != building_id:
+        logger.warning(
+            "Sensor %s reported building_id=%s; canonical mapping applied -> %s",
+            sensor_uuid,
+            building_id,
+            canonical_building_id,
+        )
+        building_id = canonical_building_id
+
+    # Перевіряємо що будинок існує (вже після canonical mapping).
+    building = get_building_by_id(building_id)
+    if not building:
+        return web.json_response(
+            {"status": "error", "message": f"Building {building_id} not found"},
+            status=404
         )
 
     # Валідація section_id (1..N). Для backward-compat дозволяємо відсутність (ставимо дефолт).
@@ -220,10 +234,29 @@ async def heartbeat_handler(request: web.Request) -> web.Response:
         )
     max_sections = get_building_section_count(building_id)
     if not isinstance(section_id, int) or not is_valid_section_for_building(building_id, section_id):
-        return web.json_response(
-            {"status": "error", "message": f"section_id must be integer 1..{max_sections}"},
-            status=400,
-        )
+        # Для відомих сенсорів з canonical mapping не роняємо heartbeat:
+        # якщо секція з payload невалідна для канонічного будинку — ставимо дефолтну секцію.
+        if sensor_uuid_key in CFG.sensor_uuid_building_map:
+            fallback_section_id = default_section_for_building(building_id)
+            logger.warning(
+                "Sensor %s reported invalid section_id=%s for building_id=%s; defaulting section_id=%s",
+                sensor_uuid,
+                section_id,
+                building_id,
+                fallback_section_id,
+            )
+            section_id = fallback_section_id
+            max_sections = get_building_section_count(building_id)
+            if not isinstance(section_id, int) or not is_valid_section_for_building(building_id, section_id):
+                return web.json_response(
+                    {"status": "error", "message": f"section_id must be integer 1..{max_sections}"},
+                    status=400,
+                )
+        else:
+            return web.json_response(
+                {"status": "error", "message": f"section_id must be integer 1..{max_sections}"},
+                status=400,
+            )
 
     sensor_name = data.get("name")
     if sensor_name is not None and not isinstance(sensor_name, str):

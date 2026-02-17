@@ -348,6 +348,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
 echo "Running public sensor API policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_public_sensor_api_policy.py"
 
+# Automated smoke: canonical sensor UUID -> building mapping (protects rollout sensors).
+echo "Running sensor UUID canonical mapping policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_sensor_uuid_canonical_mapping_policy.py"
+
 # Automated smoke: verify resident-bot isolation when BUSINESS_MODE=0.
 echo "Running business mode-off isolation smoke test in test container..."
 docker compose exec -T powerbot env BUSINESS_MODE=0 BUSINESS_BOT_API_KEY= python - < "${REPO_DIR}/scripts/smoke_business_mode_off.py"
