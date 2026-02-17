@@ -138,6 +138,38 @@ def _periods_state(db_path: Path, place_id: int) -> list[tuple]:
         conn.close()
 
 
+def _set_paid_window(db_path: Path, place_id: int, *, starts_at: str, paid_until: str, status: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        now_iso = _iso(datetime.now(timezone.utc))
+        conn.execute(
+            """
+            UPDATE business_subscriptions
+               SET tier = COALESCE(NULLIF(tier, ''), 'light'),
+                   status = ?,
+                   starts_at = ?,
+                   expires_at = ?,
+                   updated_at = ?
+             WHERE place_id = ?
+            """,
+            (str(status), str(starts_at), str(paid_until), now_iso, int(place_id)),
+        )
+        conn.execute(
+            """
+            UPDATE business_subscription_periods
+               SET started_at = ?,
+                   paid_until = ?,
+                   updated_at = ?
+             WHERE place_id = ?
+               AND purge_processed_at IS NULL
+            """,
+            (str(starts_at), str(paid_until), now_iso, int(place_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def _run_checks(db_path: Path, place_owner: int, place_admin: int, place_reconcile: int) -> None:
     import sys
 
@@ -155,13 +187,21 @@ async def _run_checks(db_path: Path, place_owner: int, place_admin: int, place_r
 
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
+    now = datetime.now(timezone.utc)
 
     # 1) Owner paid -> free
     await service.change_subscription_tier(OWNER_ID, int(place_owner), "light")
-    sub1 = await repo.ensure_subscription(int(place_owner))
-    start1 = datetime.fromisoformat(str(sub1["starts_at"]))
-    _insert_like(db_path, place_owner, 101, _iso(start1 - timedelta(hours=2)))  # keep
-    _insert_like(db_path, place_owner, 102, _iso(start1 + timedelta(hours=2)))  # purge
+    owner_start = now - timedelta(days=3)
+    owner_until = now + timedelta(days=3)
+    _set_paid_window(
+        db_path,
+        place_owner,
+        starts_at=_iso(owner_start),
+        paid_until=_iso(owner_until),
+        status="active",
+    )
+    _insert_like(db_path, place_owner, 101, _iso(owner_start - timedelta(hours=2)))  # keep
+    _insert_like(db_path, place_owner, 102, _iso(owner_start + timedelta(hours=2)))  # purge
 
     await service.change_subscription_tier(OWNER_ID, int(place_owner), "free")
     likes_owner = _list_like_chat_ids(db_path, place_owner)
@@ -172,10 +212,17 @@ async def _run_checks(db_path: Path, place_owner: int, place_admin: int, place_r
 
     # 2) Admin paid -> free
     await service.admin_set_subscription_tier(ADMIN_ID, place_id=int(place_admin), tier="pro", months=1)
-    sub2 = await repo.ensure_subscription(int(place_admin))
-    start2 = datetime.fromisoformat(str(sub2["starts_at"]))
-    _insert_like(db_path, place_admin, 201, _iso(start2 - timedelta(hours=2)))  # keep
-    _insert_like(db_path, place_admin, 202, _iso(start2 + timedelta(hours=2)))  # purge
+    admin_start = now - timedelta(days=2)
+    admin_until = now + timedelta(days=4)
+    _set_paid_window(
+        db_path,
+        place_admin,
+        starts_at=_iso(admin_start),
+        paid_until=_iso(admin_until),
+        status="active",
+    )
+    _insert_like(db_path, place_admin, 201, _iso(admin_start - timedelta(hours=2)))  # keep
+    _insert_like(db_path, place_admin, 202, _iso(admin_start + timedelta(hours=2)))  # purge
 
     await service.admin_set_subscription_tier(ADMIN_ID, place_id=int(place_admin), tier="free", months=1)
     likes_admin = _list_like_chat_ids(db_path, place_admin)
@@ -186,37 +233,18 @@ async def _run_checks(db_path: Path, place_owner: int, place_admin: int, place_r
 
     # 3) Maintenance past_due -> free
     await service.change_subscription_tier(OWNER_ID, int(place_reconcile), "light")
-    sub3 = await repo.ensure_subscription(int(place_reconcile))
-    start3 = datetime.fromisoformat(str(sub3["starts_at"]))
-    paid_until_old = datetime.now(timezone.utc) - timedelta(days=10)
-
-    # Force lifecycle state to past_due + expired grace.
-    await repo.update_subscription(
-        place_id=int(place_reconcile),
-        tier="light",
+    reconcile_start = now - timedelta(days=20)
+    reconcile_until = now - timedelta(days=10)
+    _set_paid_window(
+        db_path,
+        place_reconcile,
+        starts_at=_iso(reconcile_start),
+        paid_until=_iso(reconcile_until),
         status="past_due",
-        starts_at=sub3["starts_at"],
-        expires_at=_iso(paid_until_old),
     )
 
-    # Align period paid_until with forced historical expiry.
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            """
-            UPDATE business_subscription_periods
-               SET paid_until = ?, updated_at = ?
-             WHERE place_id = ?
-               AND purge_processed_at IS NULL
-            """,
-            (_iso(paid_until_old), _iso(datetime.now(timezone.utc)), int(place_reconcile)),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    _insert_like(db_path, place_reconcile, 301, _iso(start3 + timedelta(hours=1)))  # purge
-    _insert_like(db_path, place_reconcile, 302, _iso(paid_until_old + timedelta(hours=1)))  # keep
+    _insert_like(db_path, place_reconcile, 301, _iso(reconcile_start + timedelta(hours=1)))  # purge
+    _insert_like(db_path, place_reconcile, 302, _iso(reconcile_until + timedelta(hours=1)))  # keep
 
     result = await service.reconcile_subscription_states(grace_days=0)
     _assert(int(result.get("changed_past_due_to_free") or 0) >= 1, f"reconcile result mismatch: {result}")
