@@ -187,6 +187,10 @@ fi
 echo "Running sections migration/backfill smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sections.py"
 
+# Smoke: derived buildings.has_sensor/sensor_count must stay synced with active sensors.
+echo "Running buildings sensor-stats sync smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_buildings_sensor_stats_sync.py"
+
 # Automated smoke: place click stats (DB-backed views counters).
 echo "Running place click stats smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_place_click_stats.py"
