@@ -228,6 +228,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_a
 echo "Running business subscription lifecycle smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_subscription_lifecycle.py"
 
+# Automated smoke: downgrade paid->free must purge likes gained during paid windows.
+echo "Running business paid-like purge smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_paid_likes_purge.py"
+
 # Automated smoke: admin promo/subscription tier transitions + verified sync.
 echo "Running business admin subscription promo smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_admin_subscription_promo.py"

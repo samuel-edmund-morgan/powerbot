@@ -632,6 +632,22 @@ async def init_db():
             )"""
         )
         await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_subscription_periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                tier TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                paid_until TEXT NOT NULL,
+                source TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT DEFAULT NULL,
+                close_reason TEXT DEFAULT NULL,
+                purge_processed_at TEXT DEFAULT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
             """CREATE TABLE IF NOT EXISTS business_audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 place_id INTEGER NOT NULL,
@@ -689,6 +705,12 @@ async def init_db():
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_business_subscriptions_status_expires ON business_subscriptions (status, expires_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_sub_periods_place_started ON business_subscription_periods (place_id, started_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_sub_periods_place_purge ON business_subscription_periods (place_id, purge_processed_at)"
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_business_audit_place_created ON business_audit_log (place_id, created_at)"

@@ -28,6 +28,21 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_iso_datetime_utc(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 async def apply_sqlite_pragmas(db: aiosqlite.Connection) -> None:
     """Apply pragmatic SQLite settings for concurrent bot processes."""
     await db.execute("PRAGMA journal_mode=WAL;")
@@ -930,6 +945,183 @@ class BusinessRepository:
                 if not row:
                     raise RuntimeError("Failed to update subscription")
                 return dict(row)
+
+    async def create_subscription_period(
+        self,
+        *,
+        place_id: int,
+        tier: str,
+        started_at: str,
+        paid_until: str,
+        source: str | None = None,
+    ) -> None:
+        created_at = utc_now_iso()
+        async with open_business_db() as db:
+            await execute_write_with_retry(
+                db,
+                """
+                INSERT INTO business_subscription_periods(
+                    place_id, tier, started_at, paid_until, source,
+                    created_at, updated_at, closed_at, close_reason, purge_processed_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                """,
+                (
+                    int(place_id),
+                    str(tier).strip().lower(),
+                    str(started_at),
+                    str(paid_until),
+                    str(source).strip() if source else None,
+                    created_at,
+                    created_at,
+                ),
+            )
+
+    async def purge_paid_period_likes(
+        self,
+        *,
+        place_id: int,
+        effective_at: str,
+        reason: str,
+        fallback_starts_at: str | None = None,
+        fallback_paid_until: str | None = None,
+    ) -> dict[str, int]:
+        """Delete likes gained during paid periods and mark those periods as purged.
+
+        Returns:
+            {
+                "removed_likes": int,
+                "periods_marked": int,
+                "windows_used": int,
+            }
+        """
+        pid = int(place_id)
+        effective_iso = str(effective_at or "").strip() or utc_now_iso()
+        effective_dt = _parse_iso_datetime_utc(effective_iso) or datetime.now(timezone.utc)
+        close_reason = str(reason or "").strip() or "downgrade_to_free"
+
+        last_error: Exception | None = None
+        for attempt in range(WRITE_RETRY_ATTEMPTS):
+            try:
+                async with open_business_db() as db:
+                    await db.execute("BEGIN")
+
+                    async with db.execute(
+                        """
+                        SELECT id, started_at, paid_until
+                          FROM business_subscription_periods
+                         WHERE place_id = ?
+                           AND purge_processed_at IS NULL
+                         ORDER BY started_at ASC, id ASC
+                        """,
+                        (pid,),
+                    ) as cur:
+                        period_rows = [dict(row) for row in await cur.fetchall()]
+
+                    windows: list[tuple[datetime, datetime]] = []
+                    period_ids: list[int] = []
+                    for row in period_rows:
+                        period_id = int(row.get("id") or 0)
+                        if period_id <= 0:
+                            continue
+                        period_ids.append(period_id)
+                        start_dt = _parse_iso_datetime_utc(str(row.get("started_at") or ""))
+                        paid_until_dt = _parse_iso_datetime_utc(str(row.get("paid_until") or ""))
+                        if not start_dt or not paid_until_dt:
+                            continue
+                        window_end = min(effective_dt, paid_until_dt)
+                        if window_end >= start_dt:
+                            windows.append((start_dt, window_end))
+
+                    # Backward-compat fallback for already-running paid subscriptions
+                    # created before business_subscription_periods was introduced.
+                    if not period_rows:
+                        fallback_start_dt = _parse_iso_datetime_utc(str(fallback_starts_at or ""))
+                        fallback_until_dt = _parse_iso_datetime_utc(str(fallback_paid_until or ""))
+                        if fallback_start_dt and fallback_until_dt:
+                            window_end = min(effective_dt, fallback_until_dt)
+                            if window_end >= fallback_start_dt:
+                                windows.append((fallback_start_dt, window_end))
+
+                    async with db.execute(
+                        "SELECT chat_id, liked_at FROM place_likes WHERE place_id = ?",
+                        (pid,),
+                    ) as cur:
+                        likes_rows = [dict(row) for row in await cur.fetchall()]
+
+                    delete_chat_ids: set[int] = set()
+                    for row in likes_rows:
+                        liked_at_dt = _parse_iso_datetime_utc(str(row.get("liked_at") or ""))
+                        if not liked_at_dt:
+                            continue
+                        for start_dt, end_dt in windows:
+                            if start_dt <= liked_at_dt <= end_dt:
+                                delete_chat_ids.add(int(row.get("chat_id") or 0))
+                                break
+
+                    removed_likes = 0
+                    if delete_chat_ids:
+                        placeholders = ",".join("?" for _ in delete_chat_ids)
+                        params = [pid, *sorted(delete_chat_ids)]
+                        cursor = await db.execute(
+                            f"DELETE FROM place_likes WHERE place_id = ? AND chat_id IN ({placeholders})",
+                            tuple(params),
+                        )
+                        removed_likes = int(cursor.rowcount or 0)
+
+                    periods_marked = 0
+                    if period_ids:
+                        marks_placeholders = ",".join("?" for _ in period_ids)
+                        mark_params = [
+                            effective_iso,
+                            close_reason,
+                            effective_iso,
+                            utc_now_iso(),
+                            *period_ids,
+                        ]
+                        cursor = await db.execute(
+                            f"""
+                            UPDATE business_subscription_periods
+                               SET closed_at = COALESCE(closed_at, ?),
+                                   close_reason = COALESCE(close_reason, ?),
+                                   purge_processed_at = ?,
+                                   updated_at = ?
+                             WHERE id IN ({marks_placeholders})
+                            """,
+                            tuple(mark_params),
+                        )
+                        periods_marked = int(cursor.rowcount or 0)
+
+                    await db.commit()
+                    return {
+                        "removed_likes": int(removed_likes),
+                        "periods_marked": int(periods_marked),
+                        "windows_used": int(len(windows)),
+                    }
+            except aiosqlite.OperationalError as error:
+                if "database is locked" not in str(error).lower():
+                    raise
+                last_error = error
+                delay = WRITE_RETRY_BASE_DELAY_SEC * (2**attempt)
+                logger.warning(
+                    "SQLite locked; retry %s/%s in %.2fs (purge_paid_period_likes place_id=%s)",
+                    attempt + 1,
+                    WRITE_RETRY_ATTEMPTS,
+                    delay,
+                    pid,
+                )
+                log_sqlite_lock_event(
+                    where="business.purge_paid_period_likes",
+                    exc=error,
+                    attempt=attempt + 1,
+                    retries=WRITE_RETRY_ATTEMPTS,
+                    delay_sec=delay,
+                    extra={"op": "delete/update", "table": "place_likes,business_subscription_periods"},
+                )
+                await asyncio.sleep(delay)
+                continue
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Unexpected purge retry loop state")
 
     async def update_place_business_flags(
         self,
