@@ -317,9 +317,6 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="🔔 Сповіщення та тихі години", callback_data="notifications_menu"),
         ],
-        [
-            InlineKeyboardButton(text="☕ Подякувати розробнику", callback_data="donate"),
-        ],
     ])
 
 
