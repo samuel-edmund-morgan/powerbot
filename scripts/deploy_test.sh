@@ -432,6 +432,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_subscription_maintenance_policy.py"
 echo "Running business mode UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
 
+# Automated smoke: search-menu routing (avoid generic fallback shadowing search text).
+echo "Running search menu routing policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_search_menu_routing_policy.py"
+
 # Automated smoke: public sensor API key + freeze-independent status policy.
 echo "Running public sensor API policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_public_sensor_api_policy.py"

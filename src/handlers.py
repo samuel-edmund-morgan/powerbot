@@ -1585,7 +1585,7 @@ async def reply_keyboard_fallback(message: Message):
         return
 
 
-@router.message(StateFilter(None), F.text)
+@router.message(StateFilter(None), F.text, lambda message: message.chat.id not in search_waiting_users)
 async def reply_keyboard_regex_fallback(message: Message):
     """Regex-фолбек для дуже старих або варіативних reply-кнопок."""
     if not CFG.web_app_enabled:
