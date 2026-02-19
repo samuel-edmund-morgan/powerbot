@@ -336,6 +336,19 @@ async def init_db():
             )"""
         )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_place_views_daily_day ON place_views_daily (day)")
+        # Кліки по інтерактивним елементам картки закладу (агрегація по днях + action).
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS place_clicks_daily (
+                place_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                action TEXT NOT NULL,
+                cnt INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (place_id, day, action),
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_day ON place_clicks_daily (day)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_action ON place_clicks_daily (action)")
         # Репорти мешканців про неточності в картках закладів (модерація в adminbot).
         await db.execute(
             """CREATE TABLE IF NOT EXISTS place_reports (
@@ -2127,6 +2140,36 @@ async def record_place_view(place_id: int) -> None:
         await _with_sqlite_retry(_op)
     except Exception:
         logger.exception("Failed to record place view place_id=%s", place_id)
+
+
+async def record_place_click(place_id: int, action: str) -> None:
+    """Записати клік у картці закладу (агрегація по днях + action)."""
+    normalized_action = str(action or "").strip().lower()
+    if not normalized_action:
+        return
+    if len(normalized_action) > 32:
+        normalized_action = normalized_action[:32]
+    # Keep action names compact/safe: letters, digits, underscore.
+    normalized_action = re.sub(r"[^a-z0-9_]+", "_", normalized_action).strip("_")
+    if not normalized_action:
+        return
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                """
+                INSERT INTO place_clicks_daily(place_id, day, action, cnt)
+                VALUES(?, date('now','localtime'), ?, 1)
+                ON CONFLICT(place_id, day, action) DO UPDATE SET cnt = cnt + 1
+                """,
+                (int(place_id), normalized_action),
+            )
+            await db.commit()
+
+    try:
+        await _with_sqlite_retry(_op)
+    except Exception:
+        logger.exception("Failed to record place click place_id=%s action=%s", place_id, normalized_action)
 
 
 # ============ Функції для репортів про заклади ============

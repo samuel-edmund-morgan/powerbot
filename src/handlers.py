@@ -2058,6 +2058,9 @@ def build_place_detail_keyboard(
     if top_row:
         # Keep at most 2 buttons in a row to avoid cramped UI.
         rows.append(top_row[:2])
+    promo_code = str(place_enriched.get("promo_code") or "").strip()
+    if business_enabled and place_enriched.get("is_verified") and promo_code:
+        rows.append([InlineKeyboardButton(text="🎟 Відкрити промокод", callback_data=f"pcoupon_{place_id}")])
     rows.append([like_btn])
     rows.append([InlineKeyboardButton(text="⚠️ Запропонувати правку", callback_data=f"plrep_{place_id}")])
     rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{service_id}")])
@@ -2314,6 +2317,32 @@ async def msg_place_report_non_text(message: Message) -> None:
     except Exception:
         pass
     await message.answer("📝 Надішліть текст правки або натисніть «Скасувати».")
+
+
+@router.callback_query(F.data.startswith("pcoupon_"))
+async def cb_place_coupon_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await callback.answer("❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    promo_code = str(place_enriched.get("promo_code") or "").strip()
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified") and promo_code):
+        await callback.answer("Промокод для цього закладу недоступний.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "coupon_open")
+    await callback.answer(f"🎟 Промокод: {promo_code}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("like_"))
