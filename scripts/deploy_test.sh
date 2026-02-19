@@ -195,6 +195,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_buildings_
 echo "Running place click stats smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_place_click_stats.py"
 
+# Automated smoke: place clicks analytics contract (daily actions + coupon_open).
+echo "Running place clicks analytics policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_place_clicks_policy.py"
+
 # Automated smoke: business mock payments state machine + idempotency.
 # Run inside container (all runtime deps are present there).
 echo "Running business payments smoke test in test container..."
