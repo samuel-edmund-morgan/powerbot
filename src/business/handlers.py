@@ -890,6 +890,25 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         f"• Усі кліки по кнопках: <b>{int(total_cta_clicks)}</b>\n"
         f"• CTR кнопок: <b>{ctr_pct}%</b>"
     )
+    if _has_active_premium_subscription(item):
+        try:
+            daily_rows = await cabinet_service.repository.get_place_activity_daily(place_id, days=7)
+        except Exception:
+            logger.exception("Failed to load place daily activity stats place_id=%s", place_id)
+            return text
+        if daily_rows:
+            day_lines: list[str] = []
+            for row in daily_rows:
+                raw_day = str(row.get("day") or "").strip()
+                try:
+                    dt = datetime.fromisoformat(raw_day)
+                    day_label = dt.strftime("%d.%m")
+                except Exception:
+                    day_label = raw_day
+                day_lines.append(
+                    f"• {day_label}: 👁 {int(row.get('views') or 0)} | 🎯 {int(row.get('clicks') or 0)} | CTR {float(row.get('ctr') or 0):.1f}%"
+                )
+            text += "\n\n📈 По днях (7 днів)\n" + "\n".join(day_lines)
     return text
 
 

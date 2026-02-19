@@ -348,6 +348,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
 echo "Running business card activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
 
+# Automated smoke: premium daily activity stats block (7-day timeline).
+echo "Running business daily activity stats policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_daily_stats_policy.py"
+
 # Automated smoke: businessbot QR deep-link policy for Light+ owners.
 echo "Running business QR deep-link policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
