@@ -1914,18 +1914,41 @@ async def cb_places_category(callback: CallbackQuery):
     has_verified = bool(business_enabled and any(bool(item.get("is_verified")) for item in places))
 
     if business_enabled and has_verified:
-        def _tier_rank(value: str | None) -> int:
-            tier = (value or "").strip().lower()
-            return {"partner": 0, "pro": 1, "light": 2}.get(tier, 3)
+        # Target catalog contract:
+        # partner block -> promo slot (single top PRO) -> verified by likes -> unverified.
+        verified_places = [item for item in places if item.get("is_verified")]
+        unverified_places = [item for item in places if not item.get("is_verified")]
 
-        places.sort(
-            key=lambda item: (
-                0 if item.get("is_verified") else 1,
-                _tier_rank(item.get("verified_tier")),
-                -(item.get("likes_count") or 0),
-                item.get("name") or "",
-            )
-        )
+        partner_places = [item for item in verified_places if str(item.get("verified_tier") or "").strip().lower() == "partner"]
+        pro_places = [item for item in verified_places if str(item.get("verified_tier") or "").strip().lower() == "pro"]
+        other_verified = [
+            item
+            for item in verified_places
+            if str(item.get("verified_tier") or "").strip().lower() not in {"partner", "pro"}
+        ]
+
+        partner_places.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
+        pro_places.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
+        other_verified.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
+        unverified_places.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
+
+        promo_slot = pro_places[0] if pro_places else None
+        promo_slot_id = int(promo_slot["id"]) if promo_slot else 0
+
+        verified_by_likes: list[dict] = []
+        for item in pro_places:
+            if int(item["id"]) == promo_slot_id:
+                continue
+            verified_by_likes.append(item)
+        verified_by_likes.extend(other_verified)
+        verified_by_likes.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
+
+        places = list(partner_places)
+        if promo_slot:
+            places.append(promo_slot)
+        places.extend(verified_by_likes)
+        places.extend(unverified_places)
+
         # У business-режимі медалі відображають місця в рейтингу (verified-first).
         for idx, item in enumerate(places[:3]):
             try:

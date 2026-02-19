@@ -3,7 +3,8 @@
 Static smoke-check for resident catalog ranking/markers policy.
 
 Policy:
-- business branch sorts by: verified -> tier(partner/pro/light) -> likes -> name
+- business branch builds explicit order:
+  partner block -> promo slot (single top PRO) -> verified-by-likes -> unverified.
 - UI uses tier markers: ⭐ partner, 🔝 promo(pro), ✅ verified(light+)
 """
 
@@ -30,11 +31,13 @@ def main() -> None:
 
     # Ranking contract.
     _must(text, 'if business_enabled and has_verified:', errors=errors)
-    _must(text, 'places.sort(', errors=errors)
-    _must(text, '0 if item.get("is_verified") else 1,', errors=errors)
-    _must(text, '_tier_rank(item.get("verified_tier"))', errors=errors)
-    _must(text, '-(item.get("likes_count") or 0),', errors=errors)
-    _must(text, 'return {"partner": 0, "pro": 1, "light": 2}.get(tier, 3)', errors=errors)
+    _must(text, "verified_places = [item for item in places if item.get(\"is_verified\")]", errors=errors)
+    _must(text, "unverified_places = [item for item in places if not item.get(\"is_verified\")]", errors=errors)
+    _must(text, "partner_places =", errors=errors)
+    _must(text, "pro_places =", errors=errors)
+    _must(text, "promo_slot = pro_places[0] if pro_places else None", errors=errors)
+    _must(text, "verified_by_likes.sort(", errors=errors)
+    _must(text, "places.extend(unverified_places)", errors=errors)
 
     # Marker contract.
     _must(text, 'verified_prefix = "⭐"', errors=errors)
@@ -50,4 +53,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
