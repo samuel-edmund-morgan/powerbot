@@ -352,6 +352,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_l
 echo "Running business UI copy hygiene smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
 
+# Automated smoke: owner tier-gating (locked labels + handler guards).
+echo "Running business owner tier-gating policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_owner_tier_gating_policy.py"
+
 # Automated smoke: business owner card activity stats block (views + coupon opens).
 echo "Running business card activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
