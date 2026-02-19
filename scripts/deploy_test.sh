@@ -316,6 +316,10 @@ python3 "${REPO_DIR}/scripts/smoke_admin_business_moderation_ui_policy.py"
 echo "Running business place-report policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_place_reports_policy.py"
 
+# Automated smoke: dynamic place-reports flow (create/order/resolve/admin-job payload).
+echo "Running business place-reports flow smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_place_reports_flow.py"
+
 # Automated smoke: reports queue priority (Premium/Partner first, then Light, then regular).
 echo "Running business reports priority policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_reports_priority_policy.py"
