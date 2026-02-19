@@ -18,7 +18,18 @@ import os
 
 
 def _setup_import_path() -> None:
-    for candidate in (Path.cwd() / "src", Path("/app/src")):
+    repo_src: Path | None = None
+    try:
+        repo_src = Path(__file__).resolve().parents[1] / "src"
+    except Exception:
+        repo_src = None
+
+    candidates: list[Path] = []
+    if repo_src is not None:
+        candidates.append(repo_src)
+    candidates.extend([Path.cwd() / "src", Path("/app/src")])
+
+    for candidate in candidates:
         if candidate.exists():
             sys.path.insert(0, str(candidate))
             return
