@@ -1913,6 +1913,7 @@ async def cb_places_category(callback: CallbackQuery):
     # Інакше медалі в категоріях з 0 лайків виглядають випадково і створюють UX-регресію.
     has_verified = bool(business_enabled and any(bool(item.get("is_verified")) for item in places))
 
+    promo_slot_id = 0
     if business_enabled and has_verified:
         # Target catalog contract:
         # partner block -> promo slot (single top PRO) -> verified by likes -> unverified.
@@ -1969,7 +1970,6 @@ async def cb_places_category(callback: CallbackQuery):
     # Показуємо кнопки з закладами
     buttons = []
     used_partner_style = False
-    used_pro_style = False
     for place in places:
         place_id = int(place["id"])
         medal_prefix = medal_map.get(place_id)
@@ -1978,7 +1978,7 @@ async def cb_places_category(callback: CallbackQuery):
             tier = (place.get("verified_tier") or "").strip().lower()
             if tier == "partner":
                 verified_prefix = "⭐"
-            elif tier == "pro":
+            elif int(place["id"]) == promo_slot_id:
                 verified_prefix = "🔝"
             else:
                 verified_prefix = "✅"
@@ -2005,9 +2005,8 @@ async def cb_places_category(callback: CallbackQuery):
             if tier == "partner" and not used_partner_style:
                 btn_style = STYLE_SUCCESS
                 used_partner_style = True
-            elif tier == "pro" and not used_pro_style:
+            elif int(place["id"]) == promo_slot_id:
                 btn_style = STYLE_PRIMARY
-                used_pro_style = True
 
         if btn_style:
             btn = ikb(text=label, callback_data=cb, style=btn_style)

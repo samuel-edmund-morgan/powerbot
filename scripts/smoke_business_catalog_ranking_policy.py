@@ -36,6 +36,7 @@ def main() -> None:
     _must(text, "partner_places =", errors=errors)
     _must(text, "pro_places =", errors=errors)
     _must(text, "promo_slot = pro_places[0] if pro_places else None", errors=errors)
+    _must(text, "promo_slot_id = int(promo_slot[\"id\"]) if promo_slot else 0", errors=errors)
     _must(text, "verified_by_likes.sort(", errors=errors)
     _must(text, "places.extend(unverified_places)", errors=errors)
 
@@ -43,6 +44,7 @@ def main() -> None:
     _must(text, 'verified_prefix = "⭐"', errors=errors)
     _must(text, 'verified_prefix = "🔝"', errors=errors)
     _must(text, 'verified_prefix = "✅"', errors=errors)
+    _must(text, 'elif int(place["id"]) == promo_slot_id:', errors=errors)
     _must(text, 'ranking_hint = "⭐ офіційний партнер • 🔝 промо • ✅ verified', errors=errors)
     _must(text, 'tier_badge = " • Офіційний партнер"', errors=errors)
 
