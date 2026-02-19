@@ -4,7 +4,8 @@ Smoke test: owner cancel flow keeps entitlement until expiry.
 
 Checks:
 - paid active -> cancel => status=canceled, paid tier preserved
-- owner can still edit while not expired
+- owner can still edit while not expired (basic + business profile + contact)
+- verified flags remain active during canceled paid window
 - immediate free downgrade is blocked while entitlement active
 - after expires_at, reconcile downgrades canceled -> free/inactive and disables verified
 
@@ -151,6 +152,37 @@ async def _run_checks(db_path: Path, place_id: int) -> None:
         "Updated while canceled and still active",
     )
     _assert("Updated while canceled" in str(updated.get("description") or ""), f"edit failed after cancel: {updated}")
+
+    # Business profile edits must also stay available while canceled but not expired.
+    updated_profile = await service.update_place_business_profile_field(
+        OWNER_ID,
+        int(place_id),
+        "opening_hours",
+        "09:00-21:00",
+    )
+    _assert(
+        "09:00-21:00" in str(updated_profile.get("opening_hours") or ""),
+        f"business profile edit failed after cancel: {updated_profile}",
+    )
+    updated_contact = await service.update_place_contact(
+        OWNER_ID,
+        place_id=int(place_id),
+        contact_type="chat",
+        contact_value="@cancel_place_chat",
+    )
+    _assert(
+        str(updated_contact.get("contact_type") or "") == "chat"
+        and str(updated_contact.get("contact_value") or "") == "@cancel_place_chat",
+        f"contact edit failed after cancel: {updated_contact}",
+    )
+
+    # Verified flags must remain active until expires_at.
+    place_during_canceled = await repo.get_place(int(place_id))
+    _assert(int(place_during_canceled.get("is_verified") or 0) == 1, f"verified unexpectedly off: {place_during_canceled}")
+    _assert(
+        str(place_during_canceled.get("verified_tier") or "").strip().lower() == "light",
+        f"verified tier mismatch while canceled: {place_during_canceled}",
+    )
 
     # Direct free downgrade must be blocked until paid period ends.
     try:
