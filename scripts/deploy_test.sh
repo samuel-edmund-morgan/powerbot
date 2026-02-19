@@ -344,6 +344,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
 echo "Running business card activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
 
+# Automated smoke: resident place-card entitlement keyboard (free vs verified CTAs).
+echo "Running business place-card entitlement smoke test..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_place_card_entitlement.py"
+
 # Automated smoke: businessbot single-message rendering policy.
 echo "Running business single-message policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_single_message_policy.py"
