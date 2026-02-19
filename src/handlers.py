@@ -1918,6 +1918,7 @@ async def cb_places_category(callback: CallbackQuery):
     if business_enabled and has_verified:
         # Target catalog contract:
         # partner slot (single top Partner) -> promo slot (single top PRO) -> verified by likes -> unverified.
+        # Defensive UI rule: even if legacy data has >1 partner, only one gets partner slot marker.
         verified_places = [item for item in places if item.get("is_verified")]
         unverified_places = [item for item in places if not item.get("is_verified")]
 
