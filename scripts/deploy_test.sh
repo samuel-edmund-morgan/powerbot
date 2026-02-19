@@ -242,7 +242,7 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_s
 
 # Automated smoke: plans keyboard contract for active/canceled/free flows.
 echo "Running business plan-keyboard cancel contract smoke test..."
-python3 "${REPO_DIR}/scripts/smoke_business_plan_keyboard_cancel_contract.py"
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_plan_keyboard_cancel_contract.py"
 
 # Automated smoke: downgrade paid->free must purge likes gained during paid windows.
 echo "Running business paid-like purge smoke test in test container..."

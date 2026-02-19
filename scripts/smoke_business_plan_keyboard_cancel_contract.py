@@ -39,6 +39,11 @@ _setup_import_path()
 
 
 def _ensure_dotenv_stub() -> None:
+    try:
+        import dotenv  # noqa: F401
+        return
+    except Exception:
+        pass
     if "dotenv" in sys.modules:
         return
     dotenv_stub = types.ModuleType("dotenv")
@@ -51,9 +56,23 @@ def _ensure_dotenv_stub() -> None:
 
 
 def _ensure_aiosqlite_stub() -> None:
+    try:
+        import aiosqlite  # noqa: F401
+        return
+    except Exception:
+        pass
     if "aiosqlite" in sys.modules:
         return
     aiosqlite_stub = types.ModuleType("aiosqlite")
+
+    class _Connection:
+        pass
+
+    class _Row:
+        pass
+
+    class _OperationalError(Exception):
+        pass
 
     class _IntegrityError(Exception):
         pass
@@ -61,6 +80,9 @@ def _ensure_aiosqlite_stub() -> None:
     async def _connect(*_args, **_kwargs):
         raise RuntimeError("aiosqlite stub is not meant to be used at runtime in this smoke.")
 
+    aiosqlite_stub.Connection = _Connection  # type: ignore[attr-defined]
+    aiosqlite_stub.Row = _Row  # type: ignore[attr-defined]
+    aiosqlite_stub.OperationalError = _OperationalError  # type: ignore[attr-defined]
     aiosqlite_stub.IntegrityError = _IntegrityError  # type: ignore[attr-defined]
     aiosqlite_stub.connect = _connect  # type: ignore[attr-defined]
     sys.modules["aiosqlite"] = aiosqlite_stub
