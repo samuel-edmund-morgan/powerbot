@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from business.guards import is_business_feature_enabled
+from business.plans import PAID_TIERS, PLAN_STARS_PRICES, SUPPORTED_TIERS
 from business.payments import (
     MockPaymentProvider,
     TelegramStarsPaymentProvider,
@@ -23,16 +24,9 @@ from config import CFG
 
 logger = logging.getLogger(__name__)
 
-PAID_TIERS = {"light", "pro", "partner"}
-SUPPORTED_TIERS = {"free", "light", "pro", "partner"}
 DEFAULT_SUBSCRIPTION_DAYS = 30
 SUBSCRIPTION_PAST_DUE_GRACE_DAYS = 3
 SUBSCRIPTION_RECONCILE_BATCH_SIZE = 50
-PLAN_STARS_PRICES: dict[str, int] = {
-    "light": 1000,
-    "pro": 2500,
-    "partner": 5000,
-}
 
 PAYMENT_PROVIDER_MOCK = "mock"
 PAYMENT_PROVIDER_TELEGRAM_STARS = "telegram_stars"
