@@ -2048,7 +2048,8 @@ def build_place_detail_keyboard(
 
         link_url = _normalize_place_link(place_enriched.get("link_url"))
         if link_url:
-            top_row.append(InlineKeyboardButton(text="🔗 Посилання", url=link_url))
+            # Track link opens (action=link) and then redirect.
+            top_row.append(InlineKeyboardButton(text="🔗 Посилання", callback_data=f"plink_{place_id}"))
 
     # Like button.
     if user_liked:
@@ -2433,6 +2434,45 @@ async def cb_place_call_open(callback: CallbackQuery) -> None:
         ),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("plink_"))
+async def cb_place_link_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await callback.answer("❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await callback.answer("Посилання для цього закладу недоступне.", show_alert=True)
+        return
+
+    link_url = _normalize_place_link(place_enriched.get("link_url"))
+    if not link_url:
+        await callback.answer("Некоректне посилання.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "link")
+    try:
+        await callback.answer(url=link_url)
+    except Exception:
+        await callback.message.answer(
+            "🔗 Відкрити посилання:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔗 Посилання", url=link_url)]]
+            ),
+        )
+        await callback.answer()
 
 
 @router.callback_query(F.data.startswith("like_"))

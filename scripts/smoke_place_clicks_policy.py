@@ -45,6 +45,9 @@ def main() -> None:
     _must_have(handlers_text, 'callback_data=f"pcall_{place_id}"', file_label="src/handlers.py", errors=errors)
     _must_have(handlers_text, 'F.data.startswith("pcall_")', file_label="src/handlers.py", errors=errors)
     _must_have(handlers_text, 'await record_place_click(place_id, "call")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'callback_data=f"plink_{place_id}"', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'F.data.startswith("plink_")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'await record_place_click(place_id, "link")', file_label="src/handlers.py", errors=errors)
 
     if errors:
         raise SystemExit("ERROR: place-clicks policy violation(s):\n- " + "\n- ".join(errors))
