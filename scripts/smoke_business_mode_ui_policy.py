@@ -54,7 +54,10 @@ def main() -> None:
         violations.append("cb_places_category must gate business ranking by presence of Verified places")
     if "if business_enabled and has_verified" not in text:
         violations.append("cb_places_category must apply business ranking only when has_verified")
-    if "partner block -> promo slot (single top PRO) -> verified by likes -> unverified." not in text:
+    if (
+        "partner block -> promo slot (single top PRO) -> verified by likes -> unverified." not in text
+        and "partner slot (single top Partner) -> promo slot (single top PRO) -> verified by likes -> unverified." not in text
+    ):
         violations.append("business branch must document partner->promo->verified->unverified contract")
     if "promo_slot = pro_places[0] if pro_places else None" not in text:
         violations.append("business branch must select single promo_slot from pro places")
