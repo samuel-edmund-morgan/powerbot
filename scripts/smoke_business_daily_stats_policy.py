@@ -32,11 +32,14 @@ def main() -> None:
     _must(repo_text, "async def get_place_activity_daily(", where="src/business/repository.py", errors=errors)
     _must(repo_text, "FROM place_views_daily", where="src/business/repository.py", errors=errors)
     _must(repo_text, "FROM place_clicks_daily", where="src/business/repository.py", errors=errors)
+    _must(repo_text, "coupon_open", where="src/business/repository.py", errors=errors)
+    _must(repo_text, "coupon_opens", where="src/business/repository.py", errors=errors)
     _must(repo_text, "GROUP BY day", where="src/business/repository.py", errors=errors)
 
     _must(handlers_text, "_has_active_premium_subscription(item)", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "get_place_activity_daily(place_id, days=7)", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "📈 По днях (7 днів)", where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, "🎟", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "👁", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "🎯", where="src/business/handlers.py", errors=errors)
 

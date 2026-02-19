@@ -906,7 +906,7 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
                 except Exception:
                     day_label = raw_day
                 day_lines.append(
-                    f"• {day_label}: 👁 {int(row.get('views') or 0)} | 🎯 {int(row.get('clicks') or 0)} | CTR {float(row.get('ctr') or 0):.1f}%"
+                    f"• {day_label}: 👁 {int(row.get('views') or 0)} | 🎟 {int(row.get('coupon_opens') or 0)} | 🎯 {int(row.get('clicks') or 0)} | CTR {float(row.get('ctr') or 0):.1f}%"
                 )
             text += "\n\n📈 По днях (7 днів)\n" + "\n".join(day_lines)
     return text
