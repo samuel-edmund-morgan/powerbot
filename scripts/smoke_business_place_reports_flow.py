@@ -161,11 +161,13 @@ async def _run_checks(db_path: Path, ids: dict[str, int]) -> None:
         create_admin_job,
         create_place_report,
         get_admin_job,
+        init_db,
         list_place_reports,
         set_place_report_status,
     )
 
     now = datetime.now(timezone.utc)
+    await init_db()
 
     report_pro = await create_place_report(
         place_id=int(ids["place_pro"]),
