@@ -360,6 +360,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_daily_stats_policy.py"
 echo "Running business free place-card content policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_free_place_card_content_policy.py"
 
+# Automated smoke: free-tier resident baseline (catalog/likes/minimal card/map path).
+echo "Running business free resident baseline policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_free_resident_baseline_policy.py"
+
 # Automated smoke: premium offers (2 text slots) policy.
 echo "Running business offers policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_offers_policy.py"
