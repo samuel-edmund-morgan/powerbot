@@ -782,13 +782,19 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
             action="coupon_open",
             days=int(days),
         )
+        chat_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="chat",
+            days=int(days),
+        )
     except Exception:
         logger.exception("Failed to load place activity stats place_id=%s", place_id)
         return text
     text += (
         f"\n\n📊 Активність за {int(days)} днів\n"
         f"• Перегляди картки: <b>{int(views)}</b>\n"
-        f"• Відкриття промокоду: <b>{int(coupon_opens)}</b>"
+        f"• Відкриття промокоду: <b>{int(coupon_opens)}</b>\n"
+        f"• Відкриття чату: <b>{int(chat_opens)}</b>"
     )
     return text
 
