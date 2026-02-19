@@ -1950,7 +1950,15 @@ async def cb_places_category(callback: CallbackQuery):
     for place in places:
         place_id = int(place["id"])
         medal_prefix = medal_map.get(place_id)
-        verified_prefix = "✅" if (business_enabled and place.get("is_verified")) else None
+        verified_prefix = None
+        if business_enabled and has_verified and place.get("is_verified"):
+            tier = (place.get("verified_tier") or "").strip().lower()
+            if tier == "partner":
+                verified_prefix = "⭐"
+            elif tier == "pro":
+                verified_prefix = "🔝"
+            else:
+                verified_prefix = "✅"
         prefix_parts = [p for p in [medal_prefix, verified_prefix] if p]
         prefix = (" ".join(prefix_parts) + " ") if prefix_parts else ""
         
@@ -1982,9 +1990,13 @@ async def cb_places_category(callback: CallbackQuery):
     
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data="places_menu")])
     
+    ranking_hint = ""
+    if business_enabled and has_verified:
+        ranking_hint = "⭐ партнер • 🔝 промо • ✅ verified\n\n"
     text = (
         f"🏢 <b>{service['name']}</b>\n\n"
         f"Оберіть заклад (❤️ = лайки мешканців):\n\n"
+        f"{ranking_hint}"
         f"💬 Побачили помилку? Пишіть {admin_tag}"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
