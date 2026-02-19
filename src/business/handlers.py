@@ -800,13 +800,17 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
     except Exception:
         logger.exception("Failed to load place activity stats place_id=%s", place_id)
         return text
+    total_cta_clicks = int(coupon_opens) + int(chat_opens) + int(call_opens) + int(link_opens)
+    ctr_pct = round((total_cta_clicks * 100.0) / int(views), 1) if int(views) > 0 else 0.0
     text += (
         f"\n\n📊 Активність за {int(days)} днів\n"
         f"• Перегляди картки: <b>{int(views)}</b>\n"
         f"• Відкриття промокоду: <b>{int(coupon_opens)}</b>\n"
         f"• Відкриття чату: <b>{int(chat_opens)}</b>\n"
         f"• Відкриття дзвінка: <b>{int(call_opens)}</b>\n"
-        f"• Відкриття посилання: <b>{int(link_opens)}</b>"
+        f"• Відкриття посилання: <b>{int(link_opens)}</b>\n"
+        f"• Усі кліки по кнопках: <b>{int(total_cta_clicks)}</b>\n"
+        f"• CTR кнопок: <b>{ctr_pct}%</b>"
     )
     return text
 

@@ -45,6 +45,8 @@ def main() -> None:
     _must(handlers_text, "Відкриття чату", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Відкриття дзвінка", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Відкриття посилання", where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, "Усі кліки по кнопках", where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, "CTR кнопок", where="src/business/handlers.py", errors=errors)
 
     if errors:
         raise SystemExit("ERROR: business card activity stats policy violation(s):\n- " + "\n- ".join(errors))
