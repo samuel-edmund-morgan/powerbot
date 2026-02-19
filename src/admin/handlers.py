@@ -1059,6 +1059,15 @@ def _subscription_verified_title(is_verified: int | bool | None) -> str:
     return "✅ Verified" if int(is_verified or 0) == 1 else "—"
 
 
+def _report_priority_title(priority_score: int | None) -> str:
+    score = int(priority_score or 0)
+    if score >= 2:
+        return "🔥 Premium/Partner"
+    if score == 1:
+        return "🟡 Light"
+    return "⚪ Звичайний"
+
+
 def _payment_event_title(raw: str | None) -> str:
     event = (raw or "").strip().lower()
     if event == "invoice_created":
@@ -2032,12 +2041,14 @@ async def _render_business_reports(
     place_address = escape(str(item.get("place_address") or "—"))
     service_name = escape(str(item.get("service_name") or "—"))
     report_text = escape(str(item.get("report_text") or "—"))
+    priority_title = _report_priority_title(item.get("priority_score"))
     text = (
         "📝 <b>Правки закладів</b>\n\n"
         f"{notice}"
         f"Репорт: <code>{int(item.get('id') or 0)}</code>\n"
         f"Заклад: <b>{place_name}</b> (ID: <code>{int(item.get('place_id') or 0)}</code>)\n"
         f"Категорія: {service_name}\n"
+        f"Пріоритет: {priority_title}\n"
         f"Адреса: {place_address}\n"
         f"Від: {reporter_contact}\n"
         f"Створено: {escape(str(item.get('created_at') or ''))}\n\n"

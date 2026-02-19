@@ -312,6 +312,10 @@ python3 "${REPO_DIR}/scripts/smoke_admin_business_moderation_ui_policy.py"
 echo "Running business place-report policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_place_reports_policy.py"
 
+# Automated smoke: reports queue priority (Premium/Partner first, then Light, then regular).
+echo "Running business reports priority policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_reports_priority_policy.py"
+
 # Automated smoke: businessbot Free-owner suggest-edit moderation flow.
 echo "Running business free edit-request policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_free_edit_request_policy.py"
