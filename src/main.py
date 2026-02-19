@@ -17,7 +17,7 @@ from yasno import yasno_schedule_monitor_loop
 from api_server import create_api_app, start_api_server, stop_api_server
 from single_message_bot import SingleMessageBot
 from admin_jobs_worker import admin_jobs_worker_loop
-from business import is_business_feature_enabled
+from business import is_business_subscription_lifecycle_enabled
 from business.maintenance import subscription_maintenance_loop
 
 
@@ -51,8 +51,8 @@ async def main():
     # Admin jobs (control-plane queue): broadcast/light_notify toggles, etc.
     asyncio.create_task(admin_jobs_worker_loop(bot))
 
-    # Business subscriptions lifecycle maintenance (active -> past_due -> free).
-    if is_business_feature_enabled():
+    # Business subscriptions lifecycle maintenance (active -> past_due/canceled -> free).
+    if is_business_subscription_lifecycle_enabled():
         asyncio.create_task(subscription_maintenance_loop())
     
     try:

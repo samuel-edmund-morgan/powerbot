@@ -623,17 +623,19 @@ def build_plan_keyboard(
     normalized_current = str(current_tier or "").strip().lower() or "free"
     normalized_status = str(current_status or "").strip().lower() or "inactive"
     expires_at = _parse_iso_utc(str(current_expires_at or "").strip() or None)
+    is_paid_tier = normalized_current in _PAID_TIERS
     has_paid_entitlement = (
-        normalized_current in _PAID_TIERS
+        is_paid_tier
         and normalized_status in {"active", "canceled"}
         and bool(expires_at and expires_at > datetime.now(timezone.utc))
     )
+    show_free_option = not (is_paid_tier and normalized_status in {"active", "canceled"})
 
     buttons = []
     first_row = []
     for tier in ("free", "light"):
-        if tier == "free" and has_paid_entitlement:
-            if normalized_status == "active":
+        if tier == "free" and not show_free_option:
+            if normalized_status == "active" and has_paid_entitlement:
                 cancel_cb = f"bp_cancel:{place_id}:{source}" if source else f"bp_cancel:{place_id}"
                 first_row.append(
                     ikb(
@@ -2602,6 +2604,21 @@ async def _render_place_plan_menu(
     back_cb = CB_MENU_PLANS if source == "plans" else f"{CB_MY_OPEN_PREFIX}{place_id}"
     place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
     extra_block = ""
+    tier_now = str(item.get("tier") or "").strip().lower()
+    sub_status_now = str(item.get("subscription_status") or "").strip().lower()
+    sub_expires_raw = str(item.get("subscription_expires_at") or "").strip() or None
+    sub_expires_dt = _parse_iso_utc(sub_expires_raw)
+    if (
+        tier_now in _PAID_TIERS
+        and sub_status_now == "canceled"
+        and sub_expires_dt
+        and sub_expires_dt > datetime.now(timezone.utc)
+    ):
+        extra_block += (
+            "\n\n"
+            f"🔴 Автопродовження скасовано. Тариф діє до: <b>{html.escape(_format_expires_short(sub_expires_raw))}</b>."
+        )
+
     if str(item.get("tier") or "").strip().lower() == "free":
         try:
             motivation = await cabinet_service.get_free_tier_click_motivation(tg_user_id, place_id)
