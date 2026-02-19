@@ -608,6 +608,7 @@ class BusinessRepository:
         offset = f"-{safe_days - 1} days"
         views_map: dict[str, int] = {}
         clicks_map: dict[str, int] = {}
+        coupon_map: dict[str, int] = {}
         async with open_business_db() as db:
             async with db.execute(
                 """
@@ -626,7 +627,9 @@ class BusinessRepository:
 
             async with db.execute(
                 """
-                SELECT day, COALESCE(SUM(cnt), 0) AS clicks
+                SELECT day,
+                       COALESCE(SUM(cnt), 0) AS clicks,
+                       COALESCE(SUM(CASE WHEN action = 'coupon_open' THEN cnt ELSE 0 END), 0) AS coupon_opens
                   FROM place_clicks_daily
                  WHERE place_id = ?
                    AND day >= date('now','localtime', ?)
@@ -639,6 +642,7 @@ class BusinessRepository:
                     day = str(row["day"] or "").strip()
                     if day:
                         clicks_map[day] = int(row["clicks"] or 0)
+                        coupon_map[day] = int(row["coupon_opens"] or 0)
 
         today = datetime.now().date()
         timeline: list[dict[str, Any]] = []
@@ -648,12 +652,14 @@ class BusinessRepository:
             day_key = current.isoformat()
             views = int(views_map.get(day_key) or 0)
             clicks = int(clicks_map.get(day_key) or 0)
+            coupon_opens = int(coupon_map.get(day_key) or 0)
             ctr = round((clicks * 100.0) / views, 1) if views > 0 else 0.0
             timeline.append(
                 {
                     "day": day_key,
                     "views": views,
                     "clicks": clicks,
+                    "coupon_opens": coupon_opens,
                     "ctr": ctr,
                 }
             )
