@@ -312,6 +312,10 @@ python3 "${REPO_DIR}/scripts/smoke_admin_business_moderation_ui_policy.py"
 echo "Running business place-report policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_place_reports_policy.py"
 
+# Automated smoke: businessbot Free-owner suggest-edit moderation flow.
+echo "Running business free edit-request policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_free_edit_request_policy.py"
+
 # Automated smoke: admin places UI contract (publish/hide/delete/reject/edit/promo).
 echo "Running admin business places UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_business_places_ui_policy.py"

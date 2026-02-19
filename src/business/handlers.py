@@ -20,7 +20,7 @@ from aiogram.types import (
     PreCheckoutQuery,
 )
 from config import CFG
-from database import create_admin_job
+from database import create_admin_job, create_place_report
 from tg_buttons import STYLE_DANGER, STYLE_PRIMARY, STYLE_SUCCESS, ikb
 
 from business.service import (
@@ -110,6 +110,8 @@ CB_PAYMENT_RESULT_PREFIX = "bpayr:"
 CB_CONTACT_PICK_PREFIX = "bec:"
 CB_CONTACT_CLEAR_PREFIX = "bec_clear:"
 CB_QR_OPEN_PREFIX = "bqr:"
+CB_FREE_EDIT_REQUEST_PREFIX = "bfr:"
+CB_FREE_EDIT_REQUEST_CANCEL_PREFIX = "bfrc:"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -203,6 +205,10 @@ class EditPlaceStates(StatesGroup):
     waiting_contact_value = State()
 
 
+class FreeEditRequestStates(StatesGroup):
+    waiting_text = State()
+
+
 def build_main_menu(user_id: int) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -248,6 +254,16 @@ def build_cancel_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+        ]
+    )
+
+
+def build_free_edit_request_keyboard(place_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_CANCEL, callback_data=f"{CB_FREE_EDIT_REQUEST_CANCEL_PREFIX}{int(place_id)}")],
+            [InlineKeyboardButton(text="« До закладу", callback_data=f"{CB_MY_OPEN_PREFIX}{int(place_id)}")],
+            [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
         ]
     )
 
@@ -996,6 +1012,10 @@ async def render_place_card_updated(message: Message, *, place_id: int, note_tex
                 ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
             ]
         )
+        if not can_edit:
+            keyboard_rows.append(
+                [ikb(text="📝 Запропонувати правку", callback_data=f"{CB_FREE_EDIT_REQUEST_PREFIX}{place_id}", style=STYLE_PRIMARY)]
+            )
         qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
         qr_btn = (
             InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
@@ -2064,6 +2084,10 @@ async def cb_my_business_open(callback: CallbackQuery) -> None:
                 ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
             ]
         )
+        if not can_edit:
+            keyboard_rows.append(
+                [ikb(text="📝 Запропонувати правку", callback_data=f"{CB_FREE_EDIT_REQUEST_PREFIX}{place_id}", style=STYLE_PRIMARY)]
+            )
         qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
         qr_btn = (
             InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
@@ -2153,6 +2177,182 @@ async def cb_open_place_qr(callback: CallbackQuery) -> None:
         ),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_FREE_EDIT_REQUEST_PREFIX))
+async def cb_free_edit_request_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_FREE_EDIT_REQUEST_PREFIX)
+    try:
+        place_id = int(raw)
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    rows = await cabinet_service.list_user_businesses(user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        return
+    if _has_active_paid_subscription(item):
+        await callback.answer("У вас активний тариф. Редагуйте картку напряму.", show_alert=True)
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await ui_render(
+            callback.message.bot,
+            chat_id=callback.message.chat.id,
+            prefer_message_id=callback.message.message_id,
+            text="Що хочеш змінити?",
+            reply_markup=build_edit_fields_keyboard(place_id),
+        )
+        return
+
+    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    await state.set_state(FreeEditRequestStates.waiting_text)
+    await state.update_data(free_edit_request_place_id=place_id)
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=(
+            "📝 <b>Запропонувати правку</b>\n\n"
+            f"Заклад: <b>{place_name}</b>\n\n"
+            "Опишіть, що потрібно виправити в картці закладу.\n"
+            "Ліміт: до 600 символів.\n\n"
+            "Після цього передамо запит адміну на модерацію."
+        ),
+        reply_markup=build_free_edit_request_keyboard(place_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_FREE_EDIT_REQUEST_CANCEL_PREFIX))
+async def cb_free_edit_request_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_FREE_EDIT_REQUEST_CANCEL_PREFIX)
+    try:
+        place_id = int(raw)
+    except Exception:
+        await callback.answer("Скасовано", show_alert=False)
+        await state.clear()
+        return
+
+    await state.clear()
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await render_place_card_updated(callback.message, place_id=place_id, note_text="Скасовано.")
+    await callback.answer("Скасовано")
+
+
+@router.message(FreeEditRequestStates.waiting_text, F.text)
+async def msg_free_edit_request_submit(message: Message, state: FSMContext) -> None:
+    await try_delete_user_message(message)
+    data = await state.get_data()
+    place_id = int(data.get("free_edit_request_place_id") or 0)
+    if place_id <= 0:
+        await state.clear()
+        await send_main_menu(message, message.chat.id)
+        return
+
+    raw = str(message.text or "").strip()
+    if not raw:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="❌ Порожній текст. Опишіть, що потрібно виправити.",
+            reply_markup=build_free_edit_request_keyboard(place_id),
+        )
+        return
+    if len(raw) > 600:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="❌ Занадто довгий текст. Максимум 600 символів.",
+            reply_markup=build_free_edit_request_keyboard(place_id),
+        )
+        return
+
+    user_id = message.from_user.id if message.from_user else message.chat.id
+    rows = await cabinet_service.list_user_businesses(user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await state.clear()
+        await send_main_menu(message, user_id)
+        return
+    if _has_active_paid_subscription(item):
+        await state.clear()
+        await render_place_card_updated(
+            message,
+            place_id=place_id,
+            note_text="У вас активний тариф Light або вище. Редагуйте картку напряму.",
+        )
+        return
+
+    from_user = message.from_user
+    report = await create_place_report(
+        place_id=place_id,
+        reporter_tg_user_id=int(from_user.id if from_user else message.chat.id),
+        reporter_username=str(from_user.username or "") if from_user else "",
+        reporter_first_name=str(from_user.first_name or "") if from_user else "",
+        reporter_last_name=str(from_user.last_name or "") if from_user else "",
+        report_text=raw,
+    )
+    if not report:
+        await state.clear()
+        await render_place_card_updated(
+            message,
+            place_id=place_id,
+            note_text="❌ Не вдалося створити запит. Спробуйте ще раз пізніше.",
+        )
+        return
+
+    place = await cabinet_service.repository.get_place(place_id)
+    place_name = str((place or {}).get("name") or f"ID {place_id}")
+    payload = {
+        "report_id": int(report["id"]),
+        "place_id": int(place_id),
+        "place_name": place_name,
+        "reporter_tg_user_id": int(from_user.id if from_user else message.chat.id),
+        "reporter_username": str(from_user.username or "") if from_user else "",
+        "reporter_first_name": str(from_user.first_name or "") if from_user else "",
+        "reporter_last_name": str(from_user.last_name or "") if from_user else "",
+        "report_text": raw,
+        "created_at": str(report.get("created_at") or ""),
+        "source": "business_owner_free_edit",
+    }
+    try:
+        await create_admin_job(
+            "admin_place_report_alert",
+            payload,
+            created_by=int(from_user.id if from_user else message.chat.id),
+        )
+    except Exception:
+        logger.exception("Failed to enqueue admin_place_report_alert report_id=%s", report.get("id"))
+
+    await state.clear()
+    await render_place_card_updated(
+        message,
+        place_id=place_id,
+        note_text="✅ Передали правку адміну на модерацію.",
+    )
+
+
+@router.message(FreeEditRequestStates.waiting_text)
+async def msg_free_edit_request_non_text(message: Message, state: FSMContext) -> None:
+    await try_delete_user_message(message)
+    data = await state.get_data()
+    place_id = int(data.get("free_edit_request_place_id") or 0)
+    reply_markup = build_free_edit_request_keyboard(place_id) if place_id > 0 else build_cancel_menu()
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text="📝 Надішліть текст правки (до 600 символів).",
+        reply_markup=reply_markup,
+    )
 
 
 @router.callback_query(F.data.startswith("be:"))
