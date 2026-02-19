@@ -238,6 +238,30 @@ class BusinessRepository:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
 
+    async def list_pro_subscriptions_by_service(
+        self,
+        service_id: int,
+        *,
+        exclude_place_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
+            "SELECT p.id AS place_id, p.name AS place_name, "
+            "       bs.tier, bs.status, bs.expires_at "
+            "  FROM places p "
+            "  JOIN business_subscriptions bs ON bs.place_id = p.id "
+            " WHERE p.service_id = ? "
+            "   AND bs.tier = 'pro'"
+        )
+        params: list[Any] = [int(service_id)]
+        if exclude_place_id is not None:
+            query += " AND p.id <> ?"
+            params.append(int(exclude_place_id))
+        query += " ORDER BY p.id ASC"
+        async with open_business_db() as db:
+            async with db.execute(query, tuple(params)) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
     async def list_places_by_service_filtered(
         self,
         service_id: int,
