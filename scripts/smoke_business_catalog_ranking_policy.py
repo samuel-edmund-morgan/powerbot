@@ -4,7 +4,7 @@ Static smoke-check for resident catalog ranking/markers policy.
 
 Policy:
 - business branch builds explicit order:
-  partner block -> promo slot (single top PRO) -> verified-by-likes -> unverified.
+  partner slot (single top Partner) -> promo slot (single top PRO) -> verified-by-likes -> unverified.
 - UI uses tier markers: ⭐ partner, 🔝 promo(pro), ✅ verified(light+)
 """
 
@@ -35,15 +35,19 @@ def main() -> None:
     _must(text, "unverified_places = [item for item in places if not item.get(\"is_verified\")]", errors=errors)
     _must(text, "partner_places =", errors=errors)
     _must(text, "pro_places =", errors=errors)
+    _must(text, "partner_slot = partner_places[0] if partner_places else None", errors=errors)
+    _must(text, "partner_slot_id = int(partner_slot[\"id\"]) if partner_slot else 0", errors=errors)
     _must(text, "promo_slot = pro_places[0] if pro_places else None", errors=errors)
     _must(text, "promo_slot_id = int(promo_slot[\"id\"]) if promo_slot else 0", errors=errors)
     _must(text, "verified_by_likes.sort(", errors=errors)
+    _must(text, "if partner_slot:", errors=errors)
     _must(text, "places.extend(unverified_places)", errors=errors)
 
     # Marker contract.
     _must(text, 'verified_prefix = "⭐"', errors=errors)
     _must(text, 'verified_prefix = "🔝"', errors=errors)
     _must(text, 'verified_prefix = "✅"', errors=errors)
+    _must(text, 'if int(place["id"]) == partner_slot_id:', errors=errors)
     _must(text, 'elif int(place["id"]) == promo_slot_id:', errors=errors)
     _must(text, 'ranking_hint = "⭐ офіційний партнер • 🔝 промо • ✅ verified', errors=errors)
     _must(text, 'tier_badge = " • Офіційний партнер"', errors=errors)
