@@ -452,6 +452,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_subscription_maintenance_policy.py"
 echo "Running business mode UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
 
+# Automated smoke: resident place-card CTA contract for BUSINESS_MODE OFF vs ON.
+echo "Running business mode place-card compare smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_mode_card_compare.py"
+
 # Automated smoke: search-menu routing (avoid generic fallback shadowing search text).
 echo "Running search menu routing policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_search_menu_routing_policy.py"
