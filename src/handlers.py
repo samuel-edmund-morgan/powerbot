@@ -2042,7 +2042,8 @@ def build_place_detail_keyboard(
         elif contact_type == "chat" and contact_value:
             chat_url = _normalize_place_link(contact_value)
             if chat_url:
-                top_row.append(InlineKeyboardButton(text="💬 Написати", url=chat_url))
+                # Use callback for tracked opens (action=chat) and then redirect via answer_callback_query(url=...).
+                top_row.append(InlineKeyboardButton(text="💬 Написати", callback_data=f"pchat_{place_id}"))
 
         link_url = _normalize_place_link(place_enriched.get("link_url"))
         if link_url:
@@ -2343,6 +2344,52 @@ async def cb_place_coupon_open(callback: CallbackQuery) -> None:
 
     await record_place_click(place_id, "coupon_open")
     await callback.answer(f"🎟 Промокод: {promo_code}", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("pchat_"))
+async def cb_place_chat_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await callback.answer("❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await callback.answer("Чат для цього закладу недоступний.", show_alert=True)
+        return
+
+    contact_type = str(place_enriched.get("contact_type") or "").strip().lower()
+    contact_value = str(place_enriched.get("contact_value") or "").strip()
+    if contact_type != "chat" or not contact_value:
+        await callback.answer("Чат для цього закладу недоступний.", show_alert=True)
+        return
+
+    chat_url = _normalize_place_link(contact_value)
+    if not chat_url:
+        await callback.answer("Некоректне посилання на чат.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "chat")
+    try:
+        await callback.answer(url=chat_url)
+    except Exception:
+        # Fallback in case client rejects redirect URL from callback answer.
+        await callback.message.answer(
+            "💬 Відкрити чат:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="💬 Написати", url=chat_url)]]
+            ),
+        )
+        await callback.answer()
 
 
 @router.callback_query(F.data.startswith("like_"))
