@@ -1581,6 +1581,7 @@ class BusinessCabinetService:
         allowed_fields = {
             "opening_hours",
             "link_url",
+            "logo_url",
             "promo_code",
             "menu_url",
             "order_url",
@@ -1627,7 +1628,7 @@ class BusinessCabinetService:
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Офер занадто довгий.")
         else:
-            # link_url / menu_url / order_url / offer_*_image_url
+            # link_url / logo_url / menu_url / order_url / offer_*_image_url
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Посилання занадто довге.")
             if clean_value:

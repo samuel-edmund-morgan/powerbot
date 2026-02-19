@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS places (
     contact_type TEXT DEFAULT NULL,          -- call/chat
     contact_value TEXT DEFAULT NULL,         -- телефон або @username/посилання
     link_url TEXT DEFAULT NULL,              -- 1 URL (сайт/інстаграм/меню)
+    logo_url TEXT DEFAULT NULL,              -- Light+: логотип/фото закладу (URL)
     promo_code TEXT DEFAULT NULL,            -- 1 активний промокод
     menu_url TEXT DEFAULT NULL,              -- Premium+: кнопка "Меню/Прайс" (url)
     order_url TEXT DEFAULT NULL,             -- Premium+: кнопка "Замовити/Запис" (url)

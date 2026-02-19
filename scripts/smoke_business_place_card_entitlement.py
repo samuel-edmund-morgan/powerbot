@@ -53,6 +53,7 @@ def main() -> None:
         "contact_type": "",
         "contact_value": "",
         "link_url": "",
+        "logo_url": "",
         "promo_code": "",
         "menu_url": "",
         "order_url": "",
@@ -71,6 +72,7 @@ def main() -> None:
     _assert(_count_prefix(cbs_free, "pcall_") == 0, "free must not expose call CTA")
     _assert(_count_prefix(cbs_free, "pchat_") == 0, "free must not expose chat CTA")
     _assert(_count_prefix(cbs_free, "plink_") == 0, "free must not expose link CTA")
+    _assert(_count_prefix(cbs_free, "plogo_") == 0, "free must not expose logo CTA")
     _assert(_count_prefix(cbs_free, "pcoupon_") == 0, "free must not expose promo CTA")
     _assert(_count_prefix(cbs_free, "pmenu_") == 0, "free must not expose menu CTA")
     _assert(_count_prefix(cbs_free, "porder_") == 0, "free must not expose order CTA")
@@ -88,6 +90,7 @@ def main() -> None:
             "contact_type": "chat",
             "contact_value": "@light_chat",
             "link_url": "https://example.org/menu",
+            "logo_url": "https://example.org/logo.jpg",
             "promo_code": "LIGHT100",
         }
     )
@@ -103,6 +106,7 @@ def main() -> None:
     _assert(_count_prefix(cbs_light_chat, "pchat_") == 1, "verified light(chat) must expose chat CTA")
     _assert(_count_prefix(cbs_light_chat, "pcall_") == 0, "verified light(chat) must not expose call CTA")
     _assert(_count_prefix(cbs_light_chat, "plink_") == 1, "verified with link_url should expose link CTA")
+    _assert(_count_prefix(cbs_light_chat, "plogo_") == 1, "verified with logo_url should expose logo CTA")
     _assert(_count_prefix(cbs_light_chat, "pcoupon_") == 1, "verified with promo_code should expose promo CTA")
     _assert(_count_prefix(cbs_light_chat, "pmenu_") == 0, "verified light must not expose menu CTA")
     _assert(_count_prefix(cbs_light_chat, "porder_") == 0, "verified light must not expose order CTA")
@@ -133,6 +137,7 @@ def main() -> None:
     _assert(contact_count_call == 1, "verified light(call) must expose exactly one contact CTA")
     _assert(_count_prefix(cbs_light_call, "pcall_") == 1, "verified light(call) must expose call CTA")
     _assert(_count_prefix(cbs_light_call, "pchat_") == 0, "verified light(call) must not expose chat CTA")
+    _assert(_count_prefix(cbs_light_call, "plogo_") == 0, "verified without logo must not expose logo CTA")
     _assert(_count_prefix(cbs_light_call, "pcoupon_") == 0, "verified without promo must not expose promo CTA")
     _assert(_count_prefix(cbs_light_call, "pmenu_") == 0, "verified light must not expose menu CTA")
     _assert(_count_prefix(cbs_light_call, "porder_") == 0, "verified light must not expose order CTA")
@@ -149,6 +154,7 @@ def main() -> None:
             "contact_type": "chat",
             "contact_value": "@pro_chat",
             "link_url": "https://example.org/site",
+            "logo_url": "https://example.org/logo-pro.jpg",
             "promo_code": "PRO500",
             "menu_url": "https://example.org/menu",
             "order_url": "https://example.org/order",
@@ -165,6 +171,7 @@ def main() -> None:
     cbs_pro = _collect_callbacks(kb_pro)
     _assert(_count_prefix(cbs_pro, "pmenu_") == 1, "verified pro with menu_url must expose menu CTA")
     _assert(_count_prefix(cbs_pro, "porder_") == 1, "verified pro with order_url must expose order CTA")
+    _assert(_count_prefix(cbs_pro, "plogo_") == 1, "verified pro with logo_url must expose logo CTA")
     _assert(_count_prefix(cbs_pro, "pmimg1_") == 1, "verified pro with offer_1_image_url must expose image CTA")
     _assert(_count_prefix(cbs_pro, "pmimg2_") == 1, "verified pro with offer_2_image_url must expose image CTA")
 

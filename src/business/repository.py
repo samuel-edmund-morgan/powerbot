@@ -553,7 +553,7 @@ class BusinessRepository:
                 """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
                           p.is_published,
                           p.is_verified, p.verified_tier, p.verified_until, p.business_enabled,
-                          p.opening_hours, p.contact_type, p.contact_value, p.link_url, p.promo_code,
+                          p.opening_hours, p.contact_type, p.contact_value, p.link_url, p.logo_url, p.promo_code,
                           p.menu_url, p.order_url, p.offer_1_text, p.offer_2_text,
                           p.offer_1_image_url, p.offer_2_image_url,
                           s.name AS service_name
@@ -1289,6 +1289,7 @@ class BusinessRepository:
                           p.contact_type AS place_contact_type,
                           p.contact_value AS place_contact_value,
                           p.link_url AS place_link_url,
+                          p.logo_url AS place_logo_url,
                           p.promo_code AS place_promo_code,
                           p.menu_url AS place_menu_url,
                           p.order_url AS place_order_url,
@@ -1383,6 +1384,7 @@ class BusinessRepository:
         contact_type: str | None = _UNSET,  # type: ignore[assignment]
         contact_value: str | None = _UNSET,  # type: ignore[assignment]
         link_url: str | None = _UNSET,  # type: ignore[assignment]
+        logo_url: str | None = _UNSET,  # type: ignore[assignment]
         promo_code: str | None = _UNSET,  # type: ignore[assignment]
         menu_url: str | None = _UNSET,  # type: ignore[assignment]
         order_url: str | None = _UNSET,  # type: ignore[assignment]
@@ -1412,6 +1414,7 @@ class BusinessRepository:
         _maybe_set("contact_type", contact_type)
         _maybe_set("contact_value", contact_value)
         _maybe_set("link_url", link_url)
+        _maybe_set("logo_url", logo_url)
         _maybe_set("promo_code", promo_code)
         _maybe_set("menu_url", menu_url)
         _maybe_set("order_url", order_url)

@@ -587,6 +587,7 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
     offer_2_text = "🎁 Офер 2" if has_premium_access else "🔒 Офер 2 (Premium)"
     offer_1_image = "🖼 Фото оферу 1" if has_premium_access else "🔒 Фото оферу 1 (Premium)"
     offer_2_image = "🖼 Фото оферу 2" if has_premium_access else "🔒 Фото оферу 2 (Premium)"
+    logo_text = "🖼 Логотип/фото"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -620,6 +621,12 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
                     text="🔗 Посилання",
                     callback_data=f"bef:{place_id}:link_url",
                 ),
+                InlineKeyboardButton(
+                    text=logo_text,
+                    callback_data=f"bef:{place_id}:logo_url",
+                ),
+            ],
+            [
                 InlineKeyboardButton(
                     text="🎟 Промокод",
                     callback_data=f"bef:{place_id}:promo_code",
@@ -817,6 +824,7 @@ def format_business_card(item: dict) -> str:
     contact_type = str(item.get("place_contact_type") or "").strip().lower()
     contact_value = html.escape(str(item.get("place_contact_value") or "").strip())
     link_url = html.escape(str(item.get("place_link_url") or "").strip())
+    logo_url = html.escape(str(item.get("place_logo_url") or "").strip())
     promo_code = html.escape(str(item.get("place_promo_code") or "").strip())
     menu_url = html.escape(str(item.get("place_menu_url") or "").strip())
     order_url = html.escape(str(item.get("place_order_url") or "").strip())
@@ -837,6 +845,8 @@ def format_business_card(item: dict) -> str:
         profile_lines.append(f"{label}: {contact_value}")
     if link_url:
         profile_lines.append(f"🔗 Посилання: {link_url}")
+    if logo_url:
+        profile_lines.append(f"🖼 Логотип/фото: {logo_url}")
     if menu_url:
         profile_lines.append(f"📋 Меню/Прайс: {menu_url}")
     if order_url:
@@ -902,6 +912,11 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
             action="order",
             days=int(days),
         )
+        logo_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="logo_open",
+            days=int(days),
+        )
         offer_1_image_opens = await cabinet_service.repository.get_place_clicks_sum(
             place_id,
             action="offer1_image",
@@ -922,6 +937,7 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         + int(link_opens)
         + int(menu_opens)
         + int(order_opens)
+        + int(logo_opens)
         + int(offer_1_image_opens)
         + int(offer_2_image_opens)
     )
@@ -935,6 +951,7 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         f"• Відкриття посилання: <b>{int(link_opens)}</b>\n"
         f"• Відкриття меню/прайсу: <b>{int(menu_opens)}</b>\n"
         f"• Відкриття замовлення/запису: <b>{int(order_opens)}</b>\n"
+        f"• Відкриття логотипу/фото: <b>{int(logo_opens)}</b>\n"
         f"• Відкриття фото оферу 1: <b>{int(offer_1_image_opens)}</b>\n"
         f"• Відкриття фото оферу 2: <b>{int(offer_2_image_opens)}</b>\n"
         f"• Усі кліки по кнопках: <b>{int(total_cta_clicks)}</b>\n"
@@ -2622,6 +2639,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         "address": "адресу",
         "opening_hours": "години роботи",
         "link_url": "посилання",
+        "logo_url": "посилання на логотип/фото",
         "promo_code": "промокод",
         "menu_url": "посилання на меню/прайс",
         "order_url": "посилання на замовлення/запис",
@@ -2644,6 +2662,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         if field in {
             "opening_hours",
             "link_url",
+            "logo_url",
             "promo_code",
             "menu_url",
             "order_url",
@@ -3021,6 +3040,7 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
         if field in {
             "opening_hours",
             "link_url",
+            "logo_url",
             "promo_code",
             "menu_url",
             "order_url",
