@@ -770,6 +770,29 @@ def format_business_card(item: dict) -> str:
     )
 
 
+async def build_business_card_text(item: dict, *, days: int = 30) -> str:
+    text = format_business_card(item)
+    place_id = int(item.get("place_id") or 0)
+    if place_id <= 0:
+        return text
+    try:
+        views = await cabinet_service.repository.get_place_views_sum(place_id, days=int(days))
+        coupon_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="coupon_open",
+            days=int(days),
+        )
+    except Exception:
+        logger.exception("Failed to load place activity stats place_id=%s", place_id)
+        return text
+    text += (
+        f"\n\n📊 Активність за {int(days)} днів\n"
+        f"• Перегляди картки: <b>{int(views)}</b>\n"
+        f"• Відкриття промокоду: <b>{int(coupon_opens)}</b>"
+    )
+    return text
+
+
 async def notify_admins_about_owner_request(
     message: Message,
     owner_row: dict,
@@ -936,10 +959,11 @@ async def render_place_card_updated(message: Message, *, place_id: int, note_tex
         )
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
+    card_text = await build_business_card_text(item)
     await ui_render(
         message.bot,
         chat_id=message.chat.id,
-        text=f"{note_text}\n\n{format_business_card(item)}",
+        text=f"{note_text}\n\n{card_text}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
     )
 
@@ -1998,11 +2022,12 @@ async def cb_my_business_open(callback: CallbackQuery) -> None:
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
 
     await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    card_text = await build_business_card_text(item)
     await ui_render(
         callback.message.bot,
         chat_id=callback.message.chat.id,
         prefer_message_id=callback.message.message_id,
-        text=format_business_card(item),
+        text=card_text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
     )
     await callback.answer()
