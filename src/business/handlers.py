@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import html
 import logging
 
@@ -18,7 +19,7 @@ from aiogram.types import (
     PreCheckoutQuery,
 )
 from database import create_admin_job
-from tg_buttons import STYLE_PRIMARY, STYLE_SUCCESS, ikb
+from tg_buttons import STYLE_DANGER, STYLE_PRIMARY, STYLE_SUCCESS, ikb
 
 from business.service import (
     AccessDeniedError,
@@ -135,10 +136,34 @@ SUBSCRIPTION_TITLES = {
 _PAID_TIERS = {"light", "pro", "partner"}
 
 
+def _parse_iso_utc(raw_value: str | None) -> datetime | None:
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_value))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _has_active_paid_subscription(item: dict) -> bool:
     tier = str(item.get("tier") or "free").strip().lower()
     status = str(item.get("subscription_status") or "inactive").strip().lower()
-    return tier in _PAID_TIERS and status == "active"
+    if tier not in _PAID_TIERS or status not in {"active", "canceled"}:
+        return False
+    expires_at = _parse_iso_utc(str(item.get("subscription_expires_at") or "").strip() or None)
+    if not expires_at:
+        return False
+    return expires_at > datetime.now(timezone.utc)
+
+
+def _format_expires_short(raw_value: str | None) -> str:
+    expires_at = _parse_iso_utc(raw_value)
+    if not expires_at:
+        return "—"
+    return expires_at.strftime("%d.%m.%Y %H:%M UTC")
 
 
 class AddBusinessStates(StatesGroup):
@@ -590,13 +615,43 @@ def build_plan_keyboard(
     place_id: int,
     current_tier: str,
     *,
+    current_status: str = "inactive",
+    current_expires_at: str | None = None,
     back_callback_data: str | None = None,
     source: str | None = None,
 ) -> InlineKeyboardMarkup:
     normalized_current = str(current_tier or "").strip().lower() or "free"
+    normalized_status = str(current_status or "").strip().lower() or "inactive"
+    expires_at = _parse_iso_utc(str(current_expires_at or "").strip() or None)
+    has_paid_entitlement = (
+        normalized_current in _PAID_TIERS
+        and normalized_status in {"active", "canceled"}
+        and bool(expires_at and expires_at > datetime.now(timezone.utc))
+    )
+
     buttons = []
     first_row = []
     for tier in ("free", "light"):
+        if tier == "free" and has_paid_entitlement:
+            if normalized_status == "active":
+                cancel_cb = f"bp_cancel:{place_id}:{source}" if source else f"bp_cancel:{place_id}"
+                first_row.append(
+                    ikb(
+                        text="🚫 Скасувати автопродовження",
+                        callback_data=cancel_cb,
+                        style=STYLE_DANGER,
+                    )
+                )
+            else:
+                first_row.append(
+                    ikb(
+                        text="🚫 Автопродовження скасовано",
+                        callback_data=CB_MENU_NOOP,
+                        style=STYLE_DANGER,
+                    )
+                )
+            continue
+
         title = PLAN_TITLES[tier]
         stars = PLAN_STARS.get(tier)
         if stars:
@@ -2590,6 +2645,8 @@ async def _render_place_plan_menu(
         reply_markup=build_plan_keyboard(
             place_id,
             item["tier"],
+            current_status=str(item.get("subscription_status") or "inactive"),
+            current_expires_at=str(item.get("subscription_expires_at") or "").strip() or None,
             back_callback_data=back_cb,
             source=source,
         ),
@@ -2635,6 +2692,55 @@ async def cb_plan_menu(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("bp_cancel:"))
+async def cb_cancel_auto_renew(callback: CallbackQuery) -> None:
+    payload = callback.data.split(":")
+    if len(payload) not in (2, 3):
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(payload[1])
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+    source = payload[2] if len(payload) == 3 else "card"
+
+    try:
+        subscription = await cabinet_service.cancel_subscription_auto_renew(
+            tg_user_id=callback.from_user.id,
+            place_id=place_id,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            try:
+                await _render_place_plan_menu(
+                    callback.message,
+                    tg_user_id=callback.from_user.id,
+                    place_id=place_id,
+                    source=source,
+                    prefer_message_id=callback.message.message_id,
+                    notice=str(error),
+                )
+            except Exception:
+                pass
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    if callback.message:
+        expires_label = _format_expires_short(str(subscription.get("expires_at") or "").strip() or None)
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        await _render_place_plan_menu(
+            callback.message,
+            tg_user_id=callback.from_user.id,
+            place_id=place_id,
+            source=source,
+            prefer_message_id=callback.message.message_id,
+            notice=f"✅ Автопродовження скасовано.\nТариф діє до: <b>{html.escape(expires_label)}</b>.",
+        )
+    await callback.answer("Автопродовження скасовано")
+
+
 @router.callback_query(F.data.startswith("bp:"))
 async def cb_change_plan(callback: CallbackQuery) -> None:
     payload = callback.data.split(":")
@@ -2655,6 +2761,19 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
                 tier=tier,
             )
         except (ValidationError, NotFoundError, AccessDeniedError) as error:
+            if callback.message and isinstance(error, ValidationError):
+                await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+                try:
+                    await _render_place_plan_menu(
+                        callback.message,
+                        tg_user_id=callback.from_user.id,
+                        place_id=place_id,
+                        source=source,
+                        prefer_message_id=callback.message.message_id,
+                        notice=str(error),
+                    )
+                except Exception:
+                    pass
             await callback.answer(str(error), show_alert=True)
             return
         if not callback.message:
@@ -2675,6 +2794,8 @@ async def cb_change_plan(callback: CallbackQuery) -> None:
             reply_markup=build_plan_keyboard(
                 place_id,
                 subscription["tier"],
+                current_status=str(subscription.get("status") or "inactive"),
+                current_expires_at=str(subscription.get("expires_at") or "").strip() or None,
                 back_callback_data=back_cb,
                 source=source,
             ),
@@ -2845,6 +2966,8 @@ async def cb_mock_payment_result(callback: CallbackQuery) -> None:
         reply_markup=build_plan_keyboard(
             place_id,
             current_tier,
+            current_status=str(item.get("subscription_status") if item else "inactive"),
+            current_expires_at=str(item.get("subscription_expires_at") if item else "").strip() or None,
             back_callback_data=back_cb,
             source=source,
         ),
@@ -2957,6 +3080,8 @@ async def on_successful_payment(message: Message) -> None:
         reply_markup=build_plan_keyboard(
             place_id,
             current_tier,
+            current_status=str(item.get("subscription_status") if item else "inactive"),
+            current_expires_at=str(item.get("subscription_expires_at") if item else "").strip() or None,
             back_callback_data=back_cb,
             source=source,
         ),
@@ -3032,6 +3157,8 @@ async def on_refunded_payment(message: Message) -> None:
             reply_markup=build_plan_keyboard(
                 place_id,
                 current_tier,
+                current_status=str(item.get("subscription_status") if item else "inactive"),
+                current_expires_at=str(item.get("subscription_expires_at") if item else "").strip() or None,
                 back_callback_data=back_cb,
                 source="card",
             ),

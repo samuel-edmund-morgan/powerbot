@@ -3,7 +3,7 @@
 Smoke test: paid-like purge on downgrade to Free.
 
 Validates three downgrade paths:
-1) owner manual downgrade: paid -> free
+1) owner cancel auto-renew + expiry reconcile: paid(canceled) -> free
 2) admin forced downgrade: paid -> free
 3) maintenance downgrade: past_due -> free
 
@@ -183,13 +183,13 @@ async def _run_checks(db_path: Path, place_owner: int, place_admin: int, place_r
         sys.modules["dotenv"] = dotenv_stub
 
     from business.repository import BusinessRepository  # noqa: WPS433
-    from business.service import BusinessCabinetService  # noqa: WPS433
+    from business.service import BusinessCabinetService, ValidationError  # noqa: WPS433
 
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
     now = datetime.now(timezone.utc)
 
-    # 1) Owner paid -> free
+    # 1) Owner cancel auto-renew + expiry -> free (reconcile)
     await service.change_subscription_tier(OWNER_ID, int(place_owner), "light")
     owner_start = now - timedelta(days=3)
     owner_until = now + timedelta(days=3)
@@ -203,7 +203,37 @@ async def _run_checks(db_path: Path, place_owner: int, place_admin: int, place_r
     _insert_like(db_path, place_owner, 101, _iso(owner_start - timedelta(hours=2)))  # keep
     _insert_like(db_path, place_owner, 102, _iso(owner_start + timedelta(hours=2)))  # purge
 
-    await service.change_subscription_tier(OWNER_ID, int(place_owner), "free")
+    canceled_sub = await service.cancel_subscription_auto_renew(OWNER_ID, int(place_owner))
+    _assert(str(canceled_sub.get("tier") or "") == "light", f"owner cancel tier mismatch: {canceled_sub}")
+    _assert(str(canceled_sub.get("status") or "") == "canceled", f"owner cancel status mismatch: {canceled_sub}")
+
+    # Entitlement must remain active until expiry (owner can still edit).
+    await service.update_place_field(
+        OWNER_ID,
+        int(place_owner),
+        "description",
+        "Owner still can edit while canceled but not expired",
+    )
+
+    # Immediate free downgrade must be blocked for active paid entitlement.
+    try:
+        await service.change_subscription_tier(OWNER_ID, int(place_owner), "free")
+        raise AssertionError("Expected ValidationError for immediate free after cancel")
+    except ValidationError:
+        pass
+
+    # Simulate natural period end, then lifecycle reconcile should downgrade and purge.
+    owner_expired_until = now - timedelta(hours=2)
+    _set_paid_window(
+        db_path,
+        place_owner,
+        starts_at=_iso(owner_start),
+        paid_until=_iso(owner_expired_until),
+        status="canceled",
+    )
+    owner_reconcile = await service.reconcile_subscription_states(grace_days=0)
+    _assert(int(owner_reconcile.get("changed_canceled_to_free") or 0) >= 1, f"owner reconcile mismatch: {owner_reconcile}")
+
     likes_owner = _list_like_chat_ids(db_path, place_owner)
     _assert(likes_owner == [101], f"owner downgrade likes mismatch: {likes_owner}")
     periods_owner = _periods_state(db_path, place_owner)

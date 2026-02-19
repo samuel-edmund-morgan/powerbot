@@ -90,6 +90,27 @@ def _parse_iso_utc(raw_value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _has_paid_entitlement(
+    *,
+    tier: str | None,
+    status: str | None,
+    expires_at: str | None,
+    now: datetime | None = None,
+) -> bool:
+    """Return True when paid benefits must remain active for the place owner."""
+    normalized_tier = str(tier or "").strip().lower()
+    normalized_status = str(status or "").strip().lower()
+    if normalized_tier not in PAID_TIERS:
+        return False
+    if normalized_status not in {"active", "canceled"}:
+        return False
+    expires_at_dt = _parse_iso_utc(str(expires_at or "").strip() or None)
+    if not expires_at_dt:
+        return False
+    ref_now = now or _utc_now()
+    return expires_at_dt > ref_now
+
+
 class BusinessService(Protocol):
     """Service contract used by main bot adapters."""
 
@@ -727,6 +748,7 @@ class BusinessCabinetService:
         scanned = 0
         changed_active_to_past_due = 0
         changed_past_due_to_free = 0
+        changed_canceled_to_free = 0
         cursor_place_id = 0
 
         while True:
@@ -785,6 +807,36 @@ class BusinessCabinetService:
                     changed_active_to_past_due += 1
                     continue
 
+                if status == "canceled" and expires_at_dt <= now:
+                    subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
+                        place_id=place_id,
+                        reason="maintenance_canceled_to_free",
+                        fallback_starts_at=row.get("starts_at"),
+                        fallback_paid_until=expires_at_raw,
+                    )
+                    await self.repository.write_audit_log(
+                        place_id=place_id,
+                        actor_tg_user_id=None,
+                        action="subscription_canceled_to_free",
+                        payload_json=_to_json(
+                            {
+                                "previous_tier": tier,
+                                "previous_expires_at": expires_at_raw,
+                                "after_subscription": {
+                                    "tier": str(subscription.get("tier") or ""),
+                                    "status": str(subscription.get("status") or ""),
+                                    "starts_at": subscription.get("starts_at"),
+                                    "expires_at": subscription.get("expires_at"),
+                                },
+                                "downgraded_at": downgraded_at,
+                                "likes_purged": int(purge_stats.get("removed_likes") or 0),
+                                "purge_windows": int(purge_stats.get("windows_used") or 0),
+                            }
+                        ),
+                    )
+                    changed_canceled_to_free += 1
+                    continue
+
                 grace_deadline = expires_at_dt + timedelta(days=safe_grace_days)
                 if status == "past_due" and grace_deadline <= now:
                     subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
@@ -823,7 +875,8 @@ class BusinessCabinetService:
             "scanned": scanned,
             "changed_active_to_past_due": changed_active_to_past_due,
             "changed_past_due_to_free": changed_past_due_to_free,
-            "total_changed": changed_active_to_past_due + changed_past_due_to_free,
+            "changed_canceled_to_free": changed_canceled_to_free,
+            "total_changed": changed_active_to_past_due + changed_past_due_to_free + changed_canceled_to_free,
         }
 
     async def list_user_businesses(self, tg_user_id: int) -> list[dict[str, Any]]:
@@ -1079,9 +1132,10 @@ class BusinessCabinetService:
             raise RuntimeError("Не вдалося оновити статус заявки.")
 
         subscription = await self.repository.ensure_subscription(updated["place_id"])
-        tier = subscription["tier"]
-        sub_status = subscription["status"]
-        verified_until = subscription["expires_at"] if (tier in PAID_TIERS and sub_status == "active") else None
+        tier = str(subscription.get("tier") or "").strip().lower()
+        sub_status = str(subscription.get("status") or "").strip().lower()
+        sub_expires_at = str(subscription.get("expires_at") or "").strip() or None
+        verified_until = sub_expires_at if _has_paid_entitlement(tier=tier, status=sub_status, expires_at=sub_expires_at) else None
         # New places created via business bot are created unpublished to avoid spam in resident catalog.
         # Publishing happens only after admin approval of the ownership request.
         await self.repository.set_place_published(updated["place_id"], is_published=1)
@@ -1436,11 +1490,8 @@ class BusinessCabinetService:
         subscription = await self.repository.get_subscription(place_id)
         tier = str(subscription.get("tier") or "free").strip().lower()
         status = str(subscription.get("status") or "inactive").strip().lower()
-        expires_at_dt = _parse_iso_utc(str(subscription.get("expires_at") or "").strip() or None)
-        if expires_at_dt and expires_at_dt <= _utc_now():
-            status = "inactive"
-
-        if tier not in PAID_TIERS or status != "active":
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+        if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
             raise AccessDeniedError(
                 "Редагування картки доступне лише з активною підпискою Light або вище.\n"
                 "Відкрий «Плани», щоб підключити тариф."
@@ -1485,11 +1536,8 @@ class BusinessCabinetService:
         subscription = await self.repository.get_subscription(place_id)
         tier = str(subscription.get("tier") or "free").strip().lower()
         status = str(subscription.get("status") or "inactive").strip().lower()
-        expires_at_dt = _parse_iso_utc(str(subscription.get("expires_at") or "").strip() or None)
-        if expires_at_dt and expires_at_dt <= _utc_now():
-            status = "inactive"
-
-        if tier not in PAID_TIERS or status != "active":
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+        if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Light або вище.")
 
         raw = str(value or "").strip()
@@ -1548,11 +1596,8 @@ class BusinessCabinetService:
         subscription = await self.repository.get_subscription(place_id)
         tier = str(subscription.get("tier") or "free").strip().lower()
         status = str(subscription.get("status") or "inactive").strip().lower()
-        expires_at_dt = _parse_iso_utc(str(subscription.get("expires_at") or "").strip() or None)
-        if expires_at_dt and expires_at_dt <= _utc_now():
-            status = "inactive"
-
-        if tier not in PAID_TIERS or status != "active":
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+        if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Light або вище.")
 
         ctype = str(contact_type or "").strip().lower()
@@ -1717,6 +1762,18 @@ class BusinessCabinetService:
 
         if normalized_tier == "free":
             before = await self.repository.ensure_subscription(int(place_id))
+            before_tier = str(before.get("tier") or "").strip().lower()
+            before_status = str(before.get("status") or "").strip().lower()
+            before_expires_at = str(before.get("expires_at") or "").strip() or None
+            if _has_paid_entitlement(
+                tier=before_tier,
+                status=before_status,
+                expires_at=before_expires_at,
+            ):
+                if before_status == "canceled":
+                    raise ValidationError("Автопродовження вже скасовано. Тариф залишиться активним до кінця оплаченого періоду.")
+                raise ValidationError("Щоб перейти на Free, спочатку скасуй автопродовження. Доступ залишиться до кінця оплаченого періоду.")
+
             sub_status = "inactive"
             starts_at = None
             expires_at = None
@@ -1755,6 +1812,70 @@ class BusinessCabinetService:
             place_id=place_id,
             tier=normalized_tier,
         )
+
+    async def cancel_subscription_auto_renew(
+        self,
+        tg_user_id: int,
+        place_id: int,
+    ) -> dict[str, Any]:
+        """Cancel auto-renew while preserving paid access until expires_at."""
+        can_manage = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_manage:
+            raise AccessDeniedError("Ти можеш керувати підпискою лише своїх підтверджених закладів.")
+
+        subscription = await self.repository.ensure_subscription(int(place_id))
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        starts_at = subscription.get("starts_at")
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+
+        if tier not in PAID_TIERS:
+            raise ValidationError("На цьому закладі немає активного платного тарифу.")
+
+        has_entitlement = _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at)
+        if status == "canceled" and has_entitlement:
+            raise ValidationError("Автопродовження вже скасовано для цього тарифу.")
+        if not has_entitlement:
+            raise ValidationError("Платний період уже завершено. Обери новий тариф у меню «Плани».")
+        if status != "active":
+            raise ValidationError("Автопродовження можна скасувати лише для активної підписки.")
+
+        updated = await self.repository.update_subscription(
+            place_id=int(place_id),
+            tier=tier,
+            status="canceled",
+            starts_at=starts_at,
+            expires_at=expires_at,
+        )
+        await self.repository.update_place_business_flags(
+            int(place_id),
+            business_enabled=1,
+            is_verified=1,
+            verified_tier=tier,
+            verified_until=expires_at,
+        )
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(tg_user_id),
+            action="subscription_cancel_requested",
+            payload_json=_to_json(
+                {
+                    "before_subscription": {
+                        "tier": tier,
+                        "status": status,
+                        "starts_at": starts_at,
+                        "expires_at": expires_at,
+                    },
+                    "after_subscription": {
+                        "tier": str(updated.get("tier") or ""),
+                        "status": str(updated.get("status") or ""),
+                        "starts_at": updated.get("starts_at"),
+                        "expires_at": updated.get("expires_at"),
+                    },
+                }
+            ),
+        )
+        return updated
 
     async def create_mock_payment_intent(
         self,
