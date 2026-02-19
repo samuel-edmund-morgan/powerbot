@@ -340,6 +340,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_owner_admin_downgrade_policy.py"
 echo "Running business UI copy hygiene smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
 
+# Automated smoke: business owner card activity stats block (views + coupon opens).
+echo "Running business card activity stats policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
+
 # Automated smoke: businessbot single-message rendering policy.
 echo "Running business single-message policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_single_message_policy.py"

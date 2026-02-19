@@ -532,6 +532,27 @@ class BusinessRepository:
                 row = await cur.fetchone()
                 return int(row[0] if row and row[0] is not None else 0)
 
+    async def get_place_clicks_sum(self, place_id: int, *, action: str, days: int) -> int:
+        """Get total clicks for a place/action for the last N days (including today)."""
+        safe_days = max(1, min(int(days), 3650))
+        offset = f"-{safe_days - 1} days"
+        normalized_action = str(action or "").strip().lower()
+        if not normalized_action:
+            return 0
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT COALESCE(SUM(cnt), 0) AS cnt
+                  FROM place_clicks_daily
+                 WHERE place_id = ?
+                   AND action = ?
+                   AND day >= date('now','localtime', ?)
+                """,
+                (int(place_id), normalized_action, offset),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row and row[0] is not None else 0)
+
     async def list_service_place_views(self, service_id: int, *, days: int) -> list[dict[str, int]]:
         """Get per-place views for published places in a category, sorted by popularity."""
         safe_days = max(1, min(int(days), 3650))
