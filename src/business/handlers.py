@@ -32,6 +32,7 @@ from business.service import (
     ValidationError,
 )
 from business.payments import SUBSCRIPTION_PERIOD_SECONDS
+from business.plans import PAID_TIERS, PLAN_STARS_PRICES, PLAN_TITLES
 from business.ui import (
     bind_ui_message_id,
     render as ui_render,
@@ -113,18 +114,6 @@ CB_QR_OPEN_PREFIX = "bqr:"
 CB_FREE_EDIT_REQUEST_PREFIX = "bfr:"
 CB_FREE_EDIT_REQUEST_CANCEL_PREFIX = "bfrc:"
 
-PLAN_TITLES = {
-    "free": "Free",
-    "light": "Light",
-    "pro": "Premium",
-    "partner": "Partner",
-}
-PLAN_STARS = {
-    "light": 1000,
-    "pro": 2500,
-    "partner": 5000,
-}
-
 OWNERSHIP_TITLES = {
     "approved": "✅ Підтверджено",
     "pending": "🕓 Очікує модерації",
@@ -137,9 +126,6 @@ SUBSCRIPTION_TITLES = {
     "past_due": "🟠 Потрібне продовження",
     "canceled": "🔴 Скасована",
 }
-
-_PAID_TIERS = {"light", "pro", "partner"}
-
 
 def _parse_iso_utc(raw_value: str | None) -> datetime | None:
     if not raw_value:
@@ -156,7 +142,7 @@ def _parse_iso_utc(raw_value: str | None) -> datetime | None:
 def _has_active_paid_subscription(item: dict) -> bool:
     tier = str(item.get("tier") or "free").strip().lower()
     status = str(item.get("subscription_status") or "inactive").strip().lower()
-    if tier not in _PAID_TIERS or status not in {"active", "canceled"}:
+    if tier not in PAID_TIERS or status not in {"active", "canceled"}:
         return False
     expires_at = _parse_iso_utc(str(item.get("subscription_expires_at") or "").strip() or None)
     if not expires_at:
@@ -739,7 +725,7 @@ def build_plan_keyboard(
     normalized_current = str(current_tier or "").strip().lower() or "free"
     normalized_status = str(current_status or "").strip().lower() or "inactive"
     expires_at = _parse_iso_utc(str(current_expires_at or "").strip() or None)
-    is_paid_tier = normalized_current in _PAID_TIERS
+    is_paid_tier = normalized_current in PAID_TIERS
     has_paid_entitlement = (
         is_paid_tier
         and normalized_status in {"active", "canceled"}
@@ -771,7 +757,7 @@ def build_plan_keyboard(
             continue
 
         title = PLAN_TITLES[tier]
-        stars = PLAN_STARS.get(tier)
+        stars = PLAN_STARS_PRICES.get(tier)
         if stars:
             title = f"{title} ({stars}⭐)"
         if tier == normalized_current:
@@ -784,7 +770,7 @@ def build_plan_keyboard(
     second_row = []
     for tier in ("pro", "partner"):
         title = PLAN_TITLES[tier]
-        stars = PLAN_STARS.get(tier)
+        stars = PLAN_STARS_PRICES.get(tier)
         if stars:
             title = f"{title} ({stars}⭐)"
         if tier == normalized_current:
@@ -3238,7 +3224,7 @@ async def _render_place_plan_menu(
     sub_expires_raw = str(item.get("subscription_expires_at") or "").strip() or None
     sub_expires_dt = _parse_iso_utc(sub_expires_raw)
     if (
-        tier_now in _PAID_TIERS
+        tier_now in PAID_TIERS
         and sub_status_now == "canceled"
         and sub_expires_dt
         and sub_expires_dt > datetime.now(timezone.utc)

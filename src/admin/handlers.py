@@ -35,6 +35,7 @@ from database import (
 )
 from admin.ui import escape, render, try_delete_user_message
 from business.repository import BusinessRepository
+from business.plans import PLAN_TITLES
 from business.service import AccessDeniedError as BusinessAccessDeniedError
 from business.service import BusinessCabinetService
 from business.service import NotFoundError as BusinessNotFoundError
@@ -1029,15 +1030,7 @@ def _subscription_status_title(raw: str | None) -> str:
 
 def _subscription_tier_title(raw: str | None) -> str:
     tier = (raw or "").strip().lower()
-    if tier == "light":
-        return "Light"
-    if tier == "pro":
-        return "Pro"
-    if tier == "partner":
-        return "Partner"
-    if tier == "free":
-        return "Free"
-    return tier or "Free"
+    return PLAN_TITLES.get(tier, tier or PLAN_TITLES["free"])
 
 
 def _owner_status_title(raw: str | None) -> str:
