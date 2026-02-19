@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 JOB_KIND_BROADCAST = "broadcast"
 JOB_KIND_LIGHT_NOTIFY = "light_notify"
 JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
+JOB_KIND_ADMIN_PLACE_REPORT_ALERT = "admin_place_report_alert"
 JOB_KIND_SENSORS_FREEZE_ALL = "sensors_freeze_all"
 JOB_KIND_SENSORS_UNFREEZE_ALL = "sensors_unfreeze_all"
 SENSORS_FREEZE_FOREVER_MODE = "forever"
@@ -213,6 +214,53 @@ def _owner_request_alert_keyboard(*, request_id: int, deep_link_url: str | None 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _render_place_report_alert_text(payload: dict, *, deep_link_url: str | None = None) -> str:
+    report_id = int(payload.get("report_id") or 0)
+    place_id = int(payload.get("place_id") or 0)
+    place_name = html.escape(str(payload.get("place_name") or f"place_id={place_id}"))
+    reporter_tg_user_id = int(payload.get("reporter_tg_user_id") or 0)
+    reporter_username = str(payload.get("reporter_username") or "").strip()
+    reporter_first_name = str(payload.get("reporter_first_name") or "").strip()
+    reporter_last_name = str(payload.get("reporter_last_name") or "").strip()
+    full_name = " ".join(part for part in [reporter_first_name, reporter_last_name] if part).strip()
+    if reporter_username:
+        reporter_label = f"@{html.escape(reporter_username)}"
+    elif full_name:
+        reporter_label = html.escape(full_name)
+    else:
+        reporter_label = html.escape(str(reporter_tg_user_id))
+    if reporter_tg_user_id > 0:
+        reporter_link = f'<a href="tg://user?id={reporter_tg_user_id}">{reporter_label}</a>'
+    else:
+        reporter_link = reporter_label
+    report_text = html.escape(str(payload.get("report_text") or "").strip())
+    created_at = html.escape(str(payload.get("created_at") or ""))
+    text = (
+        "📝 Нова правка до картки закладу\n\n"
+        f"Репорт: <code>{report_id}</code>\n"
+        f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Від: {reporter_link} / <code>{reporter_tg_user_id}</code>\n"
+        f"Створено: {created_at}\n\n"
+        f"Текст:\n{report_text}\n\n"
+        "⚙️ Перевір в <b>adminbot</b> → <b>Бізнес</b> → <b>Правки закладів</b>."
+    )
+    if deep_link_url:
+        safe_url = html.escape(deep_link_url, quote=True)
+        text += f"\n🔗 Швидкий перехід: <a href=\"{safe_url}\">відкрити репорт</a>."
+    return text
+
+
+def _place_report_alert_keyboard(*, report_id: int, deep_link_url: str | None = None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="📝 Відкрити репорт", callback_data=f"abiz_reports_jump|{int(report_id)}")],
+        [InlineKeyboardButton(text="🧭 Всі правки", callback_data="abiz_reports")],
+    ]
+    if deep_link_url:
+        rows.append([InlineKeyboardButton(text="🔗 Deep-link", url=deep_link_url)])
+    rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="admin_refresh")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def _resolve_admin_bot_username(bot: Bot) -> str | None:
     global _ADMIN_BOT_USERNAME_CACHE, _ADMIN_BOT_USERNAME_RESOLVED
     if _ADMIN_BOT_USERNAME_RESOLVED:
@@ -226,6 +274,56 @@ async def _resolve_admin_bot_username(bot: Bot) -> str | None:
         logger.exception("Failed to resolve admin bot username for deep-link")
         _ADMIN_BOT_USERNAME_CACHE = None
     return _ADMIN_BOT_USERNAME_CACHE
+
+
+async def _handle_admin_place_report_alert(job: dict) -> tuple[int, int]:
+    payload = job.get("payload") or {}
+    report_id = int(payload.get("report_id") or 0)
+    place_id = int(payload.get("place_id") or 0)
+    reporter_tg_user_id = int(payload.get("reporter_tg_user_id") or 0)
+    if report_id <= 0 or place_id <= 0 or reporter_tg_user_id <= 0:
+        raise ValueError("admin_place_report_alert requires report_id/place_id/reporter_tg_user_id")
+    if not CFG.admin_ids:
+        raise ValueError("admin_place_report_alert requires non-empty ADMIN_IDS")
+    if not (CFG.admin_bot_api_key or "").strip():
+        raise ValueError("admin_place_report_alert requires non-empty ADMIN_BOT_API_KEY")
+
+    total = len(CFG.admin_ids)
+    sent_ok = 0
+
+    admin_bot = Bot(
+        token=CFG.admin_bot_api_key,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        admin_bot_username = await _resolve_admin_bot_username(admin_bot)
+        safe_username = str(admin_bot_username or "").strip().lstrip("@")
+        deep_link_url = f"https://t.me/{safe_username}?start=brep_{report_id}" if safe_username else None
+        text = _render_place_report_alert_text(payload, deep_link_url=deep_link_url)
+        kb = _place_report_alert_keyboard(report_id=report_id, deep_link_url=deep_link_url)
+        for admin_id in CFG.admin_ids:
+            try:
+                await render_admin_ui(
+                    admin_bot,
+                    chat_id=int(admin_id),
+                    text=text,
+                    reply_markup=kb,
+                    force_new_message=True,
+                )
+                sent_ok += 1
+            except Exception:
+                logger.exception(
+                    "Failed to send admin place-report alert to admin_id=%s report_id=%s",
+                    admin_id,
+                    report_id,
+                )
+    finally:
+        try:
+            await admin_bot.session.close()
+        except Exception:
+            pass
+
+    return sent_ok, total
 
 
 async def _handle_admin_owner_request_alert(job: dict) -> tuple[int, int]:
@@ -299,6 +397,8 @@ async def admin_jobs_worker_loop(bot: Bot, *, poll_interval_sec: float = 1.0) ->
                     done_current, done_total = await _handle_broadcast(bot, job)
                 elif kind == JOB_KIND_ADMIN_OWNER_REQUEST_ALERT:
                     done_current, done_total = await _handle_admin_owner_request_alert(job)
+                elif kind == JOB_KIND_ADMIN_PLACE_REPORT_ALERT:
+                    done_current, done_total = await _handle_admin_place_report_alert(job)
                 elif kind == JOB_KIND_SENSORS_FREEZE_ALL:
                     done_current, done_total = await _handle_sensors_freeze_all(job)
                 elif kind == JOB_KIND_SENSORS_UNFREEZE_ALL:

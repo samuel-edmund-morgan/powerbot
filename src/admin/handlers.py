@@ -30,6 +30,8 @@ from database import (
     get_building_by_id,
     get_building_section_ids,
     default_section_for_building,
+    list_place_reports,
+    set_place_report_status,
 )
 from admin.ui import escape, render, try_delete_user_message
 from business.repository import BusinessRepository
@@ -60,6 +62,10 @@ CB_BIZ_MOD_PAGE_PREFIX = "abiz_mod_page|"
 CB_BIZ_MOD_JUMP_PREFIX = "abiz_mod_jump|"
 CB_BIZ_MOD_APPROVE_PREFIX = "abiz_mod_approve|"
 CB_BIZ_MOD_REJECT_PREFIX = "abiz_mod_reject|"
+CB_BIZ_REPORTS = "abiz_reports"
+CB_BIZ_REPORTS_PAGE_PREFIX = "abiz_reports_page|"
+CB_BIZ_REPORTS_JUMP_PREFIX = "abiz_reports_jump|"
+CB_BIZ_REPORTS_RESOLVE_PREFIX = "abiz_reports_resolve|"
 
 CB_BIZ_TOK_MENU = "abiz_tok_menu"
 CB_BIZ_TOK_LIST = "abiz_tok_list"
@@ -232,6 +238,20 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject 
     await state.clear()
     await try_delete_user_message(message)
     args = str(command.args or "").strip() if command else ""
+    if args.startswith("brep_"):
+        try:
+            report_id = int(args.split("_", 1)[1])
+        except Exception:
+            report_id = 0
+        if report_id > 0:
+            await _render_business_reports(
+                message.bot,
+                message.chat.id,
+                index=0,
+                report_id=report_id,
+                prefer_message_id=None,
+            )
+            return
     if args.startswith("bmod_"):
         try:
             owner_id = int(args.split("_", 1)[1])
@@ -950,20 +970,21 @@ def _biz_menu_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="🛡 Модерація", callback_data=CB_BIZ_MOD),
+                InlineKeyboardButton(text="📝 Правки закладів", callback_data=CB_BIZ_REPORTS),
+            ],
+            [
                 InlineKeyboardButton(text="🔐 Коди прив'язки", callback_data=CB_BIZ_TOK_MENU),
-            ],
-            [
                 InlineKeyboardButton(text="🏢 Заклади", callback_data=CB_BIZ_PLACES_MENU),
+            ],
+            [
                 InlineKeyboardButton(text="💳 Підписки", callback_data=CB_BIZ_SUBS),
-            ],
-            [
                 InlineKeyboardButton(text="➕ Додати заклад", callback_data=CB_BIZ_CREATE_PLACE_MENU),
-                InlineKeyboardButton(text="🗂 Категорії", callback_data=CB_BIZ_CATEGORIES_MENU),
             ],
             [
+                InlineKeyboardButton(text="🗂 Категорії", callback_data=CB_BIZ_CATEGORIES_MENU),
                 InlineKeyboardButton(text="💸 Платежі", callback_data=CB_BIZ_PAYMENTS),
-                InlineKeyboardButton(text="📒 Аудит", callback_data=CB_BIZ_AUDIT),
             ],
+            [InlineKeyboardButton(text="📒 Аудит", callback_data=CB_BIZ_AUDIT)],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh")],
         ]
     )
@@ -1932,6 +1953,106 @@ async def _render_business_moderation(
     )
 
 
+def _biz_reports_keyboard(item: dict, *, index: int, total: int) -> InlineKeyboardMarkup:
+    report_id = int(item.get("id") or 0)
+    place_id = int(item.get("place_id") or 0)
+    service_id = int(item.get("service_id") or 0)
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="✅ Позначити опрацьованим", callback_data=f"{CB_BIZ_REPORTS_RESOLVE_PREFIX}{report_id}|{index}")],
+    ]
+    if place_id > 0 and service_id > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🏢 Відкрити заклад",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}all|{place_id}|{service_id}|0|0",
+                )
+            ]
+        )
+    if total > 1:
+        nav: list[InlineKeyboardButton] = []
+        if index > 0:
+            nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CB_BIZ_REPORTS_PAGE_PREFIX}{index - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data=CB_ADMIN_NOOP))
+        if index < total - 1:
+            nav.append(InlineKeyboardButton(text="➡️", callback_data=f"{CB_BIZ_REPORTS_PAGE_PREFIX}{index + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _render_business_reports(
+    bot: Bot,
+    chat_id: int,
+    *,
+    index: int,
+    report_id: int | None = None,
+    prefer_message_id: int | None = None,
+) -> None:
+    try:
+        rows, total = await list_place_reports(status="pending", limit=5000, offset=0)
+    except Exception:
+        logger.exception("Failed to load place reports moderation queue")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження правок.")
+        return
+    if total <= 0 or not rows:
+        await render(
+            bot,
+            chat_id=chat_id,
+            text="📝 <b>Правки закладів</b>\n\nЧерга порожня.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                    [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+                ]
+            ),
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    visible_total = len(rows)
+    safe_index = max(0, min(int(index), visible_total - 1))
+    notice = ""
+    if report_id is not None and int(report_id) > 0:
+        found = next((i for i, row in enumerate(rows) if int(row.get("id") or 0) == int(report_id)), None)
+        if found is not None:
+            safe_index = int(found)
+        else:
+            notice = f"⚠️ Репорт <code>{int(report_id)}</code> не знайдено в pending-черзі.\n\n"
+
+    item = rows[safe_index]
+    reporter_contact = _format_tg_contact(
+        tg_user_id=item.get("reporter_tg_user_id"),
+        username=item.get("reporter_username"),
+        first_name=item.get("reporter_first_name"),
+    )
+    place_name = escape(str(item.get("place_name") or f"ID {int(item.get('place_id') or 0)}"))
+    place_address = escape(str(item.get("place_address") or "—"))
+    service_name = escape(str(item.get("service_name") or "—"))
+    report_text = escape(str(item.get("report_text") or "—"))
+    text = (
+        "📝 <b>Правки закладів</b>\n\n"
+        f"{notice}"
+        f"Репорт: <code>{int(item.get('id') or 0)}</code>\n"
+        f"Заклад: <b>{place_name}</b> (ID: <code>{int(item.get('place_id') or 0)}</code>)\n"
+        f"Категорія: {service_name}\n"
+        f"Адреса: {place_address}\n"
+        f"Від: {reporter_contact}\n"
+        f"Створено: {escape(str(item.get('created_at') or ''))}\n\n"
+        f"Текст:\n{report_text}"
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=_biz_reports_keyboard(item, index=safe_index, total=visible_total),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
 @router.callback_query(F.data == CB_BIZ_MOD)
 async def cb_business_moderation(callback: CallbackQuery) -> None:
     if not await _require_admin_callback(callback):
@@ -1976,6 +2097,88 @@ async def cb_business_moderation_jump(callback: CallbackQuery) -> None:
         callback.message.chat.id,
         index=0,
         owner_id=owner_id if owner_id > 0 else None,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_REPORTS)
+async def cb_business_reports(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_business_reports(
+        callback.bot,
+        callback.message.chat.id,
+        index=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_REPORTS_PAGE_PREFIX))
+async def cb_business_reports_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        index = int(callback.data.split("|", 1)[1])
+    except Exception:
+        index = 0
+    await _render_business_reports(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_REPORTS_JUMP_PREFIX))
+async def cb_business_reports_jump(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        report_id = int(callback.data.split("|", 1)[1])
+    except Exception:
+        report_id = 0
+    await _render_business_reports(
+        callback.bot,
+        callback.message.chat.id,
+        index=0,
+        report_id=report_id if report_id > 0 else None,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_REPORTS_RESOLVE_PREFIX))
+async def cb_business_reports_resolve(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    raw = callback.data[len(CB_BIZ_REPORTS_RESOLVE_PREFIX) :]
+    parts = raw.split("|", 1)
+    if len(parts) != 2:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        report_id = int(parts[0])
+        index = int(parts[1])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await set_place_report_status(report_id, "resolved", resolved_by=int(callback.from_user.id))
+    except Exception:
+        logger.exception("Failed to resolve place report report_id=%s", report_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+    if not updated:
+        await callback.answer("⚠️ Репорт уже опрацьовано або не знайдено", show_alert=True)
+    else:
+        await callback.answer("✅ Позначено як опрацьований")
+    await _render_business_reports(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
         prefer_message_id=callback.message.message_id,
     )
 

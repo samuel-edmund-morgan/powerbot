@@ -336,6 +336,25 @@ async def init_db():
             )"""
         )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_place_views_daily_day ON place_views_daily (day)")
+        # Репорти мешканців про неточності в картках закладів (модерація в adminbot).
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS place_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                reporter_tg_user_id INTEGER NOT NULL,
+                reporter_username TEXT DEFAULT NULL,
+                reporter_first_name TEXT DEFAULT NULL,
+                reporter_last_name TEXT DEFAULT NULL,
+                report_text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                resolved_at TEXT DEFAULT NULL,
+                resolved_by INTEGER DEFAULT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_place_reports_status_created ON place_reports (status, created_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_place_reports_place_id ON place_reports (place_id)")
         # Таблиця лайків укриттів
         await db.execute(
             """CREATE TABLE IF NOT EXISTS shelter_likes (
@@ -2108,6 +2127,194 @@ async def record_place_view(place_id: int) -> None:
         await _with_sqlite_retry(_op)
     except Exception:
         logger.exception("Failed to record place view place_id=%s", place_id)
+
+
+# ============ Функції для репортів про заклади ============
+
+_PLACE_REPORT_STATUSES = {"pending", "resolved", "rejected"}
+
+
+async def create_place_report(
+    *,
+    place_id: int,
+    reporter_tg_user_id: int,
+    reporter_username: str | None,
+    reporter_first_name: str | None,
+    reporter_last_name: str | None,
+    report_text: str,
+) -> dict | None:
+    text = str(report_text or "").strip()
+    if not text:
+        return None
+
+    now = datetime.now().isoformat()
+
+    async def _op() -> dict | None:
+        async with open_db() as db:
+            # Ensure place exists and is visible to residents.
+            async with db.execute("SELECT id FROM places WHERE id=? AND is_published=1", (int(place_id),)) as cur:
+                row = await cur.fetchone()
+            if not row:
+                return None
+
+            cursor = await db.execute(
+                """
+                INSERT INTO place_reports (
+                    place_id,
+                    reporter_tg_user_id,
+                    reporter_username,
+                    reporter_first_name,
+                    reporter_last_name,
+                    report_text,
+                    status,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    int(place_id),
+                    int(reporter_tg_user_id),
+                    str(reporter_username or "").strip() or None,
+                    str(reporter_first_name or "").strip() or None,
+                    str(reporter_last_name or "").strip() or None,
+                    text,
+                    now,
+                ),
+            )
+            report_id = int(cursor.lastrowid)
+            await db.commit()
+            return {
+                "id": report_id,
+                "place_id": int(place_id),
+                "reporter_tg_user_id": int(reporter_tg_user_id),
+                "report_text": text,
+                "status": "pending",
+                "created_at": now,
+            }
+
+    return await _with_sqlite_retry(_op)
+
+
+async def list_place_reports(
+    *,
+    status: str | None = "pending",
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    safe_limit = max(1, min(int(limit), 5000))
+    safe_offset = max(0, int(offset))
+    safe_status = str(status).strip().lower() if status is not None else None
+    if safe_status is not None and safe_status not in _PLACE_REPORT_STATUSES:
+        raise ValueError(f"Invalid place report status: {status}")
+
+    where_sql = ""
+    params: list[object] = []
+    if safe_status is not None:
+        where_sql = " WHERE pr.status = ? "
+        params.append(safe_status)
+
+    async def _op() -> tuple[list[dict], int]:
+        async with open_db() as db:
+            async with db.execute(
+                f"""
+                SELECT COUNT(*)
+                  FROM place_reports pr
+                {where_sql}
+                """,
+                tuple(params),
+            ) as cur_count:
+                count_row = await cur_count.fetchone()
+            total = int(count_row[0]) if count_row else 0
+
+            async with db.execute(
+                f"""
+                SELECT
+                    pr.id,
+                    pr.place_id,
+                    p.service_id,
+                    p.name,
+                    p.address,
+                    gs.name,
+                    pr.reporter_tg_user_id,
+                    pr.reporter_username,
+                    pr.reporter_first_name,
+                    pr.reporter_last_name,
+                    pr.report_text,
+                    pr.status,
+                    pr.created_at,
+                    pr.resolved_at,
+                    pr.resolved_by
+                FROM place_reports pr
+                LEFT JOIN places p ON p.id = pr.place_id
+                LEFT JOIN general_services gs ON gs.id = p.service_id
+                {where_sql}
+                ORDER BY pr.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple([*params, safe_limit, safe_offset]),
+            ) as cur:
+                rows = await cur.fetchall()
+
+        result = [
+            {
+                "id": int(r[0]),
+                "place_id": int(r[1]) if r[1] is not None else 0,
+                "service_id": int(r[2]) if r[2] is not None else 0,
+                "place_name": r[3] or "",
+                "place_address": r[4] or "",
+                "service_name": r[5] or "",
+                "reporter_tg_user_id": int(r[6]) if r[6] is not None else 0,
+                "reporter_username": r[7] or "",
+                "reporter_first_name": r[8] or "",
+                "reporter_last_name": r[9] or "",
+                "report_text": r[10] or "",
+                "status": r[11] or "",
+                "created_at": r[12] or "",
+                "resolved_at": r[13] or "",
+                "resolved_by": int(r[14]) if r[14] is not None else None,
+            }
+            for r in rows
+        ]
+        return result, total
+
+    return await _with_sqlite_retry(_op)
+
+
+async def set_place_report_status(report_id: int, status: str, *, resolved_by: int | None = None) -> bool:
+    safe_status = str(status or "").strip().lower()
+    if safe_status not in _PLACE_REPORT_STATUSES:
+        raise ValueError(f"Invalid place report status: {status}")
+    now = datetime.now().isoformat()
+
+    if safe_status == "pending":
+        resolved_at = None
+        resolved_by_value = None
+    else:
+        resolved_at = now
+        resolved_by_value = int(resolved_by) if resolved_by is not None else None
+
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                """
+                UPDATE place_reports
+                   SET status=?,
+                       resolved_at=?,
+                       resolved_by=?
+                 WHERE id=?
+                   AND status <> ?
+                """,
+                (
+                    safe_status,
+                    resolved_at,
+                    resolved_by_value,
+                    int(report_id),
+                    safe_status,
+                ),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
 
 
 # ============ Функції для лайків закладів ============

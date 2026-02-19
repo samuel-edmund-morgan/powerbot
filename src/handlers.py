@@ -151,6 +151,10 @@ class AddPlaceStates(StatesGroup):
     waiting_for_keywords = State()
 
 
+class PlaceReportStates(StatesGroup):
+    waiting_for_text = State()
+
+
 # Маппінг будинків до файлів карт (винесено для повторного використання)
 BUILDING_MAPS = {
     "Честер (28-д)": "Честер 28-д.png",
@@ -2055,34 +2059,28 @@ def build_place_detail_keyboard(
         # Keep at most 2 buttons in a row to avoid cramped UI.
         rows.append(top_row[:2])
     rows.append([like_btn])
+    rows.append([InlineKeyboardButton(text="⚠️ Запропонувати правку", callback_data=f"plrep_{place_id}")])
     rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"places_cat_{service_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.callback_query(F.data.startswith("place_"))
-async def cb_place_detail(callback: CallbackQuery):
-    """Показати інформацію про заклад з картою."""
-    from database import get_place, get_general_service, has_liked_place, get_place_likes_count, record_place_view
+async def _render_place_detail_message(message: Message, *, place_id: int, user_id: int) -> bool:
+    """Render place detail in-place. Returns False when place is unavailable."""
+    from database import get_place, has_liked_place, get_place_likes_count, record_place_view
     from business import get_business_service, is_business_feature_enabled
-    
-    place_id = int(callback.data.split("_")[1])
+
     place = await get_place(place_id)
-    
     if not place:
-        await callback.answer("Заклад не знайдено", show_alert=True)
-        return
+        return False
 
     # Best-effort analytics: do not break UX on failure.
     await record_place_view(place_id)
-    
-    service = await get_general_service(place["service_id"])
+
     admin_tag = CFG.admin_tag or "адміністратору"
-    
-    # Перевіряємо чи користувач лайкнув
-    user_liked = await has_liked_place(place_id, callback.from_user.id)
+
+    user_liked = await has_liked_place(place_id, user_id)
     likes_count = await get_place_likes_count(place_id)
-    
-    # Add business badge only when feature flag is enabled.
+
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     text = f"🏢 <b>{place_enriched['name']}</b>\n\n"
     if is_business_feature_enabled() and place_enriched.get("is_verified"):
@@ -2097,47 +2095,225 @@ async def cb_place_detail(callback: CallbackQuery):
         promo_code = str(place_enriched.get("promo_code") or "").strip()
         if promo_code:
             text += f"🎟 <b>Промокод:</b> <code>{html.escape(promo_code)}</code>\n\n"
-    
+
     if place_enriched["description"]:
         text += f"📝 {place_enriched['description']}\n\n"
-    
+
     if place_enriched["address"]:
         text += f"📍 <b>Адреса:</b> {place_enriched['address']}\n\n"
-    
+
     text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
     text += f"💬 Побачили помилку? Хочете додати детальніший опис? Пишіть {admin_tag}"
-    
-    # Визначаємо карту за будинком з адреси
+
     map_file = get_map_file_for_address(place_enriched["address"])
-    
+
     keyboard = build_place_detail_keyboard(
         place_enriched,
         likes_count=likes_count,
         user_liked=user_liked,
         business_enabled=is_business_feature_enabled(),
     )
-    
+
     if map_file:
-        # Видаляємо старе повідомлення і відправляємо фото з підписом
         try:
-            await callback.message.delete()
+            await message.delete()
         except Exception:
             pass
-        
+
         photo = FSInputFile(map_file)
-        await callback.message.answer_photo(
+        await message.answer_photo(
             photo=photo,
             caption=text,
-            reply_markup=keyboard
+            reply_markup=keyboard,
         )
     else:
-        # Якщо карти немає - просто текст
-        await callback.message.edit_text(
-            text,
-            reply_markup=keyboard
-        )
-    
+        try:
+            await message.edit_text(text, reply_markup=keyboard)
+        except Exception:
+            await message.answer(text, reply_markup=keyboard)
+    return True
+
+
+@router.callback_query(F.data.startswith("place_"))
+async def cb_place_detail(callback: CallbackQuery):
+    """Показати інформацію про заклад з картою."""
+    try:
+        place_id = int(callback.data.split("_")[1])
+    except Exception:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
+
+    shown = await _render_place_detail_message(
+        callback.message,
+        place_id=place_id,
+        user_id=int(callback.from_user.id),
+    )
+    if not shown:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
     await callback.answer()
+
+
+def _build_place_report_keyboard(place_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data=f"plrep_cancel_{place_id}")],
+            [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
+        ]
+    )
+
+
+@router.callback_query(F.data.regexp(r"^plrep_\d+$"))
+async def cb_place_report_start(callback: CallbackQuery, state: FSMContext) -> None:
+    from database import get_place
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await callback.answer("❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
+
+    search_waiting_users.discard(callback.message.chat.id)
+    await state.set_state(PlaceReportStates.waiting_for_text)
+    await state.update_data(place_report_place_id=place_id)
+
+    text = (
+        "📝 <b>Запропонувати правку</b>\n\n"
+        f"Заклад: <b>{html.escape(str(place.get('name') or '—'))}</b>\n\n"
+        "Опишіть, що потрібно виправити в картці закладу.\n"
+        "Наприклад: графік роботи, контакти, опис або адресу.\n\n"
+        "Ліміт: до 600 символів."
+    )
+    kb = _build_place_report_keyboard(place_id)
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=text, reply_markup=kb)
+        else:
+            await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("plrep_cancel_"))
+async def cb_place_report_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        place_id = int(callback.data.split("_", 2)[2])
+    except Exception:
+        place_id = 0
+    await state.clear()
+    if place_id > 0:
+        shown = await _render_place_detail_message(
+            callback.message,
+            place_id=place_id,
+            user_id=int(callback.from_user.id),
+        )
+        if not shown:
+            await callback.answer("Скасовано")
+            return
+    else:
+        await callback.message.edit_text(
+            "Скасовано.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+            ),
+        )
+    await callback.answer("Скасовано")
+
+
+@router.message(PlaceReportStates.waiting_for_text, F.text & ~F.text.startswith("/"))
+async def msg_place_report_submit(message: Message, state: FSMContext) -> None:
+    from database import create_place_report, create_admin_job, get_place
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer("❌ Порожній текст. Опишіть, що потрібно виправити.")
+        return
+    if len(raw) > 600:
+        await message.answer("❌ Занадто довгий текст. Максимум 600 символів.")
+        return
+
+    data = await state.get_data()
+    place_id = int(data.get("place_report_place_id") or 0)
+    if place_id <= 0:
+        await state.clear()
+        await message.answer(
+            "❌ Не вдалося визначити заклад. Спробуйте ще раз.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+            ),
+        )
+        return
+
+    from_user = message.from_user
+    report = await create_place_report(
+        place_id=place_id,
+        reporter_tg_user_id=int(from_user.id if from_user else message.chat.id),
+        reporter_username=str(from_user.username or "") if from_user else "",
+        reporter_first_name=str(from_user.first_name or "") if from_user else "",
+        reporter_last_name=str(from_user.last_name or "") if from_user else "",
+        report_text=raw,
+    )
+    if not report:
+        await state.clear()
+        await message.answer(
+            "❌ Заклад не знайдено або він недоступний.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+            ),
+        )
+        return
+
+    place = await get_place(place_id)
+    place_name = str((place or {}).get("name") or f"ID {place_id}")
+    payload = {
+        "report_id": int(report["id"]),
+        "place_id": place_id,
+        "place_name": place_name,
+        "reporter_tg_user_id": int(from_user.id if from_user else message.chat.id),
+        "reporter_username": str(from_user.username or "") if from_user else "",
+        "reporter_first_name": str(from_user.first_name or "") if from_user else "",
+        "reporter_last_name": str(from_user.last_name or "") if from_user else "",
+        "report_text": raw,
+        "created_at": str(report.get("created_at") or ""),
+    }
+    try:
+        await create_admin_job(
+            "admin_place_report_alert",
+            payload,
+            created_by=int(from_user.id if from_user else message.chat.id),
+        )
+    except Exception:
+        logger.exception("Failed to enqueue admin_place_report_alert report_id=%s", report.get("id"))
+
+    await state.clear()
+    await message.answer(
+        "✅ Дякуємо! Передали правку адміну на модерацію.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 До закладу", callback_data=f"place_{place_id}")],
+                [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
+            ]
+        ),
+    )
+
+
+@router.message(PlaceReportStates.waiting_for_text)
+async def msg_place_report_non_text(message: Message) -> None:
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    await message.answer("📝 Надішліть текст правки або натисніть «Скасувати».")
 
 
 @router.callback_query(F.data.startswith("like_"))
