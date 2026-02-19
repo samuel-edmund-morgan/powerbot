@@ -259,6 +259,31 @@ class BusinessCabinetService:
                     "Дочекайся завершення його періоду або обери інший тариф."
                 )
 
+    async def _assert_pro_slot_available(self, *, place_id: int) -> None:
+        """Enforce one active Premium(Pro) promo slot per category (service)."""
+        place = await self.repository.get_place(int(place_id))
+        if not place:
+            raise NotFoundError("Заклад не знайдено.")
+        service_id = int(place.get("service_id") or 0)
+        if service_id <= 0:
+            raise ValidationError("Не вдалося визначити категорію закладу.")
+
+        pro_rows = await self.repository.list_pro_subscriptions_by_service(
+            int(service_id),
+            exclude_place_id=int(place_id),
+        )
+        for row in pro_rows:
+            if _has_paid_entitlement(
+                tier=row.get("tier"),
+                status=row.get("status"),
+                expires_at=row.get("expires_at"),
+            ):
+                pro_name = str(row.get("place_name") or "").strip() or f"ID {int(row.get('place_id') or 0)}"
+                raise ValidationError(
+                    f"У цій категорії вже є активний Premium‑слот: {pro_name}. "
+                    "Дочекайся завершення його періоду або обери інший тариф."
+                )
+
     async def _payment_intent_exists(
         self,
         *,
@@ -1426,6 +1451,8 @@ class BusinessCabinetService:
         now = _utc_now()
         if normalized_tier == "partner":
             await self._assert_partner_slot_available(place_id=int(place_id))
+        if normalized_tier == "pro":
+            await self._assert_pro_slot_available(place_id=int(place_id))
 
         if normalized_tier == "free":
             sub_status = "inactive"
@@ -1689,6 +1716,8 @@ class BusinessCabinetService:
             raise AccessDeniedError("Ти можеш змінювати тариф лише своїх підтверджених закладів.")
         if normalized_tier == "partner":
             await self._assert_partner_slot_available(place_id=int(place_id))
+        if normalized_tier == "pro":
+            await self._assert_pro_slot_available(place_id=int(place_id))
 
         now = _utc_now()
         starts_at = now.isoformat()
