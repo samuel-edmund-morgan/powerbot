@@ -2038,7 +2038,8 @@ def build_place_detail_keyboard(
         if contact_type == "call" and contact_value:
             tel_url = _normalize_tel_url(contact_value)
             if tel_url:
-                top_row.append(InlineKeyboardButton(text="📞 Подзвонити", url=tel_url))
+                # Use callback for tracked opens (action=call).
+                top_row.append(InlineKeyboardButton(text="📞 Подзвонити", callback_data=f"pcall_{place_id}"))
         elif contact_type == "chat" and contact_value:
             chat_url = _normalize_place_link(contact_value)
             if chat_url:
@@ -2390,6 +2391,48 @@ async def cb_place_chat_open(callback: CallbackQuery) -> None:
             ),
         )
         await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pcall_"))
+async def cb_place_call_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await callback.answer("❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await callback.answer("Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await callback.answer("Контакт для цього закладу недоступний.", show_alert=True)
+        return
+
+    contact_type = str(place_enriched.get("contact_type") or "").strip().lower()
+    contact_value = str(place_enriched.get("contact_value") or "").strip()
+    if contact_type != "call" or not contact_value:
+        await callback.answer("Контакт для цього закладу недоступний.", show_alert=True)
+        return
+
+    tel_url = _normalize_tel_url(contact_value)
+    if not tel_url:
+        await callback.answer("Некоректний номер телефону.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "call")
+    await callback.message.answer(
+        "📞 Відкрити дзвінок:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="📞 Подзвонити", url=tel_url)]]
+        ),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("like_"))
