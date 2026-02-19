@@ -36,6 +36,18 @@ def main() -> None:
     _must_contain(handlers_text, 'callback_data=f"plrep_', file_label="src/handlers.py", errors=errors)
     _must_contain(handlers_text, r'F.data.regexp(r"^plrep_\d+$")', file_label="src/handlers.py", errors=errors)
     _must_contain(handlers_text, '"admin_place_report_alert"', file_label="src/handlers.py", errors=errors)
+    _must_contain(
+        handlers_text,
+        "@router.message(StateFilter(None), F.text.in_(LEGACY_REPLY_TEXTS))",
+        file_label="src/handlers.py",
+        errors=errors,
+    )
+    _must_contain(
+        handlers_text,
+        "@router.message(StateFilter(None), F.text)",
+        file_label="src/handlers.py",
+        errors=errors,
+    )
 
     # Worker flow.
     _must_contain(worker_text, 'JOB_KIND_ADMIN_PLACE_REPORT_ALERT = "admin_place_report_alert"', file_label="src/admin_jobs_worker.py", errors=errors)

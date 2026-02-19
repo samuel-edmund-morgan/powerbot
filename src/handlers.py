@@ -1,5 +1,5 @@
 from aiogram import Router, F, BaseMiddleware
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     BufferedInputFile, ReplyKeyboardRemove,
@@ -67,9 +67,24 @@ async def _auto_answer_callback(callback: CallbackQuery, delay: float = 0.25) ->
     """Auto-answer callback after short delay to remove Telegram 'pending' state."""
     await asyncio.sleep(delay)
     try:
-        await callback.answer()
+        await safe_callback_answer(callback)
     except Exception:
         pass
+
+
+async def safe_callback_answer(callback: CallbackQuery, *args, **kwargs) -> None:
+    """
+    Безпечно відповідає на callback_query.
+    Ігнорує стандартні race-case помилки Telegram для протермінованих/вже-відповіданих query.
+    """
+    try:
+        await callback.answer(*args, **kwargs)
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "query is too old" in msg or "query id is invalid" in msg:
+            logger.debug("Ignore stale callback answer: %s", exc)
+            return
+        raise
 
 
 class ReplyKeyboardAutoClearMiddleware(BaseMiddleware):
@@ -515,7 +530,7 @@ async def cb_select_building(callback: CallbackQuery):
         "Обравши будинок, ви будете отримувати сповіщення про світло саме по вашому будинку:",
         reply_markup=get_buildings_keyboard()
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("building_"))
@@ -534,7 +549,7 @@ async def cb_building_selected(callback: CallbackQuery):
     building = get_building_by_id(building_id)
     
     if not building:
-        await callback.answer("❌ Будинок не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "❌ Будинок не знайдено", show_alert=True)
         return
     
     # Спочатку переконаємось що користувач є в базі
@@ -563,7 +578,7 @@ async def cb_building_selected(callback: CallbackQuery):
         text,
         reply_markup=get_sections_keyboard(building_id, current_section=current_section),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("section_"))
@@ -582,15 +597,15 @@ async def cb_section_selected(callback: CallbackQuery):
         building_id = int(building_id_raw)
         section_id = int(section_id_raw)
     except Exception:
-        await callback.answer("❌ Некоректні дані секції", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректні дані секції", show_alert=True)
         return
 
     building = get_building_by_id(building_id)
     if not building:
-        await callback.answer("❌ Будинок не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "❌ Будинок не знайдено", show_alert=True)
         return
     if not is_valid_section_for_building(building_id, section_id):
-        await callback.answer("❌ Некоректна секція", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректна секція", show_alert=True)
         return
 
     user = callback.from_user
@@ -615,7 +630,7 @@ async def cb_section_selected(callback: CallbackQuery):
         [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
     ])
     await callback.message.edit_text(text, reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.message(Command("start"))
@@ -804,7 +819,7 @@ async def cb_menu(callback: CallbackQuery):
             menu_msg = await callback.message.answer(text, reply_markup=get_main_keyboard())
     if menu_msg:
         await save_last_bot_message(callback.message.chat.id, menu_msg.message_id)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "utilities_menu")
@@ -821,7 +836,7 @@ async def cb_utilities_menu(callback: CallbackQuery):
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.edit_text(text, reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "alerts_menu")
@@ -842,7 +857,7 @@ async def cb_alerts_menu(callback: CallbackQuery):
         ],
     ])
     await callback.message.edit_text(text, reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "alert_status")
@@ -878,7 +893,7 @@ async def cb_alert_status(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=keyboard)
     except Exception:
         pass  # Якщо повідомлення не змінилось - ігноруємо
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "shelters")
@@ -918,7 +933,7 @@ async def cb_shelters(callback: CallbackQuery):
         await callback.message.answer(text, reply_markup=keyboard)
     else:
         await callback.message.edit_text(text, reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(
@@ -934,7 +949,7 @@ async def cb_shelter_detail(callback: CallbackQuery):
     shelter = await get_shelter_place(shelter_id)
     
     if not shelter:
-        await callback.answer("Укриття не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Укриття не знайдено", show_alert=True)
         return
     
     user_liked = await has_liked_shelter(shelter_id, callback.from_user.id)
@@ -981,7 +996,7 @@ async def cb_shelter_detail(callback: CallbackQuery):
     else:
         await callback.message.edit_text(text, reply_markup=keyboard)
     
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("shelter_like_"))
@@ -994,9 +1009,9 @@ async def cb_like_shelter(callback: CallbackQuery):
     
     if added:
         likes_count = await get_shelter_likes_count(shelter_id)
-        await callback.answer(f"❤️ Дякуємо за лайк! Усього: {likes_count}")
+        await safe_callback_answer(callback, f"❤️ Дякуємо за лайк! Усього: {likes_count}")
     else:
-        await callback.answer("Ви вже лайкнули це укриття")
+        await safe_callback_answer(callback, "Ви вже лайкнули це укриття")
     
     likes_count = await get_shelter_likes_count(shelter_id)
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1026,9 +1041,9 @@ async def cb_unlike_shelter(callback: CallbackQuery):
     
     if removed:
         likes_count = await get_shelter_likes_count(shelter_id)
-        await callback.answer(f"💔 Лайк забрано. Усього: {likes_count}")
+        await safe_callback_answer(callback, f"💔 Лайк забрано. Усього: {likes_count}")
     else:
-        await callback.answer("Ви не лайкали це укриття")
+        await safe_callback_answer(callback, "Ви не лайкали це укриття")
     
     likes_count = await get_shelter_likes_count(shelter_id)
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1063,7 +1078,7 @@ async def cb_status(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 async def format_stats_message_for_user(
@@ -1137,7 +1152,7 @@ async def cb_stats(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "stats_day")
@@ -1156,7 +1171,7 @@ async def cb_stats_day(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "stats_week")
@@ -1175,7 +1190,7 @@ async def cb_stats_week(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "stats_month")
@@ -1194,7 +1209,7 @@ async def cb_stats_month(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 # ============ Меню Сповіщень ============
@@ -1222,7 +1237,7 @@ async def cb_notifications_menu(callback: CallbackQuery):
         text,
         reply_markup=await get_notifications_keyboard(chat_id)
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "notif_toggle_light")
@@ -1235,7 +1250,7 @@ async def cb_toggle_light_notifications(callback: CallbackQuery):
     await set_light_notifications(chat_id, new_value)
     
     status = "увімкнено ✅" if new_value else "вимкнено ❌"
-    await callback.answer(f"☀️ Сповіщення про світло {status}")
+    await safe_callback_answer(callback, f"☀️ Сповіщення про світло {status}")
     
     # Оновлюємо меню
     await cb_notifications_menu(callback)
@@ -1251,7 +1266,7 @@ async def cb_toggle_alert_notifications(callback: CallbackQuery):
     await set_alert_notifications(chat_id, new_value)
     
     status = "увімкнено ✅" if new_value else "вимкнено ❌"
-    await callback.answer(f"🚨 Сповіщення про тривоги {status}")
+    await safe_callback_answer(callback, f"🚨 Сповіщення про тривоги {status}")
     
     # Оновлюємо меню
     await cb_notifications_menu(callback)
@@ -1267,7 +1282,7 @@ async def cb_toggle_schedule_notifications(callback: CallbackQuery):
     await set_schedule_notifications(chat_id, new_value)
 
     status = "увімкнено ✅" if new_value else "вимкнено ❌"
-    await callback.answer(f"📅 Сповіщення про графіки {status}")
+    await safe_callback_answer(callback, f"📅 Сповіщення про графіки {status}")
 
     await cb_notifications_menu(callback)
 
@@ -1296,7 +1311,7 @@ async def cb_quiet_hours_menu(callback: CallbackQuery):
         text,
         reply_markup=get_quiet_keyboard("notifications_menu")
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "quiet_info")
@@ -1312,16 +1327,16 @@ async def cb_quiet_set(callback: CallbackQuery):
     
     if data == "quiet_off":
         await set_quiet_hours(chat_id, None, None)
-        await callback.answer("🔔 Тихі години вимкнено")
+        await safe_callback_answer(callback, "🔔 Тихі години вимкнено")
     else:
         # Парсимо quiet_23_7 -> start=23, end=7
         parts = data.replace("quiet_", "").split("_")
         if len(parts) == 2:
             start, end = int(parts[0]), int(parts[1])
             await set_quiet_hours(chat_id, start, end)
-            await callback.answer(f"🌙 Тихі години: {start:02d}:00 - {end:02d}:00")
+            await safe_callback_answer(callback, f"🌙 Тихі години: {start:02d}:00 - {end:02d}:00")
         else:
-            await callback.answer("Помилка")
+            await safe_callback_answer(callback, "Помилка")
             return
     
     # Повертаємось до меню сповіщень
@@ -1563,14 +1578,14 @@ async def reply_search_old(message: Message):
     )
 
 
-@router.message(F.text.in_(LEGACY_REPLY_TEXTS))
+@router.message(StateFilter(None), F.text.in_(LEGACY_REPLY_TEXTS))
 async def reply_keyboard_fallback(message: Message):
     """Фолбек: якщо прийшов текст з ReplyKeyboard у режимі WebApp — прибираємо клавіатуру."""
     if await handle_webapp_reply_keyboard(message):
         return
 
 
-@router.message(F.text)
+@router.message(StateFilter(None), F.text)
 async def reply_keyboard_regex_fallback(message: Message):
     """Regex-фолбек для дуже старих або варіативних reply-кнопок."""
     if not CFG.web_app_enabled:
@@ -1615,7 +1630,7 @@ async def cb_service_menu(callback: CallbackQuery):
         "Оберіть службу для отримання контактного телефону:",
         reply_markup=get_service_keyboard()
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_administration")
@@ -1630,7 +1645,7 @@ async def cb_service_administration(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_accounting")
@@ -1645,7 +1660,7 @@ async def cb_service_accounting(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_security")
@@ -1660,7 +1675,7 @@ async def cb_service_security(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_plumber")
@@ -1675,7 +1690,7 @@ async def cb_service_plumber(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_electrician")
@@ -1690,7 +1705,7 @@ async def cb_service_electrician(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_it")
@@ -1703,7 +1718,7 @@ async def cb_service_it(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_elevator")
@@ -1720,7 +1735,7 @@ async def cb_service_elevator(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_car_pass")
@@ -1736,7 +1751,7 @@ async def cb_service_car_pass(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Назад", callback_data="service_menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "service_parking")
@@ -1757,7 +1772,7 @@ async def cb_service_parking(callback: CallbackQuery):
         ]),
         disable_web_page_preview=True
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 # ============ Меню "Заклади в ЖК" ============
@@ -1833,7 +1848,7 @@ async def cb_places_menu(callback: CallbackQuery):
                 [InlineKeyboardButton(text="« Меню", callback_data="menu")],
             ])
         )
-        await callback.answer()
+        await safe_callback_answer(callback)
         return
     
     admin_tag = CFG.admin_tag or "адміністратору"
@@ -1843,7 +1858,7 @@ async def cb_places_menu(callback: CallbackQuery):
         f"💬 Хочете додати категорію? Пишіть {admin_tag}",
         reply_markup=await get_places_keyboard()
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("places_cat_"))
@@ -1857,7 +1872,7 @@ async def cb_places_category(callback: CallbackQuery):
     service = await get_general_service(service_id)
     
     if not service:
-        await callback.answer("Категорію не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Категорію не знайдено", show_alert=True)
         return
     
     places = await get_places_by_service_with_likes(service_id)
@@ -1886,7 +1901,7 @@ async def cb_places_category(callback: CallbackQuery):
             await callback.message.answer(text, reply_markup=keyboard)
         else:
             await callback.message.edit_text(text, reply_markup=keyboard)
-        await callback.answer()
+        await safe_callback_answer(callback)
         return
     
     # Медалі для топ-3 у поточному порядку відображення.
@@ -1983,7 +1998,7 @@ async def cb_places_category(callback: CallbackQuery):
     else:
         await callback.message.edit_text(text, reply_markup=keyboard)
     
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 def _normalize_place_link(raw: str | None) -> str | None:
@@ -2146,7 +2161,7 @@ async def cb_place_detail(callback: CallbackQuery):
     try:
         place_id = int(callback.data.split("_")[1])
     except Exception:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
 
     shown = await _render_place_detail_message(
@@ -2155,9 +2170,9 @@ async def cb_place_detail(callback: CallbackQuery):
         user_id=int(callback.from_user.id),
     )
     if not shown:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 def _build_place_report_keyboard(place_id: int) -> InlineKeyboardMarkup:
@@ -2176,12 +2191,12 @@ async def cb_place_report_start(callback: CallbackQuery, state: FSMContext) -> N
     try:
         place_id = int(callback.data.split("_", 1)[1])
     except Exception:
-        await callback.answer("❌ Некоректний запит", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
         return
 
     place = await get_place(place_id)
     if not place:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
 
     search_waiting_users.discard(callback.message.chat.id)
@@ -2203,7 +2218,7 @@ async def cb_place_report_start(callback: CallbackQuery, state: FSMContext) -> N
             await callback.message.edit_text(text, reply_markup=kb)
     except Exception:
         await callback.message.answer(text, reply_markup=kb)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("plrep_cancel_"))
@@ -2220,7 +2235,7 @@ async def cb_place_report_cancel(callback: CallbackQuery, state: FSMContext) -> 
             user_id=int(callback.from_user.id),
         )
         if not shown:
-            await callback.answer("Скасовано")
+            await safe_callback_answer(callback, "Скасовано")
             return
     else:
         await callback.message.edit_text(
@@ -2229,7 +2244,7 @@ async def cb_place_report_cancel(callback: CallbackQuery, state: FSMContext) -> 
                 inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
             ),
         )
-    await callback.answer("Скасовано")
+    await safe_callback_answer(callback, "Скасовано")
 
 
 @router.message(PlaceReportStates.waiting_for_text, F.text & ~F.text.startswith("/"))
@@ -2330,22 +2345,22 @@ async def cb_place_coupon_open(callback: CallbackQuery) -> None:
     try:
         place_id = int(callback.data.split("_", 1)[1])
     except Exception:
-        await callback.answer("❌ Некоректний запит", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
         return
 
     place = await get_place(place_id)
     if not place:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
 
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     promo_code = str(place_enriched.get("promo_code") or "").strip()
     if not (is_business_feature_enabled() and place_enriched.get("is_verified") and promo_code):
-        await callback.answer("Промокод для цього закладу недоступний.", show_alert=True)
+        await safe_callback_answer(callback, "Промокод для цього закладу недоступний.", show_alert=True)
         return
 
     await record_place_click(place_id, "coupon_open")
-    await callback.answer(f"🎟 Промокод: {promo_code}", show_alert=True)
+    await safe_callback_answer(callback, f"🎟 Промокод: {promo_code}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("pchat_"))
@@ -2356,33 +2371,33 @@ async def cb_place_chat_open(callback: CallbackQuery) -> None:
     try:
         place_id = int(callback.data.split("_", 1)[1])
     except Exception:
-        await callback.answer("❌ Некоректний запит", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
         return
 
     place = await get_place(place_id)
     if not place:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
 
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
-        await callback.answer("Чат для цього закладу недоступний.", show_alert=True)
+        await safe_callback_answer(callback, "Чат для цього закладу недоступний.", show_alert=True)
         return
 
     contact_type = str(place_enriched.get("contact_type") or "").strip().lower()
     contact_value = str(place_enriched.get("contact_value") or "").strip()
     if contact_type != "chat" or not contact_value:
-        await callback.answer("Чат для цього закладу недоступний.", show_alert=True)
+        await safe_callback_answer(callback, "Чат для цього закладу недоступний.", show_alert=True)
         return
 
     chat_url = _normalize_place_link(contact_value)
     if not chat_url:
-        await callback.answer("Некоректне посилання на чат.", show_alert=True)
+        await safe_callback_answer(callback, "Некоректне посилання на чат.", show_alert=True)
         return
 
     await record_place_click(place_id, "chat")
     try:
-        await callback.answer(url=chat_url)
+        await safe_callback_answer(callback, url=chat_url)
     except Exception:
         # Fallback in case client rejects redirect URL from callback answer.
         await callback.message.answer(
@@ -2391,7 +2406,7 @@ async def cb_place_chat_open(callback: CallbackQuery) -> None:
                 inline_keyboard=[[InlineKeyboardButton(text="💬 Написати", url=chat_url)]]
             ),
         )
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("pcall_"))
@@ -2402,28 +2417,28 @@ async def cb_place_call_open(callback: CallbackQuery) -> None:
     try:
         place_id = int(callback.data.split("_", 1)[1])
     except Exception:
-        await callback.answer("❌ Некоректний запит", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
         return
 
     place = await get_place(place_id)
     if not place:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
 
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
-        await callback.answer("Контакт для цього закладу недоступний.", show_alert=True)
+        await safe_callback_answer(callback, "Контакт для цього закладу недоступний.", show_alert=True)
         return
 
     contact_type = str(place_enriched.get("contact_type") or "").strip().lower()
     contact_value = str(place_enriched.get("contact_value") or "").strip()
     if contact_type != "call" or not contact_value:
-        await callback.answer("Контакт для цього закладу недоступний.", show_alert=True)
+        await safe_callback_answer(callback, "Контакт для цього закладу недоступний.", show_alert=True)
         return
 
     tel_url = _normalize_tel_url(contact_value)
     if not tel_url:
-        await callback.answer("Некоректний номер телефону.", show_alert=True)
+        await safe_callback_answer(callback, "Некоректний номер телефону.", show_alert=True)
         return
 
     await record_place_click(place_id, "call")
@@ -2433,7 +2448,7 @@ async def cb_place_call_open(callback: CallbackQuery) -> None:
             inline_keyboard=[[InlineKeyboardButton(text="📞 Подзвонити", url=tel_url)]]
         ),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("plink_"))
@@ -2444,27 +2459,27 @@ async def cb_place_link_open(callback: CallbackQuery) -> None:
     try:
         place_id = int(callback.data.split("_", 1)[1])
     except Exception:
-        await callback.answer("❌ Некоректний запит", show_alert=True)
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
         return
 
     place = await get_place(place_id)
     if not place:
-        await callback.answer("Заклад не знайдено", show_alert=True)
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
         return
 
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
-        await callback.answer("Посилання для цього закладу недоступне.", show_alert=True)
+        await safe_callback_answer(callback, "Посилання для цього закладу недоступне.", show_alert=True)
         return
 
     link_url = _normalize_place_link(place_enriched.get("link_url"))
     if not link_url:
-        await callback.answer("Некоректне посилання.", show_alert=True)
+        await safe_callback_answer(callback, "Некоректне посилання.", show_alert=True)
         return
 
     await record_place_click(place_id, "link")
     try:
-        await callback.answer(url=link_url)
+        await safe_callback_answer(callback, url=link_url)
     except Exception:
         await callback.message.answer(
             "🔗 Відкрити посилання:",
@@ -2472,7 +2487,7 @@ async def cb_place_link_open(callback: CallbackQuery) -> None:
                 inline_keyboard=[[InlineKeyboardButton(text="🔗 Посилання", url=link_url)]]
             ),
         )
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("like_"))
@@ -2487,9 +2502,9 @@ async def cb_like_place(callback: CallbackQuery):
     
     if added:
         likes_count = await get_place_likes_count(place_id)
-        await callback.answer(f"❤️ Дякуємо за лайк! Усього: {likes_count}")
+        await safe_callback_answer(callback, f"❤️ Дякуємо за лайк! Усього: {likes_count}")
     else:
-        await callback.answer("Ви вже лайкнули цей заклад")
+        await safe_callback_answer(callback, "Ви вже лайкнули цей заклад")
     
     # Оновлюємо кнопку (+ optional paid buttons)
     place = await get_place(place_id)
@@ -2528,9 +2543,9 @@ async def cb_unlike_place(callback: CallbackQuery):
     
     if removed:
         likes_count = await get_place_likes_count(place_id)
-        await callback.answer(f"💔 Лайк забрано. Усього: {likes_count}")
+        await safe_callback_answer(callback, f"💔 Лайк забрано. Усього: {likes_count}")
     else:
-        await callback.answer("Ви не лайкали цей заклад")
+        await safe_callback_answer(callback, "Ви не лайкали цей заклад")
     
     # Оновлюємо кнопку (+ optional paid buttons)
     place = await get_place(place_id)
@@ -2717,7 +2732,7 @@ async def cb_heating_menu(callback: CallbackQuery):
     except Exception:
         # Якщо повідомлення не змінилось
         pass
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "water_menu")
@@ -2734,7 +2749,7 @@ async def cb_water_menu(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=get_water_vote_keyboard(user_vote))
     except Exception:
         pass
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 # --- Голосування зі сповіщень (без оновлення повідомлення) ---
@@ -2744,7 +2759,7 @@ async def cb_vote_heating_yes(callback: CallbackQuery):
     """Проголосувати: є опалення (зі сповіщення)."""
     from database import vote_heating
     await vote_heating(callback.message.chat.id, True)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що опалення є.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що опалення є.", show_alert=True)
 
 
 @router.callback_query(F.data == "vote_heating_no")
@@ -2752,7 +2767,7 @@ async def cb_vote_heating_no(callback: CallbackQuery):
     """Проголосувати: немає опалення (зі сповіщення)."""
     from database import vote_heating
     await vote_heating(callback.message.chat.id, False)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що опалення немає.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що опалення немає.", show_alert=True)
 
 
 @router.callback_query(F.data == "vote_water_yes")
@@ -2760,7 +2775,7 @@ async def cb_vote_water_yes(callback: CallbackQuery):
     """Проголосувати: є вода (зі сповіщення)."""
     from database import vote_water
     await vote_water(callback.message.chat.id, True)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що вода є.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що вода є.", show_alert=True)
 
 
 @router.callback_query(F.data == "vote_water_no")
@@ -2768,7 +2783,7 @@ async def cb_vote_water_no(callback: CallbackQuery):
     """Проголосувати: немає води (зі сповіщення)."""
     from database import vote_water
     await vote_water(callback.message.chat.id, False)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що води немає.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що води немає.", show_alert=True)
 
 
 # --- Голосування з меню (з оновленням статусу) ---
@@ -2778,7 +2793,7 @@ async def cb_menu_vote_heating_yes(callback: CallbackQuery):
     """Проголосувати: є опалення (з меню, оновлює статус)."""
     from database import vote_heating, get_user_vote
     await vote_heating(callback.message.chat.id, True)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що опалення є.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що опалення є.", show_alert=True)
     
     user_vote = await get_user_vote(callback.message.chat.id, "heating")
     text = await format_heating_status(callback.message.chat.id)
@@ -2793,7 +2808,7 @@ async def cb_menu_vote_heating_no(callback: CallbackQuery):
     """Проголосувати: немає опалення (з меню, оновлює статус)."""
     from database import vote_heating, get_user_vote
     await vote_heating(callback.message.chat.id, False)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що опалення немає.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що опалення немає.", show_alert=True)
     
     user_vote = await get_user_vote(callback.message.chat.id, "heating")
     text = await format_heating_status(callback.message.chat.id)
@@ -2808,7 +2823,7 @@ async def cb_menu_vote_water_yes(callback: CallbackQuery):
     """Проголосувати: є вода (з меню, оновлює статус)."""
     from database import vote_water, get_user_vote
     await vote_water(callback.message.chat.id, True)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що вода є.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що вода є.", show_alert=True)
     
     user_vote = await get_user_vote(callback.message.chat.id, "water")
     text = await format_water_status(callback.message.chat.id)
@@ -2823,7 +2838,7 @@ async def cb_menu_vote_water_no(callback: CallbackQuery):
     """Проголосувати: немає води (з меню, оновлює статус)."""
     from database import vote_water, get_user_vote
     await vote_water(callback.message.chat.id, False)
-    await callback.answer("✅ Дякуємо за голос! Ви повідомили, що води немає.", show_alert=True)
+    await safe_callback_answer(callback, "✅ Дякуємо за голос! Ви повідомили, що води немає.", show_alert=True)
     
     user_vote = await get_user_vote(callback.message.chat.id, "water")
     text = await format_water_status(callback.message.chat.id)
@@ -2890,7 +2905,7 @@ async def cb_search_menu(callback: CallbackQuery):
             [InlineKeyboardButton(text="« Меню", callback_data="menu")],
         ])
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 async def do_search(query: str, user_id: int | None = None) -> str:
