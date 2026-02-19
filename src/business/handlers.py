@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import html
 import logging
+from urllib.parse import quote_plus
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -18,6 +19,7 @@ from aiogram.types import (
     Message,
     PreCheckoutQuery,
 )
+from config import CFG
 from database import create_admin_job
 from tg_buttons import STYLE_DANGER, STYLE_PRIMARY, STYLE_SUCCESS, ikb
 
@@ -107,6 +109,7 @@ CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
 CB_PAYMENT_RESULT_PREFIX = "bpayr:"
 CB_CONTACT_PICK_PREFIX = "bec:"
 CB_CONTACT_CLEAR_PREFIX = "bec_clear:"
+CB_QR_OPEN_PREFIX = "bqr:"
 
 PLAN_TITLES = {
     "free": "Free",
@@ -164,6 +167,20 @@ def _format_expires_short(raw_value: str | None) -> str:
     if not expires_at:
         return "—"
     return expires_at.strftime("%d.%m.%Y %H:%M UTC")
+
+
+def _resident_place_deeplink(place_id: int) -> str | None:
+    bot_username = str(CFG.bot_username or "").strip().lstrip("@")
+    if not bot_username:
+        return None
+    return f"https://t.me/{bot_username}?start=place_{int(place_id)}"
+
+
+def _resident_place_qr_url(place_id: int) -> str | None:
+    deeplink = _resident_place_deeplink(place_id)
+    if not deeplink:
+        return None
+    return f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&data={quote_plus(deeplink)}"
 
 
 class AddBusinessStates(StatesGroup):
@@ -979,6 +996,13 @@ async def render_place_card_updated(message: Message, *, place_id: int, note_tex
                 ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
             ]
         )
+        qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
+        qr_btn = (
+            InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
+            if can_edit
+            else ikb(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}", style=STYLE_PRIMARY)
+        )
+        keyboard_rows.append([qr_btn])
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     card_text = await build_business_card_text(item)
@@ -2040,6 +2064,13 @@ async def cb_my_business_open(callback: CallbackQuery) -> None:
                 ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
             ]
         )
+        qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
+        qr_btn = (
+            InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
+            if can_edit
+            else ikb(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}", style=STYLE_PRIMARY)
+        )
+        keyboard_rows.append([qr_btn])
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
 
@@ -2051,6 +2082,75 @@ async def cb_my_business_open(callback: CallbackQuery) -> None:
         prefer_message_id=callback.message.message_id,
         text=card_text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_QR_OPEN_PREFIX))
+async def cb_open_place_qr(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    payload = callback.data.split(":", 1)
+    if len(payload) != 2:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(payload[1])
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    rows = await cabinet_service.list_user_businesses(user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        return
+    if not _has_active_paid_subscription(item):
+        await callback.answer("🔒 QR голосування доступний з активним тарифом Light або вище.", show_alert=True)
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        try:
+            await _render_place_plan_menu(
+                callback.message,
+                tg_user_id=user_id,
+                place_id=place_id,
+                source="card",
+                prefer_message_id=callback.message.message_id,
+                notice="🔒 QR голосування доступний з активним тарифом Light або вище.",
+            )
+        except Exception:
+            pass
+        return
+
+    deep_link = _resident_place_deeplink(place_id)
+    qr_url = _resident_place_qr_url(place_id)
+    if not deep_link or not qr_url:
+        await callback.answer("Не налаштовано BOT_USERNAME для resident-бота.", show_alert=True)
+        return
+
+    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    text = (
+        f"🔳 <b>QR голосування</b>\n\n"
+        f"Заклад: <b>{place_name}</b>\n\n"
+        "Розмісти цей QR у закладі, щоб мешканці швидко відкривали картку і ставили ❤️.\n"
+        "Лайк у боті фіксується 1 раз на Telegram ID.\n\n"
+        f"Deep-link:\n<code>{html.escape(deep_link)}</code>"
+    )
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔳 Відкрити QR", url=qr_url)],
+                [InlineKeyboardButton(text="🔗 Відкрити deep-link", url=deep_link)],
+                [InlineKeyboardButton(text="« До закладу", callback_data=f"{CB_MY_OPEN_PREFIX}{place_id}")],
+                [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+            ]
+        ),
     )
     await callback.answer()
 
