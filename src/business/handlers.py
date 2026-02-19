@@ -2672,6 +2672,8 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             "offer_2_image_url",
         }:
             extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
+        if field == "promo_code":
+            extra_note += "\n\nФормат: 2-32 символи, латиниця/цифри, також дозволено <code>-</code> та <code>_</code>."
         await ui_render(
             callback.message.bot,
             chat_id=callback.message.chat.id,

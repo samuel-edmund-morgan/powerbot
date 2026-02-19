@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import json
+import re
 import secrets
 import sqlite3
 import string
@@ -42,6 +43,7 @@ CLAIM_TOKEN_ALPHABET = string.ascii_uppercase + string.digits
 CLAIM_TOKEN_LENGTH = 10
 CLAIM_TOKEN_GENERATION_ATTEMPTS = 12
 CLAIM_TOKEN_BULK_CHUNK_SIZE = 400  # Keep well under SQLite variable limit.
+PROMO_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,31}$")
 
 
 class BusinessCabinetError(RuntimeError):
@@ -1622,8 +1624,10 @@ class BusinessCabinetService:
             if clean_value and len(clean_value) > 220:
                 raise ValidationError("Години роботи занадто довгі.")
         elif normalized_field == "promo_code":
-            if clean_value and len(clean_value) > 64:
-                raise ValidationError("Промокод занадто довгий.")
+            if clean_value:
+                if not PROMO_CODE_RE.fullmatch(clean_value):
+                    raise ValidationError("Промокод: 2-32 символи, латиниця/цифри, також дозволено - та _.")
+                clean_value = clean_value.upper()
         elif normalized_field in {"offer_1_text", "offer_2_text"}:
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Офер занадто довгий.")
