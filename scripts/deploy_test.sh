@@ -364,6 +364,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_offers_policy.py"
 echo "Running business promo-code policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_promo_code_policy.py"
 
+# Automated smoke: contact value validation policy for business owners.
+echo "Running business contact validation policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_contact_validation_policy.py"
+
 # Automated smoke: Light+ logo/photo field policy.
 echo "Running business logo policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"

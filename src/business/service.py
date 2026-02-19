@@ -44,6 +44,7 @@ CLAIM_TOKEN_LENGTH = 10
 CLAIM_TOKEN_GENERATION_ATTEMPTS = 12
 CLAIM_TOKEN_BULK_CHUNK_SIZE = 400  # Keep well under SQLite variable limit.
 PROMO_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,31}$")
+TG_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
 
 
 class BusinessCabinetError(RuntimeError):
@@ -111,6 +112,54 @@ def _has_paid_entitlement(
         return False
     ref_now = now or _utc_now()
     return expires_at_dt > ref_now
+
+
+def _normalize_phone_contact_value(raw_value: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        raise ValidationError("Для кнопки «Подзвонити» вкажи коректний номер телефону.")
+
+    filtered = "".join(ch for ch in value if ch.isdigit() or ch == "+")
+    if filtered.startswith("00"):
+        filtered = "+" + filtered[2:]
+    if filtered.count("+") > 1 or ("+" in filtered and not filtered.startswith("+")):
+        raise ValidationError("Для кнопки «Подзвонити» вкажи коректний номер телефону.")
+
+    digits = "".join(ch for ch in filtered if ch.isdigit())
+    if len(digits) < 7:
+        raise ValidationError("Для кнопки «Подзвонити» вкажи коректний номер телефону.")
+
+    if filtered.startswith("+"):
+        return f"+{digits}"
+    return digits
+
+
+def _normalize_chat_contact_value(raw_value: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        raise ValidationError("Для кнопки «Написати» вкажи @username або t.me/username.")
+
+    lower = value.lower()
+    username = value
+    if value.startswith("@"):
+        username = value[1:].strip()
+    elif lower.startswith("https://t.me/"):
+        username = value[len("https://t.me/") :].strip()
+    elif lower.startswith("http://t.me/"):
+        username = value[len("http://t.me/") :].strip()
+    elif lower.startswith("t.me/"):
+        username = value[len("t.me/") :].strip()
+
+    username = username.split("?", 1)[0].split("#", 1)[0].strip().strip("/")
+    if "/" in username:
+        username = username.split("/", 1)[0].strip()
+    if username.startswith("@"):
+        username = username[1:].strip()
+
+    if not TG_USERNAME_RE.fullmatch(username):
+        raise ValidationError("Для кнопки «Написати» вкажи @username або t.me/username.")
+
+    return f"@{username}"
 
 
 class BusinessService(Protocol):
@@ -1706,9 +1755,10 @@ class BusinessCabinetService:
         if ctype not in {"call", "chat"}:
             raise ValidationError("Некоректний тип контакту.")
 
-        # Basic validation: keep storage flexible, normalize later in resident UI.
-        if len(cvalue_raw) > 220:
-            raise ValidationError("Контакт занадто довгий.")
+        if ctype == "call":
+            cvalue_raw = _normalize_phone_contact_value(cvalue_raw)
+        else:
+            cvalue_raw = _normalize_chat_contact_value(cvalue_raw)
 
         updated_place = await self.repository.update_place_business_profile(
             place_id,
