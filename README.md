@@ -299,6 +299,7 @@ gh workflow run deploy.yml -f run_migrate=auto
 ```bash
 pip install -r requirements-dev.txt
 ```
+Примітка: це виконується на локальній dev-машині (Mac/Linux), а не в `/opt/powerbot-test` на сервері.
 
 ### 7.2 Підготувати env
 ```bash
@@ -328,3 +329,12 @@ python3 scripts/e2e_telegram_userbot.py
 Важливо:
 - запускати тільки на test-боті;
 - це окремий dev-інструмент, у GitHub Actions не запускається (бо потребує реального Telegram session).
+
+Альтернатива без локального `pip` (одноразово через Docker):
+```bash
+docker run --rm -it \
+  -v "$PWD:/work" -w /work \
+  -e TG_E2E_API_ID -e TG_E2E_API_HASH -e TG_E2E_SESSION -e TG_E2E_BOT_USERNAME \
+  -e TG_E2E_BUILDING_LABEL -e TG_E2E_SECTION_LABEL -e TG_E2E_TIMEOUT_SEC \
+  python:3.11-slim sh -lc "pip install -r requirements-dev.txt && python3 scripts/e2e_telegram_userbot.py"
+```

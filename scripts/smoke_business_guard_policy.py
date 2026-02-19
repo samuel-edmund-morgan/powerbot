@@ -56,7 +56,8 @@ def main() -> None:
 
     required_handler_snippets = [
         "business_enabled = is_business_feature_enabled()",
-        'verified_prefix = "✅" if (business_enabled and place.get("is_verified")) else None',
+        "verified_prefix = None",
+        "if business_enabled and has_verified and place.get(\"is_verified\"):",
         "if is_business_feature_enabled() and place_enriched.get(\"is_verified\"):",
     ]
     required_api_snippets = [
