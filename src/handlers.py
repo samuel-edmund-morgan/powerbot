@@ -2105,6 +2105,10 @@ def build_place_detail_keyboard(
         if link_url:
             # Track link opens (action=link) and then redirect.
             action_buttons.append(InlineKeyboardButton(text="🔗 Посилання", callback_data=f"plink_{place_id}"))
+        logo_url = _normalize_place_link(place_enriched.get("logo_url"))
+        if logo_url:
+            # Track logo opens (action=logo_open) and then redirect.
+            action_buttons.append(InlineKeyboardButton(text="🖼 Логотип/фото", callback_data=f"plogo_{place_id}"))
 
         # Premium/Partner extra CTA buttons.
         if tier in {"pro", "partner"}:
@@ -2557,6 +2561,45 @@ async def cb_place_link_open(callback: CallbackQuery) -> None:
             "🔗 Відкрити посилання:",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="🔗 Посилання", url=link_url)]]
+            ),
+        )
+        await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("plogo_"))
+async def cb_place_logo_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await safe_callback_answer(callback, "Логотип для цього закладу недоступний.", show_alert=True)
+        return
+
+    logo_url = _normalize_place_link(place_enriched.get("logo_url"))
+    if not logo_url:
+        await safe_callback_answer(callback, "Некоректне посилання на логотип.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "logo_open")
+    try:
+        await safe_callback_answer(callback, url=logo_url)
+    except Exception:
+        await callback.message.answer(
+            "🖼 Відкрити логотип/фото:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🖼 Логотип/фото", url=logo_url)]]
             ),
         )
         await safe_callback_answer(callback)

@@ -332,6 +332,10 @@ async def init_db():
         except Exception:
             pass
         try:
+            await db.execute("ALTER TABLE places ADD COLUMN logo_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
             await db.execute("ALTER TABLE places ADD COLUMN promo_code TEXT DEFAULT NULL")
         except Exception:
             pass
@@ -2120,7 +2124,7 @@ async def get_place(place_id: int) -> dict | None:
             async with db.execute(
                 """
                 SELECT id, service_id, name, description, address, keywords,
-                       opening_hours, contact_type, contact_value, link_url, promo_code,
+                       opening_hours, contact_type, contact_value, link_url, logo_url, promo_code,
                        menu_url, order_url, offer_1_text, offer_2_text,
                        offer_1_image_url, offer_2_image_url
                   FROM places
@@ -2159,13 +2163,14 @@ async def get_place(place_id: int) -> dict | None:
             "contact_type": row[7],
             "contact_value": row[8],
             "link_url": row[9],
-            "promo_code": row[10],
-            "menu_url": row[11],
-            "order_url": row[12],
-            "offer_1_text": row[13],
-            "offer_2_text": row[14],
-            "offer_1_image_url": row[15],
-            "offer_2_image_url": row[16],
+            "logo_url": row[10],
+            "promo_code": row[11],
+            "menu_url": row[12],
+            "order_url": row[13],
+            "offer_1_text": row[14],
+            "offer_2_text": row[15],
+            "offer_1_image_url": row[16],
+            "offer_2_image_url": row[17],
         }
 
 

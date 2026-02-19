@@ -360,6 +360,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_daily_stats_policy.py"
 echo "Running business offers policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_offers_policy.py"
 
+# Automated smoke: Light+ logo/photo field policy.
+echo "Running business logo policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"
+
 # Automated smoke: businessbot QR deep-link policy for Light+ owners.
 echo "Running business QR deep-link policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
