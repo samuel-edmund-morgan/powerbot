@@ -1914,9 +1914,10 @@ async def cb_places_category(callback: CallbackQuery):
     has_verified = bool(business_enabled and any(bool(item.get("is_verified")) for item in places))
 
     promo_slot_id = 0
+    partner_slot_id = 0
     if business_enabled and has_verified:
         # Target catalog contract:
-        # partner block -> promo slot (single top PRO) -> verified by likes -> unverified.
+        # partner slot (single top Partner) -> promo slot (single top PRO) -> verified by likes -> unverified.
         verified_places = [item for item in places if item.get("is_verified")]
         unverified_places = [item for item in places if not item.get("is_verified")]
 
@@ -1933,10 +1934,16 @@ async def cb_places_category(callback: CallbackQuery):
         other_verified.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
         unverified_places.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
 
+        partner_slot = partner_places[0] if partner_places else None
+        partner_slot_id = int(partner_slot["id"]) if partner_slot else 0
         promo_slot = pro_places[0] if pro_places else None
         promo_slot_id = int(promo_slot["id"]) if promo_slot else 0
 
         verified_by_likes: list[dict] = []
+        for item in partner_places:
+            if int(item["id"]) == partner_slot_id:
+                continue
+            verified_by_likes.append(item)
         for item in pro_places:
             if int(item["id"]) == promo_slot_id:
                 continue
@@ -1944,7 +1951,9 @@ async def cb_places_category(callback: CallbackQuery):
         verified_by_likes.extend(other_verified)
         verified_by_likes.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))
 
-        places = list(partner_places)
+        places = []
+        if partner_slot:
+            places.append(partner_slot)
         if promo_slot:
             places.append(promo_slot)
         places.extend(verified_by_likes)
@@ -1969,14 +1978,12 @@ async def cb_places_category(callback: CallbackQuery):
     
     # Показуємо кнопки з закладами
     buttons = []
-    used_partner_style = False
     for place in places:
         place_id = int(place["id"])
         medal_prefix = medal_map.get(place_id)
         verified_prefix = None
         if business_enabled and has_verified and place.get("is_verified"):
-            tier = (place.get("verified_tier") or "").strip().lower()
-            if tier == "partner":
+            if int(place["id"]) == partner_slot_id:
                 verified_prefix = "⭐"
             elif int(place["id"]) == promo_slot_id:
                 verified_prefix = "🔝"
@@ -1988,10 +1995,8 @@ async def cb_places_category(callback: CallbackQuery):
         # Показуємо кількість лайків
         likes_text = f" ❤️{place['likes_count']}" if place["likes_count"] > 0 else ""
         tier_badge = ""
-        if business_enabled and has_verified and place.get("is_verified"):
-            tier = (place.get("verified_tier") or "").strip().lower()
-            if tier == "partner":
-                tier_badge = " • Офіційний партнер"
+        if business_enabled and has_verified and int(place["id"]) == partner_slot_id:
+            tier_badge = " • Офіційний партнер"
 
         label = f"{prefix}{place['name']}{tier_badge}{likes_text}"
         cb = f"place_{place['id']}"
@@ -2001,10 +2006,8 @@ async def cb_places_category(callback: CallbackQuery):
         btn: InlineKeyboardButton
         btn_style: str | None = None
         if business_enabled and has_verified and place.get("is_verified"):
-            tier = (place.get("verified_tier") or "").strip().lower()
-            if tier == "partner" and not used_partner_style:
+            if int(place["id"]) == partner_slot_id:
                 btn_style = STYLE_SUCCESS
-                used_partner_style = True
             elif int(place["id"]) == promo_slot_id:
                 btn_style = STYLE_PRIMARY
 
