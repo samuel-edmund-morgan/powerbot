@@ -25,7 +25,8 @@ def _literal_from_assignments(file_path: Path, name: str) -> object:
 
 
 def main() -> None:
-    repo_root = Path.cwd()
+    # deploy_test runs from /opt/powerbot-test; resolve project root by script location.
+    repo_root = Path(__file__).resolve().parents[1]
     plans_file = repo_root / "src" / "business" / "plans.py"
     handlers_file = repo_root / "src" / "business" / "handlers.py"
     service_file = repo_root / "src" / "business" / "service.py"
