@@ -456,6 +456,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
 echo "Running search menu routing policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_search_menu_routing_policy.py"
 
+# Automated smoke: keyword search behavior (published-only, case-insensitive, likes tie-break).
+echo "Running search places keywords smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_search_places_keywords.py"
+
 # Automated smoke: public sensor API key + freeze-independent status policy.
 echo "Running public sensor API policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_public_sensor_api_policy.py"
