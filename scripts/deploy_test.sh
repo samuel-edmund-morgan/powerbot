@@ -356,6 +356,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
 echo "Running business daily activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_daily_stats_policy.py"
 
+# Automated smoke: free-tier resident place-card content baseline.
+echo "Running business free place-card content policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_free_place_card_content_policy.py"
+
 # Automated smoke: premium offers (2 text slots) policy.
 echo "Running business offers policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_offers_policy.py"
