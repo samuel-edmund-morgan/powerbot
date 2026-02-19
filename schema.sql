@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS places (
     order_url TEXT DEFAULT NULL,             -- Premium+: кнопка "Замовити/Запис" (url)
     offer_1_text TEXT DEFAULT NULL,          -- Premium+: офер/акція #1 (текст)
     offer_2_text TEXT DEFAULT NULL,          -- Premium+: офер/акція #2 (текст)
+    offer_1_image_url TEXT DEFAULT NULL,     -- Premium+: офер #1 (опц. зображення URL)
+    offer_2_image_url TEXT DEFAULT NULL,     -- Premium+: офер #2 (опц. зображення URL)
     FOREIGN KEY (service_id) REFERENCES general_services(id) ON DELETE CASCADE
 );
 

@@ -56,6 +56,8 @@ def main() -> None:
         "promo_code": "",
         "menu_url": "",
         "order_url": "",
+        "offer_1_image_url": "",
+        "offer_2_image_url": "",
     }
 
     # Free place: no paid CTA callbacks.
@@ -72,6 +74,8 @@ def main() -> None:
     _assert(_count_prefix(cbs_free, "pcoupon_") == 0, "free must not expose promo CTA")
     _assert(_count_prefix(cbs_free, "pmenu_") == 0, "free must not expose menu CTA")
     _assert(_count_prefix(cbs_free, "porder_") == 0, "free must not expose order CTA")
+    _assert(_count_prefix(cbs_free, "pmimg1_") == 0, "free must not expose offer image 1 CTA")
+    _assert(_count_prefix(cbs_free, "pmimg2_") == 0, "free must not expose offer image 2 CTA")
     _assert(_count_prefix(cbs_free, "plrep_") == 1, "report CTA must stay visible on free")
 
     # Verified light with chat contact + link + promo.
@@ -102,6 +106,8 @@ def main() -> None:
     _assert(_count_prefix(cbs_light_chat, "pcoupon_") == 1, "verified with promo_code should expose promo CTA")
     _assert(_count_prefix(cbs_light_chat, "pmenu_") == 0, "verified light must not expose menu CTA")
     _assert(_count_prefix(cbs_light_chat, "porder_") == 0, "verified light must not expose order CTA")
+    _assert(_count_prefix(cbs_light_chat, "pmimg1_") == 0, "verified light must not expose offer image CTA")
+    _assert(_count_prefix(cbs_light_chat, "pmimg2_") == 0, "verified light must not expose offer image CTA")
 
     # Verified light with call contact and empty promo.
     verified_call = dict(base)
@@ -130,6 +136,8 @@ def main() -> None:
     _assert(_count_prefix(cbs_light_call, "pcoupon_") == 0, "verified without promo must not expose promo CTA")
     _assert(_count_prefix(cbs_light_call, "pmenu_") == 0, "verified light must not expose menu CTA")
     _assert(_count_prefix(cbs_light_call, "porder_") == 0, "verified light must not expose order CTA")
+    _assert(_count_prefix(cbs_light_call, "pmimg1_") == 0, "verified light must not expose offer image CTA")
+    _assert(_count_prefix(cbs_light_call, "pmimg2_") == 0, "verified light must not expose offer image CTA")
 
     # Verified premium with menu/order URLs.
     verified_pro = dict(base)
@@ -144,6 +152,8 @@ def main() -> None:
             "promo_code": "PRO500",
             "menu_url": "https://example.org/menu",
             "order_url": "https://example.org/order",
+            "offer_1_image_url": "https://example.org/offer1.jpg",
+            "offer_2_image_url": "https://example.org/offer2.jpg",
         }
     )
     kb_pro = build_place_detail_keyboard(
@@ -155,6 +165,8 @@ def main() -> None:
     cbs_pro = _collect_callbacks(kb_pro)
     _assert(_count_prefix(cbs_pro, "pmenu_") == 1, "verified pro with menu_url must expose menu CTA")
     _assert(_count_prefix(cbs_pro, "porder_") == 1, "verified pro with order_url must expose order CTA")
+    _assert(_count_prefix(cbs_pro, "pmimg1_") == 1, "verified pro with offer_1_image_url must expose image CTA")
+    _assert(_count_prefix(cbs_pro, "pmimg2_") == 1, "verified pro with offer_2_image_url must expose image CTA")
 
     print("OK: business place-card entitlement smoke passed.")
 

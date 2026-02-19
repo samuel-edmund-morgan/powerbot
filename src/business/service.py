@@ -1586,6 +1586,8 @@ class BusinessCabinetService:
             "order_url",
             "offer_1_text",
             "offer_2_text",
+            "offer_1_image_url",
+            "offer_2_image_url",
         }
         normalized_field = str(field or "").strip().lower()
         if normalized_field not in allowed_fields:
@@ -1602,7 +1604,14 @@ class BusinessCabinetService:
         if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Light або вище.")
 
-        if normalized_field in {"menu_url", "order_url", "offer_1_text", "offer_2_text"} and tier not in {"pro", "partner"}:
+        if normalized_field in {
+            "menu_url",
+            "order_url",
+            "offer_1_text",
+            "offer_2_text",
+            "offer_1_image_url",
+            "offer_2_image_url",
+        } and tier not in {"pro", "partner"}:
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Premium або Partner.")
 
         raw = str(value or "").strip()
@@ -1618,7 +1627,7 @@ class BusinessCabinetService:
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Офер занадто довгий.")
         else:
-            # link_url / menu_url / order_url
+            # link_url / menu_url / order_url / offer_*_image_url
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Посилання занадто довге.")
             if clean_value:

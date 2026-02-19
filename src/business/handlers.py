@@ -585,6 +585,8 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
     order_text = "🛒 Замовити/Запис" if has_premium_access else "🔒 Замовити/Запис (Premium)"
     offer_1_text = "🎁 Офер 1" if has_premium_access else "🔒 Офер 1 (Premium)"
     offer_2_text = "🎁 Офер 2" if has_premium_access else "🔒 Офер 2 (Premium)"
+    offer_1_image = "🖼 Фото оферу 1" if has_premium_access else "🔒 Фото оферу 1 (Premium)"
+    offer_2_image = "🖼 Фото оферу 2" if has_premium_access else "🔒 Фото оферу 2 (Premium)"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -641,6 +643,16 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
                 InlineKeyboardButton(
                     text=offer_2_text,
                     callback_data=f"bef:{place_id}:offer_2_text",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=offer_1_image,
+                    callback_data=f"bef:{place_id}:offer_1_image_url",
+                ),
+                InlineKeyboardButton(
+                    text=offer_2_image,
+                    callback_data=f"bef:{place_id}:offer_2_image_url",
                 ),
             ],
             [
@@ -810,6 +822,8 @@ def format_business_card(item: dict) -> str:
     order_url = html.escape(str(item.get("place_order_url") or "").strip())
     offer_1_text = html.escape(str(item.get("place_offer_1_text") or "").strip())
     offer_2_text = html.escape(str(item.get("place_offer_2_text") or "").strip())
+    offer_1_image_url = html.escape(str(item.get("place_offer_1_image_url") or "").strip())
+    offer_2_image_url = html.escape(str(item.get("place_offer_2_image_url") or "").strip())
     owner_status = OWNERSHIP_TITLES.get(item["ownership_status"], item["ownership_status"])
     sub_status = SUBSCRIPTION_TITLES.get(item["subscription_status"], item["subscription_status"])
     tier = PLAN_TITLES.get(item["tier"], item["tier"])
@@ -831,6 +845,10 @@ def format_business_card(item: dict) -> str:
         profile_lines.append(f"🎁 Офер 1: {offer_1_text}")
     if offer_2_text:
         profile_lines.append(f"🎁 Офер 2: {offer_2_text}")
+    if offer_1_image_url:
+        profile_lines.append(f"🖼 Фото оферу 1: {offer_1_image_url}")
+    if offer_2_image_url:
+        profile_lines.append(f"🖼 Фото оферу 2: {offer_2_image_url}")
     if promo_code:
         profile_lines.append(f"🎟 Промокод: <code>{promo_code}</code>")
     profile_block = ("\n" + "\n".join(profile_lines)) if profile_lines else ""
@@ -884,6 +902,16 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
             action="order",
             days=int(days),
         )
+        offer_1_image_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="offer1_image",
+            days=int(days),
+        )
+        offer_2_image_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="offer2_image",
+            days=int(days),
+        )
     except Exception:
         logger.exception("Failed to load place activity stats place_id=%s", place_id)
         return text
@@ -894,6 +922,8 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         + int(link_opens)
         + int(menu_opens)
         + int(order_opens)
+        + int(offer_1_image_opens)
+        + int(offer_2_image_opens)
     )
     ctr_pct = round((total_cta_clicks * 100.0) / int(views), 1) if int(views) > 0 else 0.0
     text += (
@@ -905,6 +935,8 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         f"• Відкриття посилання: <b>{int(link_opens)}</b>\n"
         f"• Відкриття меню/прайсу: <b>{int(menu_opens)}</b>\n"
         f"• Відкриття замовлення/запису: <b>{int(order_opens)}</b>\n"
+        f"• Відкриття фото оферу 1: <b>{int(offer_1_image_opens)}</b>\n"
+        f"• Відкриття фото оферу 2: <b>{int(offer_2_image_opens)}</b>\n"
         f"• Усі кліки по кнопках: <b>{int(total_cta_clicks)}</b>\n"
         f"• CTR кнопок: <b>{ctr_pct}%</b>"
     )
@@ -2515,7 +2547,14 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             except Exception:
                 pass
         return
-    if field in {"menu_url", "order_url", "offer_1_text", "offer_2_text"} and not _has_active_premium_subscription(item):
+    if field in {
+        "menu_url",
+        "order_url",
+        "offer_1_text",
+        "offer_2_text",
+        "offer_1_image_url",
+        "offer_2_image_url",
+    } and not _has_active_premium_subscription(item):
         await callback.answer("🔒 Ця опція доступна з активним Premium або Partner.", show_alert=True)
         await state.clear()
         if callback.message:
@@ -2527,7 +2566,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
                     place_id=place_id,
                     source="card",
                     prefer_message_id=callback.message.message_id,
-                    notice="🔒 Premium-функції (меню/замовлення/офери) доступні з Premium або Partner.",
+                    notice="🔒 Premium-функції (меню/замовлення/офери/фото) доступні з Premium або Partner.",
                 )
             except Exception:
                 pass
@@ -2588,6 +2627,8 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         "order_url": "посилання на замовлення/запис",
         "offer_1_text": "текст оферу №1",
         "offer_2_text": "текст оферу №2",
+        "offer_1_image_url": "посилання на фото оферу №1",
+        "offer_2_image_url": "посилання на фото оферу №2",
     }.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
@@ -2600,7 +2641,17 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         extra_note = ""
-        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url", "offer_1_text", "offer_2_text"}:
+        if field in {
+            "opening_hours",
+            "link_url",
+            "promo_code",
+            "menu_url",
+            "order_url",
+            "offer_1_text",
+            "offer_2_text",
+            "offer_1_image_url",
+            "offer_2_image_url",
+        }:
             extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
         await ui_render(
             callback.message.bot,
@@ -2967,7 +3018,17 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
     place_id = int(data["place_id"])
     field = str(data["field"])
     try:
-        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url", "offer_1_text", "offer_2_text"}:
+        if field in {
+            "opening_hours",
+            "link_url",
+            "promo_code",
+            "menu_url",
+            "order_url",
+            "offer_1_text",
+            "offer_2_text",
+            "offer_1_image_url",
+            "offer_2_image_url",
+        }:
             updated_place = await cabinet_service.update_place_business_profile_field(
                 tg_user_id=message.from_user.id if message.from_user else message.chat.id,
                 place_id=place_id,

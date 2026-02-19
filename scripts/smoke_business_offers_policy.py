@@ -3,7 +3,7 @@
 Static smoke-check for Premium offers policy.
 
 Policy:
-- DB/repository/business profile supports two offer text fields.
+- DB/repository/business profile supports two offer text fields and two optional offer image URLs.
 - Owner edit flow exposes offer fields and routes through update_place_business_profile_field.
 - Premium gating is enforced for offer fields.
 - Resident place card renders offer block for pro/partner only.
@@ -37,29 +37,51 @@ def main() -> None:
 
     _must(schema_text, "offer_1_text", where="schema.sql", errors=errors)
     _must(schema_text, "offer_2_text", where="schema.sql", errors=errors)
+    _must(schema_text, "offer_1_image_url", where="schema.sql", errors=errors)
+    _must(schema_text, "offer_2_image_url", where="schema.sql", errors=errors)
     _must(db_text, "ALTER TABLE places ADD COLUMN offer_1_text", where="src/database.py", errors=errors)
     _must(db_text, "ALTER TABLE places ADD COLUMN offer_2_text", where="src/database.py", errors=errors)
+    _must(db_text, "ALTER TABLE places ADD COLUMN offer_1_image_url", where="src/database.py", errors=errors)
+    _must(db_text, "ALTER TABLE places ADD COLUMN offer_2_image_url", where="src/database.py", errors=errors)
 
     _must(repo_text, "offer_1_text", where="src/business/repository.py", errors=errors)
     _must(repo_text, "offer_2_text", where="src/business/repository.py", errors=errors)
+    _must(repo_text, "offer_1_image_url", where="src/business/repository.py", errors=errors)
+    _must(repo_text, "offer_2_image_url", where="src/business/repository.py", errors=errors)
 
     _must(service_text, "offer_1_text", where="src/business/service.py", errors=errors)
     _must(service_text, "offer_2_text", where="src/business/service.py", errors=errors)
+    _must(service_text, "offer_1_image_url", where="src/business/service.py", errors=errors)
+    _must(service_text, "offer_2_image_url", where="src/business/service.py", errors=errors)
     _must(service_text, "tier not in {\"pro\", \"partner\"}", where="src/business/service.py", errors=errors)
 
     _must(business_handlers_text, "bef:{place_id}:offer_1_text", where="src/business/handlers.py", errors=errors)
     _must(business_handlers_text, "bef:{place_id}:offer_2_text", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "bef:{place_id}:offer_1_image_url", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "bef:{place_id}:offer_2_image_url", where="src/business/handlers.py", errors=errors)
     _must(
         business_handlers_text,
-        "{\"opening_hours\", \"link_url\", \"promo_code\", \"menu_url\", \"order_url\", \"offer_1_text\", \"offer_2_text\"}",
+        "\"offer_1_image_url\"",
+        where="src/business/handlers.py",
+        errors=errors,
+    )
+    _must(
+        business_handlers_text,
+        "\"offer_2_image_url\"",
         where="src/business/handlers.py",
         errors=errors,
     )
     _must(business_handlers_text, "🎁 Офер 1", where="src/business/handlers.py", errors=errors)
     _must(business_handlers_text, "🎁 Офер 2", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "🖼 Фото оферу 1", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "🖼 Фото оферу 2", where="src/business/handlers.py", errors=errors)
 
     _must(resident_handlers_text, "offer_1_text", where="src/handlers.py", errors=errors)
     _must(resident_handlers_text, "offer_2_text", where="src/handlers.py", errors=errors)
+    _must(resident_handlers_text, "offer_1_image_url", where="src/handlers.py", errors=errors)
+    _must(resident_handlers_text, "offer_2_image_url", where="src/handlers.py", errors=errors)
+    _must(resident_handlers_text, "pmimg1_", where="src/handlers.py", errors=errors)
+    _must(resident_handlers_text, "pmimg2_", where="src/handlers.py", errors=errors)
     _must(resident_handlers_text, "Акції та офери", where="src/handlers.py", errors=errors)
     _must(resident_handlers_text, "in {\"pro\", \"partner\"}", where="src/handlers.py", errors=errors)
 
