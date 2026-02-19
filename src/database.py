@@ -2328,12 +2328,29 @@ async def list_place_reports(
                     pr.status,
                     pr.created_at,
                     pr.resolved_at,
-                    pr.resolved_by
+                    pr.resolved_by,
+                    COALESCE(bs.tier, 'free') AS subscription_tier,
+                    COALESCE(bs.status, 'inactive') AS subscription_status,
+                    bs.expires_at AS subscription_expires_at,
+                    CASE
+                        WHEN lower(COALESCE(bs.tier, '')) IN ('pro', 'partner')
+                             AND lower(COALESCE(bs.status, '')) IN ('active', 'canceled')
+                             AND bs.expires_at IS NOT NULL
+                             AND julianday(replace(substr(bs.expires_at, 1, 19), 'T', ' ')) > julianday('now')
+                        THEN 2
+                        WHEN lower(COALESCE(bs.tier, '')) = 'light'
+                             AND lower(COALESCE(bs.status, '')) IN ('active', 'canceled')
+                             AND bs.expires_at IS NOT NULL
+                             AND julianday(replace(substr(bs.expires_at, 1, 19), 'T', ' ')) > julianday('now')
+                        THEN 1
+                        ELSE 0
+                    END AS priority_score
                 FROM place_reports pr
                 LEFT JOIN places p ON p.id = pr.place_id
                 LEFT JOIN general_services gs ON gs.id = p.service_id
+                LEFT JOIN business_subscriptions bs ON bs.place_id = pr.place_id
                 {where_sql}
-                ORDER BY pr.id DESC
+                ORDER BY priority_score DESC, pr.created_at DESC, pr.id DESC
                 LIMIT ? OFFSET ?
                 """,
                 tuple([*params, safe_limit, safe_offset]),
@@ -2357,6 +2374,10 @@ async def list_place_reports(
                 "created_at": r[12] or "",
                 "resolved_at": r[13] or "",
                 "resolved_by": int(r[14]) if r[14] is not None else None,
+                "subscription_tier": r[15] or "free",
+                "subscription_status": r[16] or "inactive",
+                "subscription_expires_at": r[17] or "",
+                "priority_score": int(r[18]) if r[18] is not None else 0,
             }
             for r in rows
         ]
