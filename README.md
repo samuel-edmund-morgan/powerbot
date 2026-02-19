@@ -289,3 +289,42 @@ gh workflow run deploy.yml -f run_migrate=auto
 ```
 
 Перед/після прод-деплою дотримуватись чинного runbook із заморозкою сенсорів.
+
+## 7) Авто-UAT для Telegram (Playwright-подібно)
+
+Для реального “проклікування” inline-кнопок у Telegram можна запускати E2E через userbot (Telethon).
+Це не заміняє CI-smoke, але різко скорочує ручний UAT перед релізом.
+
+### 7.1 Встановити dev-залежність
+```bash
+pip install -r requirements-dev.txt
+```
+
+### 7.2 Підготувати env
+```bash
+export TG_E2E_API_ID="<telegram api id>"
+export TG_E2E_API_HASH="<telegram api hash>"
+export TG_E2E_SESSION="<telethon string session test-акаунта>"
+export TG_E2E_BOT_USERNAME="<username test-бота без @>"
+
+# опційно (за замовчуванням: Ньюкасл / 2 секція)
+export TG_E2E_BUILDING_LABEL="Ньюкасл (24-в)"
+export TG_E2E_SECTION_LABEL="2 секція"
+export TG_E2E_TIMEOUT_SEC="25"
+```
+
+### 7.3 Запуск smoke-сценарію
+```bash
+python3 scripts/e2e_telegram_userbot.py
+```
+
+Що перевіряє сценарій:
+- `/start` -> головне меню
+- `Обрати будинок` -> вибір будинку
+- вибір секції
+- `Світло/опалення/вода` -> `Світло`
+- фінальний екран містить `Стан електропостачання`
+
+Важливо:
+- запускати тільки на test-боті;
+- це окремий dev-інструмент, у GitHub Actions не запускається (бо потребує реального Telegram session).
