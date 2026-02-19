@@ -350,7 +350,7 @@ python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
 
 # Automated smoke: exactly one active Partner tier per category.
 echo "Running business partner-slot uniqueness smoke test..."
-python3 "${REPO_DIR}/scripts/smoke_business_partner_slot_uniqueness.py"
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_partner_slot_uniqueness.py"
 
 # Automated smoke: resident place-card entitlement keyboard (free vs verified CTAs).
 echo "Running business place-card entitlement smoke test..."
