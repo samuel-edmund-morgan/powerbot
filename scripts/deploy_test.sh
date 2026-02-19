@@ -352,6 +352,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
 echo "Running business daily activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_daily_stats_policy.py"
 
+# Automated smoke: premium offers (2 text slots) policy.
+echo "Running business offers policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_offers_policy.py"
+
 # Automated smoke: businessbot QR deep-link policy for Light+ owners.
 echo "Running business QR deep-link policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"

@@ -1578,7 +1578,15 @@ class BusinessCabinetService:
         These fields are available only with an active paid subscription (Light+).
         Value "-" clears the field.
         """
-        allowed_fields = {"opening_hours", "link_url", "promo_code", "menu_url", "order_url"}
+        allowed_fields = {
+            "opening_hours",
+            "link_url",
+            "promo_code",
+            "menu_url",
+            "order_url",
+            "offer_1_text",
+            "offer_2_text",
+        }
         normalized_field = str(field or "").strip().lower()
         if normalized_field not in allowed_fields:
             raise ValidationError("Поле недоступне для редагування.")
@@ -1594,7 +1602,7 @@ class BusinessCabinetService:
         if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Light або вище.")
 
-        if normalized_field in {"menu_url", "order_url"} and tier not in {"pro", "partner"}:
+        if normalized_field in {"menu_url", "order_url", "offer_1_text", "offer_2_text"} and tier not in {"pro", "partner"}:
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Premium або Partner.")
 
         raw = str(value or "").strip()
@@ -1606,6 +1614,9 @@ class BusinessCabinetService:
         elif normalized_field == "promo_code":
             if clean_value and len(clean_value) > 64:
                 raise ValidationError("Промокод занадто довгий.")
+        elif normalized_field in {"offer_1_text", "offer_2_text"}:
+            if clean_value and len(clean_value) > 300:
+                raise ValidationError("Офер занадто довгий.")
         else:
             # link_url / menu_url / order_url
             if clean_value and len(clean_value) > 300:

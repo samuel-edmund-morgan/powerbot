@@ -2171,6 +2171,18 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
         if promo_code:
             text += f"🎟 <b>Промокод:</b> <code>{html.escape(promo_code)}</code>\n\n"
 
+        tier_for_offers = str(place_enriched.get("verified_tier") or "").strip().lower()
+        if tier_for_offers in {"pro", "partner"}:
+            offer_1 = str(place_enriched.get("offer_1_text") or "").strip()
+            offer_2 = str(place_enriched.get("offer_2_text") or "").strip()
+            offer_lines: list[str] = []
+            if offer_1:
+                offer_lines.append(f"• {html.escape(offer_1)}")
+            if offer_2:
+                offer_lines.append(f"• {html.escape(offer_2)}")
+            if offer_lines:
+                text += "🎁 <b>Акції та офери:</b>\n" + "\n".join(offer_lines) + "\n\n"
+
     if place_enriched["description"]:
         text += f"📝 {place_enriched['description']}\n\n"
 

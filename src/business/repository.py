@@ -554,7 +554,7 @@ class BusinessRepository:
                           p.is_published,
                           p.is_verified, p.verified_tier, p.verified_until, p.business_enabled,
                           p.opening_hours, p.contact_type, p.contact_value, p.link_url, p.promo_code,
-                          p.menu_url, p.order_url,
+                          p.menu_url, p.order_url, p.offer_1_text, p.offer_2_text,
                           s.name AS service_name
                      FROM places p
                      JOIN general_services s ON s.id = p.service_id
@@ -1291,6 +1291,8 @@ class BusinessRepository:
                           p.promo_code AS place_promo_code,
                           p.menu_url AS place_menu_url,
                           p.order_url AS place_order_url,
+                          p.offer_1_text AS place_offer_1_text,
+                          p.offer_2_text AS place_offer_2_text,
                           p.business_enabled, p.is_verified, p.verified_tier, p.verified_until,
                           COALESCE(bs.tier, 'free') AS tier,
                           COALESCE(bs.status, 'inactive') AS subscription_status,
@@ -1381,6 +1383,8 @@ class BusinessRepository:
         promo_code: str | None = _UNSET,  # type: ignore[assignment]
         menu_url: str | None = _UNSET,  # type: ignore[assignment]
         order_url: str | None = _UNSET,  # type: ignore[assignment]
+        offer_1_text: str | None = _UNSET,  # type: ignore[assignment]
+        offer_2_text: str | None = _UNSET,  # type: ignore[assignment]
     ) -> dict[str, Any] | None:
         """Update optional business profile fields in `places`.
 
@@ -1406,6 +1410,8 @@ class BusinessRepository:
         _maybe_set("promo_code", promo_code)
         _maybe_set("menu_url", menu_url)
         _maybe_set("order_url", order_url)
+        _maybe_set("offer_1_text", offer_1_text)
+        _maybe_set("offer_2_text", offer_2_text)
 
         if not updates:
             return await self.get_place(int(place_id))
