@@ -348,6 +348,10 @@ python3 "${REPO_DIR}/scripts/smoke_sqlite_transaction_boundary_policy.py"
 echo "Running business guard policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_guard_policy.py"
 
+# Automated smoke: subscription maintenance guard policy (BUSINESS_MODE vs businessbot token).
+echo "Running business subscription maintenance policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_subscription_maintenance_policy.py"
+
 # Automated smoke: resident places UI policy for BUSINESS_MODE on/off.
 echo "Running business mode UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
