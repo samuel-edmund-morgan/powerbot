@@ -43,7 +43,8 @@ def main() -> None:
     _must(text, 'verified_prefix = "⭐"', errors=errors)
     _must(text, 'verified_prefix = "🔝"', errors=errors)
     _must(text, 'verified_prefix = "✅"', errors=errors)
-    _must(text, 'ranking_hint = "⭐ партнер • 🔝 промо • ✅ verified', errors=errors)
+    _must(text, 'ranking_hint = "⭐ офіційний партнер • 🔝 промо • ✅ verified', errors=errors)
+    _must(text, 'tier_badge = " • Офіційний партнер"', errors=errors)
 
     if errors:
         raise SystemExit("ERROR: business catalog ranking policy violation(s):\n- " + "\n- ".join(errors))

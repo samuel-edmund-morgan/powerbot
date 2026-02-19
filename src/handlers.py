@@ -1987,8 +1987,13 @@ async def cb_places_category(callback: CallbackQuery):
         
         # Показуємо кількість лайків
         likes_text = f" ❤️{place['likes_count']}" if place["likes_count"] > 0 else ""
+        tier_badge = ""
+        if business_enabled and has_verified and place.get("is_verified"):
+            tier = (place.get("verified_tier") or "").strip().lower()
+            if tier == "partner":
+                tier_badge = " • Офіційний партнер"
 
-        label = f"{prefix}{place['name']}{likes_text}"
+        label = f"{prefix}{place['name']}{tier_badge}{likes_text}"
         cb = f"place_{place['id']}"
 
         # Optional: highlight only top paid tiers to make them stand out,
@@ -2015,7 +2020,7 @@ async def cb_places_category(callback: CallbackQuery):
     
     ranking_hint = ""
     if business_enabled and has_verified:
-        ranking_hint = "⭐ партнер • 🔝 промо • ✅ verified\n\n"
+        ranking_hint = "⭐ офіційний партнер • 🔝 промо • ✅ verified\n\n"
     text = (
         f"🏢 <b>{service['name']}</b>\n\n"
         f"Оберіть заклад (❤️ = лайки мешканців):\n\n"
@@ -2140,9 +2145,13 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     text = f"🏢 <b>{place_enriched['name']}</b>\n\n"
     if is_business_feature_enabled() and place_enriched.get("is_verified"):
-        tier = (place_enriched.get("verified_tier") or "").strip().upper()
-        tier_text = f" {tier}" if tier else ""
-        text += f"✅ <b>Verified{tier_text}</b>\n\n"
+        tier_norm = str(place_enriched.get("verified_tier") or "").strip().lower()
+        if tier_norm == "partner":
+            text += "⭐ <b>Офіційний партнер категорії</b>\n\n"
+        else:
+            tier = tier_norm.upper()
+            tier_text = f" {tier}" if tier else ""
+            text += f"✅ <b>Verified{tier_text}</b>\n\n"
 
         opening_hours = str(place_enriched.get("opening_hours") or "").strip()
         if opening_hours:
