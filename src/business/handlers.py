@@ -583,6 +583,8 @@ def build_moderation_queue_keyboard(owner_id: int, *, index: int, total: int) ->
 def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> InlineKeyboardMarkup:
     menu_text = "📋 Меню/Прайс" if has_premium_access else "🔒 Меню/Прайс (Premium)"
     order_text = "🛒 Замовити/Запис" if has_premium_access else "🔒 Замовити/Запис (Premium)"
+    offer_1_text = "🎁 Офер 1" if has_premium_access else "🔒 Офер 1 (Premium)"
+    offer_2_text = "🎁 Офер 2" if has_premium_access else "🔒 Офер 2 (Premium)"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -629,6 +631,16 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
                 InlineKeyboardButton(
                     text=order_text,
                     callback_data=f"bef:{place_id}:order_url",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=offer_1_text,
+                    callback_data=f"bef:{place_id}:offer_1_text",
+                ),
+                InlineKeyboardButton(
+                    text=offer_2_text,
+                    callback_data=f"bef:{place_id}:offer_2_text",
                 ),
             ],
             [
@@ -796,6 +808,8 @@ def format_business_card(item: dict) -> str:
     promo_code = html.escape(str(item.get("place_promo_code") or "").strip())
     menu_url = html.escape(str(item.get("place_menu_url") or "").strip())
     order_url = html.escape(str(item.get("place_order_url") or "").strip())
+    offer_1_text = html.escape(str(item.get("place_offer_1_text") or "").strip())
+    offer_2_text = html.escape(str(item.get("place_offer_2_text") or "").strip())
     owner_status = OWNERSHIP_TITLES.get(item["ownership_status"], item["ownership_status"])
     sub_status = SUBSCRIPTION_TITLES.get(item["subscription_status"], item["subscription_status"])
     tier = PLAN_TITLES.get(item["tier"], item["tier"])
@@ -813,6 +827,10 @@ def format_business_card(item: dict) -> str:
         profile_lines.append(f"📋 Меню/Прайс: {menu_url}")
     if order_url:
         profile_lines.append(f"🛒 Замовити/Запис: {order_url}")
+    if offer_1_text:
+        profile_lines.append(f"🎁 Офер 1: {offer_1_text}")
+    if offer_2_text:
+        profile_lines.append(f"🎁 Офер 2: {offer_2_text}")
     if promo_code:
         profile_lines.append(f"🎟 Промокод: <code>{promo_code}</code>")
     profile_block = ("\n" + "\n".join(profile_lines)) if profile_lines else ""
@@ -2497,7 +2515,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             except Exception:
                 pass
         return
-    if field in {"menu_url", "order_url"} and not _has_active_premium_subscription(item):
+    if field in {"menu_url", "order_url", "offer_1_text", "offer_2_text"} and not _has_active_premium_subscription(item):
         await callback.answer("🔒 Ця опція доступна з активним Premium або Partner.", show_alert=True)
         await state.clear()
         if callback.message:
@@ -2509,7 +2527,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
                     place_id=place_id,
                     source="card",
                     prefer_message_id=callback.message.message_id,
-                    notice="🔒 Кнопки «Меню/Прайс» і «Замовити/Запис» доступні з Premium або Partner.",
+                    notice="🔒 Premium-функції (меню/замовлення/офери) доступні з Premium або Partner.",
                 )
             except Exception:
                 pass
@@ -2568,6 +2586,8 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         "promo_code": "промокод",
         "menu_url": "посилання на меню/прайс",
         "order_url": "посилання на замовлення/запис",
+        "offer_1_text": "текст оферу №1",
+        "offer_2_text": "текст оферу №2",
     }.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
@@ -2580,7 +2600,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         extra_note = ""
-        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url"}:
+        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url", "offer_1_text", "offer_2_text"}:
             extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
         await ui_render(
             callback.message.bot,
@@ -2947,7 +2967,7 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
     place_id = int(data["place_id"])
     field = str(data["field"])
     try:
-        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url"}:
+        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url", "offer_1_text", "offer_2_text"}:
             updated_place = await cabinet_service.update_place_business_profile_field(
                 tg_user_id=message.from_user.id if message.from_user else message.chat.id,
                 place_id=place_id,
