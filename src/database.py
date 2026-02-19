@@ -315,6 +315,35 @@ async def init_db():
             await db.execute("ALTER TABLE places ADD COLUMN business_enabled INTEGER DEFAULT 0")
         except Exception:
             pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN opening_hours TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN contact_type TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN contact_value TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN link_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN promo_code TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        # Міграція: додаткові Premium-кнопки в картці закладу
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN menu_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN order_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
         # Таблиця лайків закладів
         await db.execute(
             """CREATE TABLE IF NOT EXISTS place_likes (
@@ -2074,7 +2103,8 @@ async def get_place(place_id: int) -> dict | None:
             async with db.execute(
                 """
                 SELECT id, service_id, name, description, address, keywords,
-                       opening_hours, contact_type, contact_value, link_url, promo_code
+                       opening_hours, contact_type, contact_value, link_url, promo_code,
+                       menu_url, order_url
                   FROM places
                  WHERE id=? AND is_published=1
                 """,
@@ -2112,6 +2142,8 @@ async def get_place(place_id: int) -> dict | None:
             "contact_value": row[8],
             "link_url": row[9],
             "promo_code": row[10],
+            "menu_url": row[11],
+            "order_url": row[12],
         }
 
 

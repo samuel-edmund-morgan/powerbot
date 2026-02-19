@@ -5,7 +5,7 @@ Static smoke-check for place clicks analytics policy.
 Policy:
 - DB has daily click aggregation table `place_clicks_daily`.
 - `record_place_click()` exists and upserts daily counters by action.
-- Resident place UI exposes coupon callback and records `coupon_open`.
+- Resident place UI exposes paid CTA callbacks and records click actions.
 """
 
 from __future__ import annotations
@@ -48,6 +48,12 @@ def main() -> None:
     _must_have(handlers_text, 'callback_data=f"plink_{place_id}"', file_label="src/handlers.py", errors=errors)
     _must_have(handlers_text, 'F.data.startswith("plink_")', file_label="src/handlers.py", errors=errors)
     _must_have(handlers_text, 'await record_place_click(place_id, "link")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'callback_data=f"pmenu_{place_id}"', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'F.data.startswith("pmenu_")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'await record_place_click(place_id, "menu")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'callback_data=f"porder_{place_id}"', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'F.data.startswith("porder_")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'await record_place_click(place_id, "order")', file_label="src/handlers.py", errors=errors)
 
     if errors:
         raise SystemExit("ERROR: place-clicks policy violation(s):\n- " + "\n- ".join(errors))

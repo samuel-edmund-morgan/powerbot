@@ -164,6 +164,14 @@ def _has_active_paid_subscription(item: dict) -> bool:
     return expires_at > datetime.now(timezone.utc)
 
 
+def _has_active_premium_subscription(item: dict) -> bool:
+    """Premium access for extra CTA fields (menu/order) is pro/partner only."""
+    if not _has_active_paid_subscription(item):
+        return False
+    tier = str(item.get("tier") or "free").strip().lower()
+    return tier in {"pro", "partner"}
+
+
 def _format_expires_short(raw_value: str | None) -> str:
     expires_at = _parse_iso_utc(raw_value)
     if not expires_at:
@@ -572,7 +580,9 @@ def build_moderation_queue_keyboard(owner_id: int, *, index: int, total: int) ->
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
+def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> InlineKeyboardMarkup:
+    menu_text = "📋 Меню/Прайс" if has_premium_access else "🔒 Меню/Прайс (Premium)"
+    order_text = "🛒 Замовити/Запис" if has_premium_access else "🔒 Замовити/Запис (Premium)"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -609,6 +619,16 @@ def build_edit_fields_keyboard(place_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="🎟 Промокод",
                     callback_data=f"bef:{place_id}:promo_code",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=menu_text,
+                    callback_data=f"bef:{place_id}:menu_url",
+                ),
+                InlineKeyboardButton(
+                    text=order_text,
+                    callback_data=f"bef:{place_id}:order_url",
                 ),
             ],
             [
@@ -774,6 +794,8 @@ def format_business_card(item: dict) -> str:
     contact_value = html.escape(str(item.get("place_contact_value") or "").strip())
     link_url = html.escape(str(item.get("place_link_url") or "").strip())
     promo_code = html.escape(str(item.get("place_promo_code") or "").strip())
+    menu_url = html.escape(str(item.get("place_menu_url") or "").strip())
+    order_url = html.escape(str(item.get("place_order_url") or "").strip())
     owner_status = OWNERSHIP_TITLES.get(item["ownership_status"], item["ownership_status"])
     sub_status = SUBSCRIPTION_TITLES.get(item["subscription_status"], item["subscription_status"])
     tier = PLAN_TITLES.get(item["tier"], item["tier"])
@@ -787,6 +809,10 @@ def format_business_card(item: dict) -> str:
         profile_lines.append(f"{label}: {contact_value}")
     if link_url:
         profile_lines.append(f"🔗 Посилання: {link_url}")
+    if menu_url:
+        profile_lines.append(f"📋 Меню/Прайс: {menu_url}")
+    if order_url:
+        profile_lines.append(f"🛒 Замовити/Запис: {order_url}")
     if promo_code:
         profile_lines.append(f"🎟 Промокод: <code>{promo_code}</code>")
     profile_block = ("\n" + "\n".join(profile_lines)) if profile_lines else ""
@@ -830,10 +856,27 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
             action="link",
             days=int(days),
         )
+        menu_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="menu",
+            days=int(days),
+        )
+        order_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="order",
+            days=int(days),
+        )
     except Exception:
         logger.exception("Failed to load place activity stats place_id=%s", place_id)
         return text
-    total_cta_clicks = int(coupon_opens) + int(chat_opens) + int(call_opens) + int(link_opens)
+    total_cta_clicks = (
+        int(coupon_opens)
+        + int(chat_opens)
+        + int(call_opens)
+        + int(link_opens)
+        + int(menu_opens)
+        + int(order_opens)
+    )
     ctr_pct = round((total_cta_clicks * 100.0) / int(views), 1) if int(views) > 0 else 0.0
     text += (
         f"\n\n📊 Активність за {int(days)} днів\n"
@@ -842,6 +885,8 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         f"• Відкриття чату: <b>{int(chat_opens)}</b>\n"
         f"• Відкриття дзвінка: <b>{int(call_opens)}</b>\n"
         f"• Відкриття посилання: <b>{int(link_opens)}</b>\n"
+        f"• Відкриття меню/прайсу: <b>{int(menu_opens)}</b>\n"
+        f"• Відкриття замовлення/запису: <b>{int(order_opens)}</b>\n"
         f"• Усі кліки по кнопках: <b>{int(total_cta_clicks)}</b>\n"
         f"• CTR кнопок: <b>{ctr_pct}%</b>"
     )
@@ -2205,7 +2250,10 @@ async def cb_free_edit_request_start(callback: CallbackQuery, state: FSMContext)
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
             text="Що хочеш змінити?",
-            reply_markup=build_edit_fields_keyboard(place_id),
+            reply_markup=build_edit_fields_keyboard(
+                place_id,
+                has_premium_access=_has_active_premium_subscription(item),
+            ),
         )
         return
 
@@ -2391,7 +2439,10 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
             chat_id=callback.message.chat.id,
             prefer_message_id=callback.message.message_id,
             text="Що хочеш змінити?",
-            reply_markup=build_edit_fields_keyboard(place_id),
+            reply_markup=build_edit_fields_keyboard(
+                place_id,
+                has_premium_access=_has_active_premium_subscription(item),
+            ),
         )
     await callback.answer()
 
@@ -2423,6 +2474,23 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
                     source="card",
                     prefer_message_id=callback.message.message_id,
                     notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
+        return
+    if field in {"menu_url", "order_url"} and not _has_active_premium_subscription(item):
+        await callback.answer("🔒 Ця опція доступна з активним Premium або Partner.", show_alert=True)
+        await state.clear()
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            try:
+                await _render_place_plan_menu(
+                    callback.message,
+                    tg_user_id=callback.from_user.id,
+                    place_id=place_id,
+                    source="card",
+                    prefer_message_id=callback.message.message_id,
+                    notice="🔒 Кнопки «Меню/Прайс» і «Замовити/Запис» доступні з Premium або Partner.",
                 )
             except Exception:
                 pass
@@ -2479,6 +2547,8 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         "opening_hours": "години роботи",
         "link_url": "посилання",
         "promo_code": "промокод",
+        "menu_url": "посилання на меню/прайс",
+        "order_url": "посилання на замовлення/запис",
     }.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
@@ -2491,7 +2561,7 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         extra_note = ""
-        if field in {"opening_hours", "link_url", "promo_code"}:
+        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url"}:
             extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
         await ui_render(
             callback.message.bot,
@@ -2858,7 +2928,7 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
     place_id = int(data["place_id"])
     field = str(data["field"])
     try:
-        if field in {"opening_hours", "link_url", "promo_code"}:
+        if field in {"opening_hours", "link_url", "promo_code", "menu_url", "order_url"}:
             updated_place = await cabinet_service.update_place_business_profile_field(
                 tg_user_id=message.from_user.id if message.from_user else message.chat.id,
                 place_id=place_id,

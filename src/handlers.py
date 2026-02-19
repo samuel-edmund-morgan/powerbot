@@ -2085,25 +2085,35 @@ def build_place_detail_keyboard(
     service_id = int(place_enriched["service_id"])
 
     # Contact/link buttons are shown only for Verified places in business mode.
-    top_row: list[InlineKeyboardButton] = []
+    action_buttons: list[InlineKeyboardButton] = []
     if business_enabled and place_enriched.get("is_verified"):
+        tier = str(place_enriched.get("verified_tier") or "").strip().lower()
         contact_type = str(place_enriched.get("contact_type") or "").strip().lower()
         contact_value = str(place_enriched.get("contact_value") or "").strip()
         if contact_type == "call" and contact_value:
             tel_url = _normalize_tel_url(contact_value)
             if tel_url:
                 # Use callback for tracked opens (action=call).
-                top_row.append(InlineKeyboardButton(text="📞 Подзвонити", callback_data=f"pcall_{place_id}"))
+                action_buttons.append(InlineKeyboardButton(text="📞 Подзвонити", callback_data=f"pcall_{place_id}"))
         elif contact_type == "chat" and contact_value:
             chat_url = _normalize_place_link(contact_value)
             if chat_url:
                 # Use callback for tracked opens (action=chat) and then redirect via answer_callback_query(url=...).
-                top_row.append(InlineKeyboardButton(text="💬 Написати", callback_data=f"pchat_{place_id}"))
+                action_buttons.append(InlineKeyboardButton(text="💬 Написати", callback_data=f"pchat_{place_id}"))
 
         link_url = _normalize_place_link(place_enriched.get("link_url"))
         if link_url:
             # Track link opens (action=link) and then redirect.
-            top_row.append(InlineKeyboardButton(text="🔗 Посилання", callback_data=f"plink_{place_id}"))
+            action_buttons.append(InlineKeyboardButton(text="🔗 Посилання", callback_data=f"plink_{place_id}"))
+
+        # Premium/Partner extra CTA buttons.
+        if tier in {"pro", "partner"}:
+            menu_url = _normalize_place_link(place_enriched.get("menu_url"))
+            if menu_url:
+                action_buttons.append(InlineKeyboardButton(text="📋 Меню/Прайс", callback_data=f"pmenu_{place_id}"))
+            order_url = _normalize_place_link(place_enriched.get("order_url"))
+            if order_url:
+                action_buttons.append(InlineKeyboardButton(text="🛒 Замовити/Запис", callback_data=f"porder_{place_id}"))
 
     # Like button.
     if user_liked:
@@ -2112,9 +2122,10 @@ def build_place_detail_keyboard(
         like_btn = InlineKeyboardButton(text=f"❤️ Подобається ({likes_count})", callback_data=f"like_{place_id}")
 
     rows: list[list[InlineKeyboardButton]] = []
-    if top_row:
+    if action_buttons:
         # Keep at most 2 buttons in a row to avoid cramped UI.
-        rows.append(top_row[:2])
+        for idx in range(0, len(action_buttons), 2):
+            rows.append(action_buttons[idx : idx + 2])
     promo_code = str(place_enriched.get("promo_code") or "").strip()
     if business_enabled and place_enriched.get("is_verified") and promo_code:
         rows.append([InlineKeyboardButton(text="🎟 Відкрити промокод", callback_data=f"pcoupon_{place_id}")])
@@ -2528,6 +2539,94 @@ async def cb_place_link_open(callback: CallbackQuery) -> None:
             "🔗 Відкрити посилання:",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="🔗 Посилання", url=link_url)]]
+            ),
+        )
+        await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("pmenu_"))
+async def cb_place_menu_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await safe_callback_answer(callback, "Меню для цього закладу недоступне.", show_alert=True)
+        return
+
+    tier = str(place_enriched.get("verified_tier") or "").strip().lower()
+    if tier not in {"pro", "partner"}:
+        await safe_callback_answer(callback, "Меню для цього закладу недоступне.", show_alert=True)
+        return
+
+    menu_url = _normalize_place_link(place_enriched.get("menu_url"))
+    if not menu_url:
+        await safe_callback_answer(callback, "Некоректне посилання на меню.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "menu")
+    try:
+        await safe_callback_answer(callback, url=menu_url)
+    except Exception:
+        await callback.message.answer(
+            "📋 Відкрити меню/прайс:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="📋 Меню/Прайс", url=menu_url)]]
+            ),
+        )
+        await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("porder_"))
+async def cb_place_order_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await safe_callback_answer(callback, "Замовлення для цього закладу недоступне.", show_alert=True)
+        return
+
+    tier = str(place_enriched.get("verified_tier") or "").strip().lower()
+    if tier not in {"pro", "partner"}:
+        await safe_callback_answer(callback, "Замовлення для цього закладу недоступне.", show_alert=True)
+        return
+
+    order_url = _normalize_place_link(place_enriched.get("order_url"))
+    if not order_url:
+        await safe_callback_answer(callback, "Некоректне посилання на замовлення.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "order")
+    try:
+        await safe_callback_answer(callback, url=order_url)
+    except Exception:
+        await callback.message.answer(
+            "🛒 Відкрити замовлення/запис:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🛒 Замовити/Запис", url=order_url)]]
             ),
         )
         await safe_callback_answer(callback)
