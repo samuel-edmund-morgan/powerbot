@@ -2161,12 +2161,20 @@ def build_place_detail_keyboard(
 
 async def _render_place_detail_message(message: Message, *, place_id: int, user_id: int) -> bool:
     """Render place detail in-place. Returns False when place is unavailable."""
-    from database import get_place, has_liked_place, get_place_likes_count, record_place_view
+    from database import (
+        get_general_service,
+        get_place,
+        get_place_likes_count,
+        has_liked_place,
+        record_place_view,
+    )
     from business import get_business_service, is_business_feature_enabled
 
     place = await get_place(place_id)
     if not place:
         return False
+    service = await get_general_service(int(place.get("service_id") or 0))
+    service_name = str(service.get("name") or "").strip() if service else ""
 
     # Best-effort analytics: do not break UX on failure.
     await record_place_view(place_id)
@@ -2178,6 +2186,8 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
 
     place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
     text = f"🏢 <b>{place_enriched['name']}</b>\n\n"
+    if service_name:
+        text += f"🗂 <b>Категорія:</b> {html.escape(service_name)}\n\n"
     if is_business_feature_enabled() and place_enriched.get("is_verified"):
         tier_norm = str(place_enriched.get("verified_tier") or "").strip().lower()
         if tier_norm == "partner":
