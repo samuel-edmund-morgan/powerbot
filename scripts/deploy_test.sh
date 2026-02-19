@@ -344,6 +344,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 echo "Running business owner/admin downgrade policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_owner_admin_downgrade_policy.py"
 
+# Automated smoke: Free vs Light owner edit entitlement contract.
+echo "Running business light owner edit contract smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_light_owner_edit_contract.py"
+
 # Automated smoke: businessbot user copy hygiene (no technical IDs in owner UI).
 echo "Running business UI copy hygiene smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
