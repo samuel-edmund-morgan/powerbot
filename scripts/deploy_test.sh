@@ -232,6 +232,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_a
 echo "Running business subscription lifecycle smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_subscription_lifecycle.py"
 
+# Automated smoke: owner cancel keeps entitlement until expiry, then reconcile downgrades.
+echo "Running business subscription cancel smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_subscription_cancel.py"
+
 # Automated smoke: downgrade paid->free must purge likes gained during paid windows.
 echo "Running business paid-like purge smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_paid_likes_purge.py"
