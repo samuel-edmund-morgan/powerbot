@@ -42,6 +42,8 @@ def main() -> None:
     _must(handlers_text, 'action="link"', where="src/business/handlers.py", errors=errors)
     _must(handlers_text, 'action="menu"', where="src/business/handlers.py", errors=errors)
     _must(handlers_text, 'action="order"', where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, 'action="offer1_image"', where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, 'action="offer2_image"', where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Перегляди картки", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Відкриття промокоду", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Відкриття чату", where="src/business/handlers.py", errors=errors)
@@ -49,6 +51,8 @@ def main() -> None:
     _must(handlers_text, "Відкриття посилання", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Відкриття меню/прайсу", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Відкриття замовлення/запису", where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, "Відкриття фото оферу 1", where="src/business/handlers.py", errors=errors)
+    _must(handlers_text, "Відкриття фото оферу 2", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "Усі кліки по кнопках", where="src/business/handlers.py", errors=errors)
     _must(handlers_text, "CTR кнопок", where="src/business/handlers.py", errors=errors)
 

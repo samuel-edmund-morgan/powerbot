@@ -2114,6 +2114,12 @@ def build_place_detail_keyboard(
             order_url = _normalize_place_link(place_enriched.get("order_url"))
             if order_url:
                 action_buttons.append(InlineKeyboardButton(text="🛒 Замовити/Запис", callback_data=f"porder_{place_id}"))
+            offer_1_image_url = _normalize_place_link(place_enriched.get("offer_1_image_url"))
+            if offer_1_image_url:
+                action_buttons.append(InlineKeyboardButton(text="🖼 Фото оферу 1", callback_data=f"pmimg1_{place_id}"))
+            offer_2_image_url = _normalize_place_link(place_enriched.get("offer_2_image_url"))
+            if offer_2_image_url:
+                action_buttons.append(InlineKeyboardButton(text="🖼 Фото оферу 2", callback_data=f"pmimg2_{place_id}"))
 
     # Like button.
     if user_liked:
@@ -2639,6 +2645,92 @@ async def cb_place_order_open(callback: CallbackQuery) -> None:
             "🛒 Відкрити замовлення/запис:",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="🛒 Замовити/Запис", url=order_url)]]
+            ),
+        )
+        await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("pmimg1_"))
+async def cb_place_offer_1_image_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await safe_callback_answer(callback, "Фото оферу недоступне.", show_alert=True)
+        return
+    tier = str(place_enriched.get("verified_tier") or "").strip().lower()
+    if tier not in {"pro", "partner"}:
+        await safe_callback_answer(callback, "Фото оферу недоступне.", show_alert=True)
+        return
+
+    image_url = _normalize_place_link(place_enriched.get("offer_1_image_url"))
+    if not image_url:
+        await safe_callback_answer(callback, "Посилання на фото оферу відсутнє.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "offer1_image")
+    try:
+        await safe_callback_answer(callback, url=image_url)
+    except Exception:
+        await callback.message.answer(
+            "🖼 Відкрити фото оферу 1:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🖼 Фото оферу 1", url=image_url)]]
+            ),
+        )
+        await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("pmimg2_"))
+async def cb_place_offer_2_image_open(callback: CallbackQuery) -> None:
+    from database import get_place, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        place_id = int(callback.data.split("_", 1)[1])
+    except Exception:
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await safe_callback_answer(callback, "Фото оферу недоступне.", show_alert=True)
+        return
+    tier = str(place_enriched.get("verified_tier") or "").strip().lower()
+    if tier not in {"pro", "partner"}:
+        await safe_callback_answer(callback, "Фото оферу недоступне.", show_alert=True)
+        return
+
+    image_url = _normalize_place_link(place_enriched.get("offer_2_image_url"))
+    if not image_url:
+        await safe_callback_answer(callback, "Посилання на фото оферу відсутнє.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "offer2_image")
+    try:
+        await safe_callback_answer(callback, url=image_url)
+    except Exception:
+        await callback.message.answer(
+            "🖼 Відкрити фото оферу 2:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🖼 Фото оферу 2", url=image_url)]]
             ),
         )
         await safe_callback_answer(callback)

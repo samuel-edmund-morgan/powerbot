@@ -555,6 +555,7 @@ class BusinessRepository:
                           p.is_verified, p.verified_tier, p.verified_until, p.business_enabled,
                           p.opening_hours, p.contact_type, p.contact_value, p.link_url, p.promo_code,
                           p.menu_url, p.order_url, p.offer_1_text, p.offer_2_text,
+                          p.offer_1_image_url, p.offer_2_image_url,
                           s.name AS service_name
                      FROM places p
                      JOIN general_services s ON s.id = p.service_id
@@ -1293,6 +1294,8 @@ class BusinessRepository:
                           p.order_url AS place_order_url,
                           p.offer_1_text AS place_offer_1_text,
                           p.offer_2_text AS place_offer_2_text,
+                          p.offer_1_image_url AS place_offer_1_image_url,
+                          p.offer_2_image_url AS place_offer_2_image_url,
                           p.business_enabled, p.is_verified, p.verified_tier, p.verified_until,
                           COALESCE(bs.tier, 'free') AS tier,
                           COALESCE(bs.status, 'inactive') AS subscription_status,
@@ -1385,6 +1388,8 @@ class BusinessRepository:
         order_url: str | None = _UNSET,  # type: ignore[assignment]
         offer_1_text: str | None = _UNSET,  # type: ignore[assignment]
         offer_2_text: str | None = _UNSET,  # type: ignore[assignment]
+        offer_1_image_url: str | None = _UNSET,  # type: ignore[assignment]
+        offer_2_image_url: str | None = _UNSET,  # type: ignore[assignment]
     ) -> dict[str, Any] | None:
         """Update optional business profile fields in `places`.
 
@@ -1412,6 +1417,8 @@ class BusinessRepository:
         _maybe_set("order_url", order_url)
         _maybe_set("offer_1_text", offer_1_text)
         _maybe_set("offer_2_text", offer_2_text)
+        _maybe_set("offer_1_image_url", offer_1_image_url)
+        _maybe_set("offer_2_image_url", offer_2_image_url)
 
         if not updates:
             return await self.get_place(int(place_id))

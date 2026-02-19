@@ -353,6 +353,14 @@ async def init_db():
             await db.execute("ALTER TABLE places ADD COLUMN offer_2_text TEXT DEFAULT NULL")
         except Exception:
             pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN offer_1_image_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN offer_2_image_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
         # Таблиця лайків закладів
         await db.execute(
             """CREATE TABLE IF NOT EXISTS place_likes (
@@ -2113,7 +2121,8 @@ async def get_place(place_id: int) -> dict | None:
                 """
                 SELECT id, service_id, name, description, address, keywords,
                        opening_hours, contact_type, contact_value, link_url, promo_code,
-                       menu_url, order_url, offer_1_text, offer_2_text
+                       menu_url, order_url, offer_1_text, offer_2_text,
+                       offer_1_image_url, offer_2_image_url
                   FROM places
                  WHERE id=? AND is_published=1
                 """,
@@ -2155,6 +2164,8 @@ async def get_place(place_id: int) -> dict | None:
             "order_url": row[12],
             "offer_1_text": row[13],
             "offer_2_text": row[14],
+            "offer_1_image_url": row[15],
+            "offer_2_image_url": row[16],
         }
 
 
