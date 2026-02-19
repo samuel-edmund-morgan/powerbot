@@ -111,6 +111,8 @@ async def apply_sqlite_pragmas(db: aiosqlite.Connection) -> None:
 async def open_db() -> AsyncIterator[aiosqlite.Connection]:
     async with aiosqlite.connect(DB_PATH) as db:
         await apply_sqlite_pragmas(db)
+        # Unicode-safe casefold for LIKE-based search (SQLite LOWER/NOCASE is ASCII-centric).
+        await db.create_function("UCFOLD", 1, lambda value: str(value or "").casefold())
         yield db
 
 
@@ -135,13 +137,13 @@ def build_keywords(name: str | None, description: str | None, keywords: str | No
             parts.append(text)
     merged = " ".join(parts)
     # Нормалізуємо пробіли й робимо нижній регістр для уніфікації пошуку
-    merged = " ".join(merged.split()).strip().lower()
+    merged = " ".join(merged.split()).strip().casefold()
     return merged
 
 
 def tokenize_query(query: str) -> list[str]:
     """Отримати токени з пошукового запиту, прибравши розділові знаки."""
-    tokens = re.findall(r"[\wа-яіїєґ’'-]+", query.lower())
+    tokens = re.findall(r"[\wа-яіїєґ’'-]+", query.casefold())
     cleaned = []
     stopwords = {"де", "в", "на", "і", "та", "a", "the", "is", "світло"}
     for token in tokens:
@@ -2034,8 +2036,8 @@ async def search_places(query: str) -> list[dict]:
     for token in tokens:
         like = f"%{token}%"
         condition = (
-            "(LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ? "
-            "OR LOWER(p.address) LIKE ? OR LOWER(COALESCE(p.keywords, '')) LIKE ?)"
+            "(UCFOLD(p.name) LIKE ? OR UCFOLD(p.description) LIKE ? "
+            "OR UCFOLD(p.address) LIKE ? OR UCFOLD(COALESCE(p.keywords, '')) LIKE ?)"
         )
         where_conditions.append(condition)
         params.extend([like, like, like, like])
@@ -2090,8 +2092,8 @@ async def search_places_by_service(query: str, service_id: int) -> list[dict]:
     for token in tokens:
         like = f"%{token}%"
         condition = (
-            "(LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ? "
-            "OR LOWER(p.address) LIKE ? OR LOWER(COALESCE(p.keywords, '')) LIKE ?)"
+            "(UCFOLD(p.name) LIKE ? OR UCFOLD(p.description) LIKE ? "
+            "OR UCFOLD(p.address) LIKE ? OR UCFOLD(COALESCE(p.keywords, '')) LIKE ?)"
         )
         where_conditions.append(condition)
         params.extend([like, like, like, like])
