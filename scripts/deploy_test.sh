@@ -372,6 +372,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_contact_validation_policy.py"
 echo "Running business logo policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"
 
+# Automated smoke: Partner branded gallery policy.
+echo "Running business partner gallery policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_partner_gallery_policy.py"
+
 # Automated smoke: businessbot QR deep-link policy for Light+ owners.
 echo "Running business QR deep-link policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"

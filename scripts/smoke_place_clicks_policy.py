@@ -63,6 +63,15 @@ def main() -> None:
     _must_have(handlers_text, 'callback_data=f"pmimg2_{place_id}"', file_label="src/handlers.py", errors=errors)
     _must_have(handlers_text, 'F.data.startswith("pmimg2_")', file_label="src/handlers.py", errors=errors)
     _must_have(handlers_text, 'await record_place_click(place_id, "offer2_image")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'callback_data=f"pph1_{place_id}"', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'F.data.startswith("pph1_")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'await record_place_click(place_id, "partner_photo_1")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'callback_data=f"pph2_{place_id}"', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'F.data.startswith("pph2_")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'await record_place_click(place_id, "partner_photo_2")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'callback_data=f"pph3_{place_id}"', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'F.data.startswith("pph3_")', file_label="src/handlers.py", errors=errors)
+    _must_have(handlers_text, 'await record_place_click(place_id, "partner_photo_3")', file_label="src/handlers.py", errors=errors)
 
     if errors:
         raise SystemExit("ERROR: place-clicks policy violation(s):\n- " + "\n- ".join(errors))

@@ -54,6 +54,9 @@ def main() -> None:
         "contact_value": "",
         "link_url": "",
         "logo_url": "",
+        "photo_1_url": "",
+        "photo_2_url": "",
+        "photo_3_url": "",
         "promo_code": "",
         "menu_url": "",
         "order_url": "",
@@ -78,6 +81,9 @@ def main() -> None:
     _assert(_count_prefix(cbs_free, "porder_") == 0, "free must not expose order CTA")
     _assert(_count_prefix(cbs_free, "pmimg1_") == 0, "free must not expose offer image 1 CTA")
     _assert(_count_prefix(cbs_free, "pmimg2_") == 0, "free must not expose offer image 2 CTA")
+    _assert(_count_prefix(cbs_free, "pph1_") == 0, "free must not expose partner photo CTA")
+    _assert(_count_prefix(cbs_free, "pph2_") == 0, "free must not expose partner photo CTA")
+    _assert(_count_prefix(cbs_free, "pph3_") == 0, "free must not expose partner photo CTA")
     _assert(_count_prefix(cbs_free, "plrep_") == 1, "report CTA must stay visible on free")
 
     # Verified light with chat contact + link + promo.
@@ -160,6 +166,9 @@ def main() -> None:
             "order_url": "https://example.org/order",
             "offer_1_image_url": "https://example.org/offer1.jpg",
             "offer_2_image_url": "https://example.org/offer2.jpg",
+            "photo_1_url": "https://example.org/p1.jpg",
+            "photo_2_url": "https://example.org/p2.jpg",
+            "photo_3_url": "https://example.org/p3.jpg",
         }
     )
     kb_pro = build_place_detail_keyboard(
@@ -174,6 +183,35 @@ def main() -> None:
     _assert(_count_prefix(cbs_pro, "plogo_") == 1, "verified pro with logo_url must expose logo CTA")
     _assert(_count_prefix(cbs_pro, "pmimg1_") == 1, "verified pro with offer_1_image_url must expose image CTA")
     _assert(_count_prefix(cbs_pro, "pmimg2_") == 1, "verified pro with offer_2_image_url must expose image CTA")
+    _assert(_count_prefix(cbs_pro, "pph1_") == 0, "verified pro must not expose partner photo CTA")
+    _assert(_count_prefix(cbs_pro, "pph2_") == 0, "verified pro must not expose partner photo CTA")
+    _assert(_count_prefix(cbs_pro, "pph3_") == 0, "verified pro must not expose partner photo CTA")
+
+    # Verified partner with branded gallery URLs.
+    verified_partner = dict(base)
+    verified_partner.update(
+        {
+            "id": 105,
+            "is_verified": 1,
+            "verified_tier": "partner",
+            "contact_type": "chat",
+            "contact_value": "@partner_chat",
+            "logo_url": "https://example.org/logo-partner.jpg",
+            "photo_1_url": "https://example.org/partner-photo-1.jpg",
+            "photo_2_url": "https://example.org/partner-photo-2.jpg",
+            "photo_3_url": "https://example.org/partner-photo-3.jpg",
+        }
+    )
+    kb_partner = build_place_detail_keyboard(
+        verified_partner,
+        likes_count=20,
+        user_liked=False,
+        business_enabled=True,
+    )
+    cbs_partner = _collect_callbacks(kb_partner)
+    _assert(_count_prefix(cbs_partner, "pph1_") == 1, "verified partner with photo_1_url must expose photo CTA")
+    _assert(_count_prefix(cbs_partner, "pph2_") == 1, "verified partner with photo_2_url must expose photo CTA")
+    _assert(_count_prefix(cbs_partner, "pph3_") == 1, "verified partner with photo_3_url must expose photo CTA")
 
     print("OK: business place-card entitlement smoke passed.")
 

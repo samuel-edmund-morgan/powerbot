@@ -1633,6 +1633,9 @@ class BusinessCabinetService:
             "opening_hours",
             "link_url",
             "logo_url",
+            "photo_1_url",
+            "photo_2_url",
+            "photo_3_url",
             "promo_code",
             "menu_url",
             "order_url",
@@ -1665,6 +1668,8 @@ class BusinessCabinetService:
             "offer_2_image_url",
         } and tier not in {"pro", "partner"}:
             raise AccessDeniedError("Ця дія доступна лише з активною підпискою Premium або Partner.")
+        if normalized_field in {"photo_1_url", "photo_2_url", "photo_3_url"} and tier != "partner":
+            raise AccessDeniedError("Ця дія доступна лише з активною підпискою Partner.")
 
         raw = str(value or "").strip()
         clean_value = "" if raw == "-" else raw
@@ -1681,7 +1686,7 @@ class BusinessCabinetService:
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Офер занадто довгий.")
         else:
-            # link_url / logo_url / menu_url / order_url / offer_*_image_url
+            # link_url / logo_url / photo_*_url / menu_url / order_url / offer_*_image_url
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Посилання занадто довге.")
             if clean_value:
