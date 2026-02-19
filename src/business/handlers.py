@@ -172,6 +172,14 @@ def _has_active_premium_subscription(item: dict) -> bool:
     return tier in {"pro", "partner"}
 
 
+def _has_active_partner_subscription(item: dict) -> bool:
+    """Partner access for branded gallery fields."""
+    if not _has_active_paid_subscription(item):
+        return False
+    tier = str(item.get("tier") or "free").strip().lower()
+    return tier == "partner"
+
+
 def _format_expires_short(raw_value: str | None) -> str:
     expires_at = _parse_iso_utc(raw_value)
     if not expires_at:
@@ -580,7 +588,12 @@ def build_moderation_queue_keyboard(owner_id: int, *, index: int, total: int) ->
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> InlineKeyboardMarkup:
+def build_edit_fields_keyboard(
+    place_id: int,
+    *,
+    has_premium_access: bool,
+    has_partner_access: bool = False,
+) -> InlineKeyboardMarkup:
     menu_text = "📋 Меню/Прайс" if has_premium_access else "🔒 Меню/Прайс (Premium)"
     order_text = "🛒 Замовити/Запис" if has_premium_access else "🔒 Замовити/Запис (Premium)"
     offer_1_text = "🎁 Офер 1" if has_premium_access else "🔒 Офер 1 (Premium)"
@@ -588,6 +601,9 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
     offer_1_image = "🖼 Фото оферу 1" if has_premium_access else "🔒 Фото оферу 1 (Premium)"
     offer_2_image = "🖼 Фото оферу 2" if has_premium_access else "🔒 Фото оферу 2 (Premium)"
     logo_text = "🖼 Логотип/фото"
+    photo_1_text = "📸 Фото 1" if has_partner_access else "🔒 Фото 1 (Partner)"
+    photo_2_text = "📸 Фото 2" if has_partner_access else "🔒 Фото 2 (Partner)"
+    photo_3_text = "📸 Фото 3" if has_partner_access else "🔒 Фото 3 (Partner)"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -660,6 +676,22 @@ def build_edit_fields_keyboard(place_id: int, *, has_premium_access: bool) -> In
                 InlineKeyboardButton(
                     text=offer_2_image,
                     callback_data=f"bef:{place_id}:offer_2_image_url",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=photo_1_text,
+                    callback_data=f"bef:{place_id}:photo_1_url",
+                ),
+                InlineKeyboardButton(
+                    text=photo_2_text,
+                    callback_data=f"bef:{place_id}:photo_2_url",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=photo_3_text,
+                    callback_data=f"bef:{place_id}:photo_3_url",
                 ),
             ],
             [
@@ -825,6 +857,9 @@ def format_business_card(item: dict) -> str:
     contact_value = html.escape(str(item.get("place_contact_value") or "").strip())
     link_url = html.escape(str(item.get("place_link_url") or "").strip())
     logo_url = html.escape(str(item.get("place_logo_url") or "").strip())
+    photo_1_url = html.escape(str(item.get("place_photo_1_url") or "").strip())
+    photo_2_url = html.escape(str(item.get("place_photo_2_url") or "").strip())
+    photo_3_url = html.escape(str(item.get("place_photo_3_url") or "").strip())
     promo_code = html.escape(str(item.get("place_promo_code") or "").strip())
     menu_url = html.escape(str(item.get("place_menu_url") or "").strip())
     order_url = html.escape(str(item.get("place_order_url") or "").strip())
@@ -847,6 +882,12 @@ def format_business_card(item: dict) -> str:
         profile_lines.append(f"🔗 Посилання: {link_url}")
     if logo_url:
         profile_lines.append(f"🖼 Логотип/фото: {logo_url}")
+    if photo_1_url:
+        profile_lines.append(f"📸 Фото 1: {photo_1_url}")
+    if photo_2_url:
+        profile_lines.append(f"📸 Фото 2: {photo_2_url}")
+    if photo_3_url:
+        profile_lines.append(f"📸 Фото 3: {photo_3_url}")
     if menu_url:
         profile_lines.append(f"📋 Меню/Прайс: {menu_url}")
     if order_url:
@@ -917,6 +958,21 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
             action="logo_open",
             days=int(days),
         )
+        partner_photo_1_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="partner_photo_1",
+            days=int(days),
+        )
+        partner_photo_2_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="partner_photo_2",
+            days=int(days),
+        )
+        partner_photo_3_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="partner_photo_3",
+            days=int(days),
+        )
         offer_1_image_opens = await cabinet_service.repository.get_place_clicks_sum(
             place_id,
             action="offer1_image",
@@ -938,6 +994,9 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         + int(menu_opens)
         + int(order_opens)
         + int(logo_opens)
+        + int(partner_photo_1_opens)
+        + int(partner_photo_2_opens)
+        + int(partner_photo_3_opens)
         + int(offer_1_image_opens)
         + int(offer_2_image_opens)
     )
@@ -952,6 +1011,9 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         f"• Відкриття меню/прайсу: <b>{int(menu_opens)}</b>\n"
         f"• Відкриття замовлення/запису: <b>{int(order_opens)}</b>\n"
         f"• Відкриття логотипу/фото: <b>{int(logo_opens)}</b>\n"
+        f"• Відкриття фото 1 (Partner): <b>{int(partner_photo_1_opens)}</b>\n"
+        f"• Відкриття фото 2 (Partner): <b>{int(partner_photo_2_opens)}</b>\n"
+        f"• Відкриття фото 3 (Partner): <b>{int(partner_photo_3_opens)}</b>\n"
         f"• Відкриття фото оферу 1: <b>{int(offer_1_image_opens)}</b>\n"
         f"• Відкриття фото оферу 2: <b>{int(offer_2_image_opens)}</b>\n"
         f"• Усі кліки по кнопках: <b>{int(total_cta_clicks)}</b>\n"
@@ -2339,6 +2401,7 @@ async def cb_free_edit_request_start(callback: CallbackQuery, state: FSMContext)
             reply_markup=build_edit_fields_keyboard(
                 place_id,
                 has_premium_access=_has_active_premium_subscription(item),
+                has_partner_access=_has_active_partner_subscription(item),
             ),
         )
         return
@@ -2528,6 +2591,7 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
             reply_markup=build_edit_fields_keyboard(
                 place_id,
                 has_premium_access=_has_active_premium_subscription(item),
+                has_partner_access=_has_active_partner_subscription(item),
             ),
         )
     await callback.answer()
@@ -2584,6 +2648,23 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
                     source="card",
                     prefer_message_id=callback.message.message_id,
                     notice="🔒 Premium-функції (меню/замовлення/офери/фото) доступні з Premium або Partner.",
+                )
+            except Exception:
+                pass
+        return
+    if field in {"photo_1_url", "photo_2_url", "photo_3_url"} and not _has_active_partner_subscription(item):
+        await callback.answer("🔒 Ця опція доступна з активним Partner.", show_alert=True)
+        await state.clear()
+        if callback.message:
+            await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+            try:
+                await _render_place_plan_menu(
+                    callback.message,
+                    tg_user_id=callback.from_user.id,
+                    place_id=place_id,
+                    source="card",
+                    prefer_message_id=callback.message.message_id,
+                    notice="🔒 Брендована галерея доступна з активним Partner.",
                 )
             except Exception:
                 pass
@@ -2647,6 +2728,9 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         "offer_2_text": "текст оферу №2",
         "offer_1_image_url": "посилання на фото оферу №1",
         "offer_2_image_url": "посилання на фото оферу №2",
+        "photo_1_url": "посилання на фото №1",
+        "photo_2_url": "посилання на фото №2",
+        "photo_3_url": "посилання на фото №3",
     }.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
@@ -2670,6 +2754,9 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
             "offer_2_text",
             "offer_1_image_url",
             "offer_2_image_url",
+            "photo_1_url",
+            "photo_2_url",
+            "photo_3_url",
         }:
             extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
         if field == "promo_code":
@@ -3050,6 +3137,9 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
             "offer_2_text",
             "offer_1_image_url",
             "offer_2_image_url",
+            "photo_1_url",
+            "photo_2_url",
+            "photo_3_url",
         }:
             updated_place = await cabinet_service.update_place_business_profile_field(
                 tg_user_id=message.from_user.id if message.from_user else message.chat.id,

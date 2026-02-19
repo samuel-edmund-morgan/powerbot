@@ -336,6 +336,18 @@ async def init_db():
         except Exception:
             pass
         try:
+            await db.execute("ALTER TABLE places ADD COLUMN photo_1_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN photo_2_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN photo_3_url TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
             await db.execute("ALTER TABLE places ADD COLUMN promo_code TEXT DEFAULT NULL")
         except Exception:
             pass
@@ -2124,7 +2136,9 @@ async def get_place(place_id: int) -> dict | None:
             async with db.execute(
                 """
                 SELECT id, service_id, name, description, address, keywords,
-                       opening_hours, contact_type, contact_value, link_url, logo_url, promo_code,
+                       opening_hours, contact_type, contact_value, link_url, logo_url,
+                       photo_1_url, photo_2_url, photo_3_url,
+                       promo_code,
                        menu_url, order_url, offer_1_text, offer_2_text,
                        offer_1_image_url, offer_2_image_url
                   FROM places
@@ -2164,13 +2178,16 @@ async def get_place(place_id: int) -> dict | None:
             "contact_value": row[8],
             "link_url": row[9],
             "logo_url": row[10],
-            "promo_code": row[11],
-            "menu_url": row[12],
-            "order_url": row[13],
-            "offer_1_text": row[14],
-            "offer_2_text": row[15],
-            "offer_1_image_url": row[16],
-            "offer_2_image_url": row[17],
+            "photo_1_url": row[11],
+            "photo_2_url": row[12],
+            "photo_3_url": row[13],
+            "promo_code": row[14],
+            "menu_url": row[15],
+            "order_url": row[16],
+            "offer_1_text": row[17],
+            "offer_2_text": row[18],
+            "offer_1_image_url": row[19],
+            "offer_2_image_url": row[20],
         }
 
 
