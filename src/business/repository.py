@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -601,6 +601,63 @@ class BusinessRepository:
             ) as cur:
                 row = await cur.fetchone()
                 return int(row[0] if row and row[0] is not None else 0)
+
+    async def get_place_activity_daily(self, place_id: int, *, days: int) -> list[dict[str, Any]]:
+        """Get daily views/clicks timeline for a place (including today)."""
+        safe_days = max(1, min(int(days), 31))
+        offset = f"-{safe_days - 1} days"
+        views_map: dict[str, int] = {}
+        clicks_map: dict[str, int] = {}
+        async with open_business_db() as db:
+            async with db.execute(
+                """
+                SELECT day, views
+                  FROM place_views_daily
+                 WHERE place_id = ?
+                   AND day >= date('now','localtime', ?)
+                """,
+                (int(place_id), offset),
+            ) as cur:
+                rows = await cur.fetchall()
+                for row in rows:
+                    day = str(row["day"] or "").strip()
+                    if day:
+                        views_map[day] = int(row["views"] or 0)
+
+            async with db.execute(
+                """
+                SELECT day, COALESCE(SUM(cnt), 0) AS clicks
+                  FROM place_clicks_daily
+                 WHERE place_id = ?
+                   AND day >= date('now','localtime', ?)
+                 GROUP BY day
+                """,
+                (int(place_id), offset),
+            ) as cur:
+                rows = await cur.fetchall()
+                for row in rows:
+                    day = str(row["day"] or "").strip()
+                    if day:
+                        clicks_map[day] = int(row["clicks"] or 0)
+
+        today = datetime.now().date()
+        timeline: list[dict[str, Any]] = []
+        start = today - timedelta(days=safe_days - 1)
+        for i in range(safe_days):
+            current = start + timedelta(days=i)
+            day_key = current.isoformat()
+            views = int(views_map.get(day_key) or 0)
+            clicks = int(clicks_map.get(day_key) or 0)
+            ctr = round((clicks * 100.0) / views, 1) if views > 0 else 0.0
+            timeline.append(
+                {
+                    "day": day_key,
+                    "views": views,
+                    "clicks": clicks,
+                    "ctr": ctr,
+                }
+            )
+        return timeline
 
     async def list_service_place_views(self, service_id: int, *, days: int) -> list[dict[str, int]]:
         """Get per-place views for published places in a category, sorted by popularity."""
