@@ -468,6 +468,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_plan_matrix_policy.py"
 echo "Running business contact validation policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_contact_validation_policy.py"
 
+# Automated smoke: resident contact CTA callbacks runtime (chat/call redirects + click analytics).
+echo "Running business contact CTA runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_contact_cta_runtime.py"
+
 # Automated smoke: Light+ logo/photo field policy.
 echo "Running business logo policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"
