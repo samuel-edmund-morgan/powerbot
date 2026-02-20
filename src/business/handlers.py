@@ -1237,72 +1237,66 @@ async def send_edit_building_picker(
     )
 
 
+def _build_owner_place_card_action_rows(*, place_id: int, item: dict) -> list[list[InlineKeyboardButton]]:
+    """Build owner place-card action rows with a single source of truth."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if item.get("ownership_status") != "approved":
+        return rows
+
+    can_edit = _has_active_paid_subscription(item)
+    edit_text = "✏️ Редагувати" if can_edit else f"🔒 Редагувати ({PLAN_TITLES['light']})"
+    edit_btn = (
+        InlineKeyboardButton(text=edit_text, callback_data=f"be:{place_id}")
+        if can_edit
+        else ikb(text=edit_text, callback_data=f"be:{place_id}", style=STYLE_PRIMARY)
+    )
+    rows.append(
+        [
+            edit_btn,
+            ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
+        ]
+    )
+    if not can_edit:
+        rows.append([ikb(text="📝 Запропонувати правку", callback_data=f"{CB_FREE_EDIT_REQUEST_PREFIX}{place_id}", style=STYLE_PRIMARY)])
+
+    qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
+    qr_btn = (
+        InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
+        if can_edit
+        else ikb(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}", style=STYLE_PRIMARY)
+    )
+    rows.append([qr_btn])
+
+    can_partner_qr_kit = _has_active_partner_subscription(item)
+    qr_kit_text = "🪧 QR-комплект" if can_partner_qr_kit else f"🔒 QR-комплект ({PLAN_TITLES['partner']})"
+    qr_kit_cb = f"{CB_QR_KIT_OPEN_PREFIX}{place_id}"
+    qr_kit_btn = (
+        InlineKeyboardButton(text=qr_kit_text, callback_data=qr_kit_cb)
+        if can_partner_qr_kit
+        else ikb(text=qr_kit_text, callback_data=qr_kit_cb, style=STYLE_SUCCESS)
+    )
+    rows.append([qr_kit_btn])
+
+    support_text = (
+        "🧑‍💼 Пріоритетна підтримка" if can_partner_qr_kit else f"🔒 Пріоритетна підтримка ({PLAN_TITLES['partner']})"
+    )
+    support_cb = f"{CB_PARTNER_SUPPORT_PREFIX}{place_id}"
+    support_btn = (
+        InlineKeyboardButton(text=support_text, callback_data=support_cb)
+        if can_partner_qr_kit
+        else ikb(text=support_text, callback_data=support_cb, style=STYLE_SUCCESS)
+    )
+    rows.append([support_btn])
+    return rows
+
+
 async def render_place_card_updated(message: Message, *, place_id: int, note_text: str) -> None:
     rows = await cabinet_service.list_user_businesses(message.chat.id)
     item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
     if not item:
         await send_main_menu(message, message.chat.id)
         return
-    keyboard_rows: list[list[InlineKeyboardButton]] = []
-    if item.get("ownership_status") == "approved":
-        can_edit = _has_active_paid_subscription(item)
-        edit_text = "✏️ Редагувати" if can_edit else f"🔒 Редагувати ({PLAN_TITLES['light']})"
-        edit_btn = (
-            InlineKeyboardButton(text=edit_text, callback_data=f"be:{place_id}")
-            if can_edit
-            else ikb(text=edit_text, callback_data=f"be:{place_id}", style=STYLE_PRIMARY)
-        )
-        keyboard_rows.append(
-            [
-                edit_btn,
-                ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
-            ]
-        )
-        if not can_edit:
-            keyboard_rows.append(
-                [ikb(text="📝 Запропонувати правку", callback_data=f"{CB_FREE_EDIT_REQUEST_PREFIX}{place_id}", style=STYLE_PRIMARY)]
-            )
-        qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
-        qr_btn = (
-            InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
-            if can_edit
-            else ikb(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}", style=STYLE_PRIMARY)
-        )
-        keyboard_rows.append([qr_btn])
-        can_partner_qr_kit = _has_active_partner_subscription(item)
-        qr_kit_text = "🪧 QR-комплект" if can_partner_qr_kit else f"🔒 QR-комплект ({PLAN_TITLES['partner']})"
-        qr_kit_btn = (
-            InlineKeyboardButton(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}")
-            if can_partner_qr_kit
-            else ikb(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}", style=STYLE_SUCCESS)
-        )
-        keyboard_rows.append([qr_kit_btn])
-        support_text = (
-            "🧑‍💼 Пріоритетна підтримка" if can_partner_qr_kit else f"🔒 Пріоритетна підтримка ({PLAN_TITLES['partner']})"
-        )
-        support_btn = (
-            InlineKeyboardButton(text=support_text, callback_data=f"{CB_PARTNER_SUPPORT_PREFIX}{place_id}")
-            if can_partner_qr_kit
-            else ikb(text=support_text, callback_data=f"{CB_PARTNER_SUPPORT_PREFIX}{place_id}", style=STYLE_SUCCESS)
-        )
-        keyboard_rows.append([support_btn])
-        can_partner_qr_kit = _has_active_partner_subscription(item)
-        qr_kit_text = "🪧 QR-комплект" if can_partner_qr_kit else f"🔒 QR-комплект ({PLAN_TITLES['partner']})"
-        qr_kit_btn = (
-            InlineKeyboardButton(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}")
-            if can_partner_qr_kit
-            else ikb(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}", style=STYLE_SUCCESS)
-        )
-        keyboard_rows.append([qr_kit_btn])
-        support_text = (
-            "🧑‍💼 Пріоритетна підтримка" if can_partner_qr_kit else f"🔒 Пріоритетна підтримка ({PLAN_TITLES['partner']})"
-        )
-        support_btn = (
-            InlineKeyboardButton(text=support_text, callback_data=f"{CB_PARTNER_SUPPORT_PREFIX}{place_id}")
-            if can_partner_qr_kit
-            else ikb(text=support_text, callback_data=f"{CB_PARTNER_SUPPORT_PREFIX}{place_id}", style=STYLE_SUCCESS)
-        )
-        keyboard_rows.append([support_btn])
+    keyboard_rows = _build_owner_place_card_action_rows(place_id=place_id, item=item)
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     card_text = await build_business_card_text(item)
@@ -2349,32 +2343,7 @@ async def cb_my_business_open(callback: CallbackQuery) -> None:
         await callback.answer("Недостатньо прав або заклад не знайдено.", show_alert=True)
         return
 
-    keyboard_rows: list[list[InlineKeyboardButton]] = []
-    if item.get("ownership_status") == "approved":
-        can_edit = _has_active_paid_subscription(item)
-        edit_text = "✏️ Редагувати" if can_edit else f"🔒 Редагувати ({PLAN_TITLES['light']})"
-        edit_btn = (
-            InlineKeyboardButton(text=edit_text, callback_data=f"be:{place_id}")
-            if can_edit
-            else ikb(text=edit_text, callback_data=f"be:{place_id}", style=STYLE_PRIMARY)
-        )
-        keyboard_rows.append(
-            [
-                edit_btn,
-                ikb(text="💳 Змінити план", callback_data=f"bp_menu:{place_id}", style=STYLE_PRIMARY),
-            ]
-        )
-        if not can_edit:
-            keyboard_rows.append(
-                [ikb(text="📝 Запропонувати правку", callback_data=f"{CB_FREE_EDIT_REQUEST_PREFIX}{place_id}", style=STYLE_PRIMARY)]
-            )
-        qr_text = "🔳 QR голосування" if can_edit else f"🔒 QR голосування ({PLAN_TITLES['light']})"
-        qr_btn = (
-            InlineKeyboardButton(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}")
-            if can_edit
-            else ikb(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}", style=STYLE_PRIMARY)
-        )
-        keyboard_rows.append([qr_btn])
+    keyboard_rows = _build_owner_place_card_action_rows(place_id=place_id, item=item)
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
 
