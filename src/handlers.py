@@ -2176,7 +2176,7 @@ def _normalize_place_link(raw: str | None) -> str | None:
             return f"https://t.me/{username}"
         return None
     # Plain username (best-effort).
-    if re.fullmatch(r"[A-Za-z0-9_]{5,}", value):
+    if re.fullmatch(r"[A-Za-z0-9_]{5,32}", value):
         return f"https://t.me/{value}"
     return None
 
