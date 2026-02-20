@@ -205,7 +205,7 @@ async def _run_checks(db_path: Path, service_id: int) -> None:
         _assert(str(report_row[3] or "") == "pending", f"report status mismatch: {report_row}")
 
         job_row = conn.execute(
-            "SELECT kind, payload, status FROM admin_jobs ORDER BY id DESC LIMIT 1"
+            "SELECT kind, payload_json, status FROM admin_jobs ORDER BY id DESC LIMIT 1"
         ).fetchone()
         _assert(job_row is not None, "admin alert job was not created")
         _assert(str(job_row[0]) == "admin_place_report_alert", f"job kind mismatch: {job_row}")
@@ -240,4 +240,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
