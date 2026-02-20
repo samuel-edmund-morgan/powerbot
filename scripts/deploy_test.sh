@@ -328,6 +328,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_busi
 echo "Running admin payments paging smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_business_payments_paging.py"
 
+# Automated smoke: admin subscriptions/payments handler runtime contract.
+echo "Running admin business paging handlers runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_business_paging_handler_runtime.py"
+
 # Automated smoke: admin owner-request alert UI policy (single-message + nav callbacks).
 echo "Running admin owner-alert UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_owner_alert_ui_policy.py"
