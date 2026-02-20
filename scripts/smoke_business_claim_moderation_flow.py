@@ -5,7 +5,10 @@ Business claim moderation flow smoke-check.
 What it validates:
 - admin can create/get active claim token for existing place
 - owner claim by token creates pending owner request
+- claimed owner request appears in admin moderation pending list
+- claim token becomes one-time (second claim by same token is blocked)
 - admin approve moves request to approved
+- approved request disappears from pending moderation list
 - place remains published and business is enabled after approve
 
 Run:
@@ -33,7 +36,7 @@ def _setup_import_path() -> None:
 _setup_import_path()
 
 from business.repository import BusinessRepository  # noqa: E402
-from business.service import BusinessCabinetService  # noqa: E402
+from business.service import BusinessCabinetService, ValidationError  # noqa: E402
 
 
 def _assert(cond: bool, message: str) -> None:
@@ -82,12 +85,35 @@ async def main() -> None:
         _assert(str(owner.get("status") or "") == "pending", "claimed owner request must be pending")
         _assert(int(owner.get("place_id") or 0) == int(place_id), "owner request place_id mismatch")
 
+        token_after_claim = await repository.get_claim_token(token)
+        _assert(token_after_claim is not None, "claimed token row must exist")
+        _assert(str(token_after_claim.get("status") or "") == "used", "claim token must become used")
+        _assert(
+            int(token_after_claim.get("used_by") or 0) == int(owner_tg_user_id),
+            "claim token used_by must match owner tg_user_id",
+        )
+
+        # Same token cannot be used again.
+        try:
+            await service.claim_business_by_token(int(owner_tg_user_id), token)
+            raise AssertionError("Expected ValidationError for reused claim token")
+        except ValidationError:
+            pass
+
+        pending_before_approve = await service.list_pending_owner_requests(int(admin_id))
+        pending_owner_ids = {int(row.get("id") or 0) for row in pending_before_approve}
+        _assert(owner_id in pending_owner_ids, "claimed owner request must appear in pending moderation list")
+
         place_before = await repository.get_place(int(place_id))
         _assert(place_before is not None, "claimed place must exist")
         _assert(int(place_before.get("is_published") or 0) == 1, "existing place must stay published before approve")
 
         approved = await service.approve_owner_request(int(admin_id), int(owner_id))
         _assert(str(approved.get("status") or "") == "approved", "owner status must become approved")
+
+        pending_after_approve = await service.list_pending_owner_requests(int(admin_id))
+        pending_owner_ids_after = {int(row.get("id") or 0) for row in pending_after_approve}
+        _assert(owner_id not in pending_owner_ids_after, "approved owner request must leave pending moderation list")
 
         place_after = await repository.get_place(int(place_id))
         _assert(place_after is not None, "approved place must exist")
