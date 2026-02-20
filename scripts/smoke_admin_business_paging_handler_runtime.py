@@ -370,6 +370,11 @@ async def _run_checks(
             in str(subs_special_row),
             f"subscriptions export owner-priority mismatch row={subs_special_row}",
         )
+        subs_export_rows = [line for line in subs_payload.splitlines() if line.strip()]
+        _assert(
+            len(subs_export_rows) == TOTAL_SUBS + 1,
+            f"subscriptions export row-count mismatch: expected={TOTAL_SUBS + 1}, got={len(subs_export_rows)}",
+        )
 
         # Payments page 1.
         await ah.cb_business_payments(_DummyCallback(ah.CB_BIZ_PAYMENTS))  # type: ignore[arg-type]
@@ -386,6 +391,10 @@ async def _run_checks(
         pay_next_cb = _find_callback(payments_page_0["reply_markup"], ah.CB_BIZ_PAYMENTS_PAGE_PREFIX)
         _assert(pay_next_cb is not None, "payments pagination callback missing")
         _assert(str(pay_next_cb).endswith("1"), f"unexpected payments next callback: {pay_next_cb}")
+        await ah.cb_business_payments_page(_DummyCallback(str(pay_next_cb)))  # type: ignore[arg-type]
+        payments_page_1 = render_calls[-1]
+        _assert("💸 <b>Платіжні події</b>" in payments_page_1["text"], f"unexpected payments page-1 text: {payments_page_1}")
+        _assert("Подій: <b>13</b>" in payments_page_1["text"], f"unexpected payments total on page-1: {payments_page_1['text']}")
 
         # Payments export.
         await ah.cb_business_payments_export(_DummyCallback(ah.CB_BIZ_PAYMENTS_EXPORT))  # type: ignore[arg-type]
@@ -401,6 +410,11 @@ async def _run_checks(
             f"\t{SPECIAL_OWNER_APPROVED_TG_ID}\tuser{SPECIAL_OWNER_APPROVED_TG_ID}\tUser{SPECIAL_OWNER_APPROVED_TG_ID}\tapproved\t"
             in pay_payload,
             "payments export owner-priority mismatch for special place",
+        )
+        pay_export_rows = [line for line in pay_payload.splitlines() if line.strip()]
+        _assert(
+            len(pay_export_rows) == TOTAL_PAYMENTS + 1,
+            f"payments export row-count mismatch: expected={TOTAL_PAYMENTS + 1}, got={len(pay_export_rows)}",
         )
     finally:
         ah.render = original_render
