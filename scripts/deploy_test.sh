@@ -199,6 +199,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_place_clic
 echo "Running place clicks analytics policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_place_clicks_policy.py"
 
+# Automated smoke: schema.sql and runtime init_db parity for tables/indexes.
+echo "Running schema/runtime parity smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_schema_runtime_parity.py"
+
 # Automated smoke: business mock payments state machine + idempotency.
 # Run inside container (all runtime deps are present there).
 echo "Running business payments smoke test in test container..."
