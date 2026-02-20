@@ -384,6 +384,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_write_retry_policy.py"
 echo "Running business UI inline/menu policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 
+# Automated smoke: businessbot must keep only one legacy admin callback catch-all.
+echo "Running business legacy admin-callbacks policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_legacy_admin_callbacks_policy.py"
+
 # Automated smoke: owner/admin downgrade responsibilities (owner cancel-only, admin can force free).
 echo "Running business owner/admin downgrade policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_owner_admin_downgrade_policy.py"
