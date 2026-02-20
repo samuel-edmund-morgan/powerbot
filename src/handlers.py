@@ -31,6 +31,17 @@ from services import state_text, calculate_stats, format_duration, format_light_
 router = Router()
 logger = logging.getLogger(__name__)
 
+RESIDENT_VERIFIED_TIER_TITLES = {
+    "light": "Light",
+    "pro": "Premium",
+    "partner": "Partner",
+}
+
+
+def _resident_verified_tier_title(raw_tier: str | None) -> str:
+    normalized = str(raw_tier or "").strip().lower()
+    return RESIDENT_VERIFIED_TIER_TITLES.get(normalized, normalized.upper())
+
 
 def format_user_label(user: User | None, fallback_id: int | None = None) -> str:
     """Повертає читабельний формат користувача: @username (First Last) - id."""
@@ -2298,7 +2309,7 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
         if tier_norm == "partner":
             text += "⭐ <b>Офіційний партнер категорії</b>\n\n"
         else:
-            tier = tier_norm.upper()
+            tier = _resident_verified_tier_title(tier_norm)
             tier_text = f" {tier}" if tier else ""
             text += f"✅ <b>Verified{tier_text}</b>\n\n"
 
