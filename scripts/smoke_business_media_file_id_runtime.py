@@ -177,6 +177,18 @@ async def _run_checks(db_path: Path, *, place_id: int) -> None:
         opened_photos == [LOGO_FILE_ID, OFFER_1_FILE_ID, PARTNER_1_FILE_ID],
         f"unexpected opened file_ids: {opened_photos}",
     )
+    media_callbacks = {
+        f"plogo_{place_id}",
+        f"pmimg1_{place_id}",
+        f"pph1_{place_id}",
+    }
+    media_safe_answers = [entry for entry in safe_answers if str(entry[0]) in media_callbacks]
+    _assert(media_safe_answers, f"no callback answers captured for media callbacks: {safe_answers}")
+    for data, _args, kwargs in media_safe_answers:
+        _assert(
+            "url" not in kwargs or kwargs.get("url") in (None, ""),
+            f"file_id media callback must not use URL redirect path: data={data} kwargs={kwargs}",
+        )
 
     conn = sqlite3.connect(db_path)
     try:
