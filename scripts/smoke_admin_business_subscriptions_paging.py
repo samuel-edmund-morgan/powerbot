@@ -6,6 +6,7 @@ What it validates:
 - `list_all_subscriptions_admin()` returns stable paged slices with correct total.
 - pages do not overlap and cover all rows when iterated.
 - owner fields are present in rows (for admin contact visibility).
+- owner contact fields are hydrated from `subscribers` (`owner_username`, `owner_first_name`).
 - export-like loop (page_size=50) collects the full dataset.
 
 Run:
@@ -87,6 +88,15 @@ def _setup_temp_db(db_path: Path) -> None:
 
             conn.execute(
                 """
+                INSERT INTO subscribers(
+                    chat_id, username, first_name, subscribed_at
+                ) VALUES(?, ?, ?, ?)
+                """,
+                (tg_user_id, f"owner{idx}", f"Owner{idx}", created_at),
+            )
+
+            conn.execute(
+                """
                 INSERT INTO business_owners(
                     place_id, tg_user_id, role, status, created_at, approved_at, approved_by
                 ) VALUES(?, ?, 'owner', ?, ?, ?, ?)
@@ -164,6 +174,23 @@ async def _run_checks() -> None:
     for row in page0_rows + page1_rows:
         _assert("owner_tg_user_id" in row, f"owner_tg_user_id missing in row: {row}")
         _assert("owner_status" in row, f"owner_status missing in row: {row}")
+        _assert("owner_username" in row, f"owner_username missing in row: {row}")
+        _assert("owner_first_name" in row, f"owner_first_name missing in row: {row}")
+
+        owner_tg_user_id = int(row.get("owner_tg_user_id") or 0)
+        _assert(owner_tg_user_id > 0, f"owner_tg_user_id must be present: {row}")
+        owner_idx = owner_tg_user_id - 20000
+        _assert(owner_idx > 0, f"unexpected owner_tg_user_id: {owner_tg_user_id}")
+        expected_username = f"owner{owner_idx}"
+        expected_first_name = f"Owner{owner_idx}"
+        _assert(
+            str(row.get("owner_username") or "") == expected_username,
+            f"owner_username mismatch: expected={expected_username} row={row}",
+        )
+        _assert(
+            str(row.get("owner_first_name") or "") == expected_first_name,
+            f"owner_first_name mismatch: expected={expected_first_name} row={row}",
+        )
 
     # Emulate export pagination loop from admin handler.
     all_rows: list[dict] = []
