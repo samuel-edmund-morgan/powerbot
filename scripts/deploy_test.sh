@@ -620,6 +620,10 @@ python3 "${REPO_DIR}/scripts/smoke_offers_digest_job_policy.py"
 echo "Running offers digest runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_offers_digest_runtime.py"
 
+# Automated smoke: offers-digest worker handler runtime (queue progress + sent marks).
+echo "Running offers digest worker runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_offers_digest_worker_runtime.py"
+
 # Automated smoke: sqlite concurrent writes (3 writers + retry/backoff).
 echo "Running sqlite concurrency smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_sqlite_concurrency.py"
