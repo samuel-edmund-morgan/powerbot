@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import html
 import logging
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode, urlsplit, urlunsplit
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -211,6 +211,22 @@ def _resident_place_qr_kit_png_url(
         "&ecLevel=M"
         "&margin=1"
     )
+
+
+def _resident_place_qr_kit_pdf_url(place_id: int, *, variant: str) -> str | None:
+    """Build absolute URL for QR-kit PDF rendered by API server."""
+    web_app_url = str(CFG.web_app_url or "").strip()
+    if not web_app_url:
+        return None
+    parsed = urlsplit(web_app_url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    base_path = (parsed.path or "").rstrip("/")
+    if base_path.endswith("/app"):
+        base_path = base_path[: -len("/app")]
+    endpoint_path = f"{base_path}/api/v1/business/qr-kit/pdf"
+    query = urlencode({"place_id": int(place_id), "variant": str(variant or "").strip().lower()})
+    return urlunsplit((parsed.scheme, parsed.netloc, endpoint_path, query, ""))
 
 
 class AddBusinessStates(StatesGroup):
@@ -2484,34 +2500,53 @@ async def cb_open_place_qr_kit(callback: CallbackQuery) -> None:
         return
 
     deep_link = _resident_place_deeplink(place_id)
-    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    place_name_raw = str(item.get("place_name") or "вашого закладу")
+    place_name = html.escape(place_name_raw)
     if not deep_link:
         await callback.answer("Не налаштовано BOT_USERNAME для resident-бота.", show_alert=True)
         return
 
-    entrance_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name} • ВХІД")
-    cashier_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name} • КАСА")
-    table_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name} • СТОЛИК")
+    entrance_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name_raw} • ВХІД")
+    cashier_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name_raw} • КАСА")
+    table_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name_raw} • СТОЛИК")
+    entrance_pdf = _resident_place_qr_kit_pdf_url(place_id, variant="entrance")
+    cashier_pdf = _resident_place_qr_kit_pdf_url(place_id, variant="cashier")
+    table_pdf = _resident_place_qr_kit_pdf_url(place_id, variant="table")
 
     text = (
         f"🪧 <b>QR-комплект</b>\n\n"
         f"Заклад: <b>{place_name}</b>\n\n"
-        "Використай готові PNG-макети для друку (A4) або покажи QR на екрані.\n"
+        "Використай готові PNG/PDF-макети для друку (A4) або покажи QR на екрані.\n"
         "Рекомендація: розмісти 2-3 точки (вхід, каса, столики), щоб збільшити охоплення.\n\n"
         "Інструкція:\n"
-        "1) Відкрий один з PNG нижче.\n"
+        "1) Відкрий один із шаблонів нижче (PNG або PDF).\n"
         "2) Надрукуй у форматі A4.\n"
         "3) Розмісти в потрібній зоні.\n\n"
         f"Deep-link:\n<code>{html.escape(deep_link)}</code>"
     )
 
     rows_kb: list[list[InlineKeyboardButton]] = []
-    if entrance_png:
-        rows_kb.append([InlineKeyboardButton(text="🖼 PNG • Вхід", url=entrance_png)])
-    if cashier_png:
-        rows_kb.append([InlineKeyboardButton(text="🖼 PNG • Каса", url=cashier_png)])
-    if table_png:
-        rows_kb.append([InlineKeyboardButton(text="🖼 PNG • Столик", url=table_png)])
+    if entrance_png or entrance_pdf:
+        row: list[InlineKeyboardButton] = []
+        if entrance_png:
+            row.append(InlineKeyboardButton(text="🖼 PNG • Вхід", url=entrance_png))
+        if entrance_pdf:
+            row.append(InlineKeyboardButton(text="📄 PDF • Вхід", url=entrance_pdf))
+        rows_kb.append(row)
+    if cashier_png or cashier_pdf:
+        row = []
+        if cashier_png:
+            row.append(InlineKeyboardButton(text="🖼 PNG • Каса", url=cashier_png))
+        if cashier_pdf:
+            row.append(InlineKeyboardButton(text="📄 PDF • Каса", url=cashier_pdf))
+        rows_kb.append(row)
+    if table_png or table_pdf:
+        row = []
+        if table_png:
+            row.append(InlineKeyboardButton(text="🖼 PNG • Столик", url=table_png))
+        if table_pdf:
+            row.append(InlineKeyboardButton(text="📄 PDF • Столик", url=table_pdf))
+        rows_kb.append(row)
     rows_kb.extend(
         [
             [InlineKeyboardButton(text="🔗 Відкрити deep-link", url=deep_link)],

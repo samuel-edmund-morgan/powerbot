@@ -464,6 +464,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
 echo "Running business partner QR-kit policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_partner_qr_kit_policy.py"
 
+# Automated smoke: Partner QR-kit PDF templates via API endpoint.
+echo "Running business QR-kit PDF policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_qr_kit_pdf_policy.py"
+
 # Automated smoke: Partner priority support flow (owner CTA -> admin queue).
 echo "Running business partner support policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_partner_priority_support_policy.py"
