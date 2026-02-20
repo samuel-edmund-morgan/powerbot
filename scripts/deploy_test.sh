@@ -408,6 +408,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_e
 echo "Running business card activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_card_activity_stats_policy.py"
 
+# Automated smoke: business owner card activity dynamic counters (all CTA actions + CTR).
+echo "Running business card activity stats dynamic smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_card_activity_stats_dynamic.py"
+
 # Automated smoke: premium daily activity stats block (7-day timeline).
 echo "Running business daily activity stats policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_daily_stats_policy.py"
