@@ -102,7 +102,7 @@ async def main() -> None:
 
         pending_for_place = await service.get_pending_owner_request_for_place(int(admin_id), int(place_id))
         _assert(pending_for_place is not None, "claimed owner request must be discoverable in moderation by place")
-        _assert(int(pending_for_place.get("id") or 0) == owner_id, "pending owner id mismatch for claimed place")
+        _assert(int(pending_for_place.get("owner_id") or 0) == owner_id, "pending owner id mismatch for claimed place")
 
         place_before = await repository.get_place(int(place_id))
         _assert(place_before is not None, "claimed place must exist")
