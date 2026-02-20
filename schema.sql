@@ -252,6 +252,36 @@ CREATE TABLE IF NOT EXISTS place_views_daily (
 );
 CREATE INDEX IF NOT EXISTS idx_place_views_daily_day ON place_views_daily (day);
 
+-- Кліки по елементах картки закладу (агрегація по днях і типу дії)
+CREATE TABLE IF NOT EXISTS place_clicks_daily (
+    place_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    action TEXT NOT NULL,                    -- call/chat/coupon_open/menu/order/...
+    cnt INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (place_id, day, action),
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_day ON place_clicks_daily (day);
+CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_action ON place_clicks_daily (action);
+
+-- Репорти мешканців про помилки/неточності в картках закладів
+CREATE TABLE IF NOT EXISTS place_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    reporter_tg_user_id INTEGER NOT NULL,    -- TG id автора репорту
+    reporter_username TEXT DEFAULT NULL,     -- @username автора
+    reporter_first_name TEXT DEFAULT NULL,   -- first name автора
+    reporter_last_name TEXT DEFAULT NULL,    -- last name автора
+    report_text TEXT NOT NULL,               -- Текст правки/зауваження
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending/resolved/rejected
+    created_at TEXT NOT NULL,                -- ISO 8601
+    resolved_at TEXT DEFAULT NULL,           -- ISO 8601
+    resolved_by INTEGER DEFAULT NULL,        -- TG id модератора
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_place_reports_status_created ON place_reports (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_place_reports_place_id ON place_reports (place_id);
+
 -- Лайки укриттів
 CREATE TABLE IF NOT EXISTS shelter_likes (
     place_id INTEGER NOT NULL,
@@ -276,6 +306,15 @@ CREATE TABLE IF NOT EXISTS sensors (
     is_active INTEGER DEFAULT 1,             -- Активний (1/0)
     FOREIGN KEY (building_id) REFERENCES buildings(id)
 );
+
+-- Стабільні публічні числові ID для зовнішнього read-only API сенсорів
+CREATE TABLE IF NOT EXISTS sensor_public_ids (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sensor_uuid TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,                -- ISO 8601
+    FOREIGN KEY (sensor_uuid) REFERENCES sensors(uuid) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sensor_public_ids_sensor_uuid ON sensor_public_ids (sensor_uuid);
 
 -- Стан електропостачання будинків
 CREATE TABLE IF NOT EXISTS building_power_state (

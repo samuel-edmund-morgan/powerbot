@@ -33,11 +33,17 @@ def _must_contain_any(text: str, tokens: list[str], *, file_label: str, errors: 
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
+    schema_text = _read(root / "schema.sql")
     handlers_text = _read(root / "src/handlers.py")
     worker_text = _read(root / "src/admin_jobs_worker.py")
     admin_handlers_text = _read(root / "src/admin/handlers.py")
 
     errors: list[str] = []
+
+    # Schema/runtime parity.
+    _must_contain(schema_text, "CREATE TABLE IF NOT EXISTS place_reports", file_label="schema.sql", errors=errors)
+    _must_contain(schema_text, "idx_place_reports_status_created", file_label="schema.sql", errors=errors)
+    _must_contain(schema_text, "idx_place_reports_place_id", file_label="schema.sql", errors=errors)
 
     # Resident flow.
     _must_contain(handlers_text, 'callback_data=f"plrep_', file_label="src/handlers.py", errors=errors)
