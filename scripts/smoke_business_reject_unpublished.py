@@ -7,6 +7,8 @@ What it validates:
 - admin reject changes owner status to rejected
 - rejected place is not deleted and remains unpublished
 - business flags stay disabled after reject
+- rejected place is hidden from resident published queries
+- rejected place is still visible in admin unpublished filter
 
 Run:
   python3 scripts/smoke_business_reject_unpublished.py
@@ -34,6 +36,7 @@ _setup_import_path()
 
 from business.repository import BusinessRepository  # noqa: E402
 from business.service import BusinessCabinetService  # noqa: E402
+from database import get_places_by_service  # noqa: E402
 
 
 def _assert(cond: bool, message: str) -> None:
@@ -95,6 +98,27 @@ async def main() -> None:
         owner_after = await repository.get_owner_request(int(owner_id))
         _assert(owner_after is not None, "owner row must remain for auditability")
         _assert(str(owner_after.get("status") or "") == "rejected", "owner row status must be rejected")
+
+        # Resident-facing query must not include unpublished rejected place.
+        resident_places = await get_places_by_service(int(service_id))
+        resident_place_ids = {int(row.get("id") or 0) for row in resident_places}
+        _assert(
+            int(place_id) not in resident_place_ids,
+            "rejected unpublished place must not appear in resident published list",
+        )
+
+        # Admin unpublished filter must still include this place.
+        admin_unpublished = await repository.list_places_by_service_filtered(
+            int(service_id),
+            is_published=0,
+            limit=200,
+            offset=0,
+        )
+        admin_unpublished_ids = {int(row.get("id") or 0) for row in admin_unpublished}
+        _assert(
+            int(place_id) in admin_unpublished_ids,
+            "rejected unpublished place must stay visible in admin unpublished filter",
+        )
 
         print("OK: business reject->unpublished smoke passed.")
     finally:
