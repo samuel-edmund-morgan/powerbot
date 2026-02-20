@@ -476,6 +476,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_p
 echo "Running business catalog ranking policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_catalog_ranking_policy.py"
 
+# Automated smoke: resident catalog runtime ranking contract via real callback rendering.
+echo "Running business catalog ranking runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_catalog_ranking_runtime.py"
+
 # Automated smoke: resident catalog colored button styles for partner/pro slots.
 echo "Running business catalog button styles policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_catalog_button_styles_policy.py"
