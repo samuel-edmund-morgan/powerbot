@@ -191,6 +191,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sections.p
 echo "Running buildings sensor-stats sync smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_buildings_sensor_stats_sync.py"
 
+# Smoke: sensor aliases contract (state propagation + stats/history fallback).
+echo "Running sensor aliases smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sensor_aliases.py"
+
 # Automated smoke: place click stats (DB-backed views counters).
 echo "Running place click stats smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_place_click_stats.py"
