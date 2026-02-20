@@ -100,9 +100,9 @@ async def main() -> None:
         except ValidationError:
             pass
 
-        pending_before_approve = await service.list_pending_owner_requests(int(admin_id))
-        pending_owner_ids = {int(row.get("id") or 0) for row in pending_before_approve}
-        _assert(owner_id in pending_owner_ids, "claimed owner request must appear in pending moderation list")
+        pending_for_place = await service.get_pending_owner_request_for_place(int(admin_id), int(place_id))
+        _assert(pending_for_place is not None, "claimed owner request must be discoverable in moderation by place")
+        _assert(int(pending_for_place.get("id") or 0) == owner_id, "pending owner id mismatch for claimed place")
 
         place_before = await repository.get_place(int(place_id))
         _assert(place_before is not None, "claimed place must exist")
@@ -111,9 +111,8 @@ async def main() -> None:
         approved = await service.approve_owner_request(int(admin_id), int(owner_id))
         _assert(str(approved.get("status") or "") == "approved", "owner status must become approved")
 
-        pending_after_approve = await service.list_pending_owner_requests(int(admin_id))
-        pending_owner_ids_after = {int(row.get("id") or 0) for row in pending_after_approve}
-        _assert(owner_id not in pending_owner_ids_after, "approved owner request must leave pending moderation list")
+        pending_after_approve = await service.get_pending_owner_request_for_place(int(admin_id), int(place_id))
+        _assert(pending_after_approve is None, "approved owner request must leave pending moderation list")
 
         place_after = await repository.get_place(int(place_id))
         _assert(place_after is not None, "approved place must exist")
