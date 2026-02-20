@@ -365,6 +365,9 @@
     if (elements.scheduleToggle) {
       elements.scheduleToggle.checked = settings.schedule_notifications;
     }
+    if (elements.sponsoredToggle) {
+      elements.sponsoredToggle.checked = settings.sponsored_offers_enabled !== false;
+    }
 
     if (settings.quiet_start === null || settings.quiet_end === null) {
       elements.quietSelect.value = "off";

@@ -145,6 +145,7 @@
       light_notifications: elements.lightToggle.checked,
       alert_notifications: elements.alertToggle.checked,
       schedule_notifications: elements.scheduleToggle?.checked ?? false,
+      sponsored_offers_enabled: elements.sponsoredToggle?.checked ?? true,
       quiet_start,
       quiet_end,
     };

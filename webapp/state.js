@@ -47,6 +47,7 @@
     lightToggle: document.getElementById("lightToggle"),
     alertToggle: document.getElementById("alertToggle"),
     scheduleToggle: document.getElementById("scheduleToggle"),
+    sponsoredToggle: document.getElementById("sponsoredToggle"),
     quietSelect: document.getElementById("quietSelect"),
     saveSettings: document.getElementById("saveSettings"),
     toast: document.getElementById("toast"),
