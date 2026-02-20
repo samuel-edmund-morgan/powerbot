@@ -126,10 +126,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    candidates: list[Path] = []
     try:
-        repo_root = Path(__file__).resolve().parents[1]
+        candidates.append(Path(__file__).resolve().parents[1])
     except Exception:
-        repo_root = Path.cwd()
+        pass
+    candidates.extend([Path.cwd(), Path("/app"), Path("/workspace")])
+
+    repo_root = None
+    for root in candidates:
+        if (root / "src" / "handlers.py").exists():
+            repo_root = root
+            break
+    if repo_root is None:
+        raise SystemExit("ERROR: cannot resolve repo root containing src/handlers.py")
+
     sys.path.insert(0, str(repo_root / "src"))
     from handlers import build_place_detail_keyboard as _build  # noqa: WPS433
 
