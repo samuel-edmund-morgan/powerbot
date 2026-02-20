@@ -41,6 +41,9 @@ def main() -> None:
         _must(repo_text, col, where="src/business/repository.py", errors=errors)
         _must(service_text, f"\"{col}\"", where="src/business/service.py", errors=errors)
         _must(business_handlers_text, f"bef:{{place_id}}:{col}", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "URL або file_id фото №1", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "URL або file_id фото №2", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "URL або file_id фото №3", where="src/business/handlers.py", errors=errors)
 
     _must(service_text, "tier != \"partner\"", where="src/business/service.py", errors=errors)
     _must(service_text, "доступна лише з активною підпискою Partner", where="src/business/service.py", errors=errors)
@@ -60,4 +63,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

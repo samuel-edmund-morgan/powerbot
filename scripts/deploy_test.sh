@@ -476,6 +476,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"
 echo "Running business partner gallery policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_partner_gallery_policy.py"
 
+# Automated smoke: media file_id runtime (logo/offer/partner photo callbacks).
+echo "Running business media file_id runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_media_file_id_runtime.py"
+
 # Automated smoke: Partner branded resident card runtime (badge + description + offers + photo CTAs).
 echo "Running business partner branded-card runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_partner_branded_card_runtime.py"

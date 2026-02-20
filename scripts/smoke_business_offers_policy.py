@@ -75,6 +75,8 @@ def main() -> None:
     _must(business_handlers_text, "🎁 Офер 2", where="src/business/handlers.py", errors=errors)
     _must(business_handlers_text, "🖼 Фото оферу 1", where="src/business/handlers.py", errors=errors)
     _must(business_handlers_text, "🖼 Фото оферу 2", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "URL або file_id фото оферу №1", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "URL або file_id фото оферу №2", where="src/business/handlers.py", errors=errors)
 
     _must(resident_handlers_text, "offer_1_text", where="src/handlers.py", errors=errors)
     _must(resident_handlers_text, "offer_2_text", where="src/handlers.py", errors=errors)
