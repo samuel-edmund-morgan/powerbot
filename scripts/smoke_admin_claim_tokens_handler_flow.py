@@ -3,7 +3,8 @@
 Dynamic smoke test: admin claim-tokens handler flow.
 
 Validates callback chain for admin UI:
-menu -> list services -> pick service -> pick place -> open token -> rotate token.
+- view branch: menu -> list -> service -> place -> open token -> rotate token
+- gen branch: menu -> generate -> service -> place -> rotate token
 """
 
 from __future__ import annotations
@@ -133,6 +134,7 @@ async def _run_checks(db_path: Path, service_id: int, place_id: int, admin_id: i
 
     ah.render = _fake_render
     try:
+        # ---- View branch: list -> open -> rotate
         await ah.cb_biz_tok_menu(_DummyCallback(ah.CB_BIZ_TOK_MENU))  # type: ignore[arg-type]
         _assert(render_calls, "menu step did not render")
         _assert("Коди прив'язки" in render_calls[-1]["text"], f"unexpected menu text: {render_calls[-1]}")
@@ -169,6 +171,37 @@ async def _run_checks(db_path: Path, service_id: int, place_id: int, admin_id: i
         _assert("Новий код згенеровано" in rotate_screen["text"], f"unexpected rotate text: {rotate_screen}")
         token_2 = _extract_token(str(rotate_screen["text"]))
         _assert(token_2 != token_1, f"token did not rotate: {token_1} == {token_2}")
+
+        # ---- Generate branch: gen menu -> service -> place rotate
+        await ah.cb_biz_tok_gen(_DummyCallback(ah.CB_BIZ_TOK_GEN))  # type: ignore[arg-type]
+        gen_menu_screen = render_calls[-1]
+        _assert("Згенерувати коди" in gen_menu_screen["text"], f"unexpected gen menu text: {gen_menu_screen}")
+
+        await ah.cb_biz_tokg_service_page(_DummyCallback(f"{ah.CB_BIZ_TOKG_SVC_PAGE_PREFIX}0"))  # type: ignore[arg-type]
+        gen_services_screen = render_calls[-1]
+        _assert("Оберіть категорію" in gen_services_screen["text"], f"unexpected gen services text: {gen_services_screen}")
+        gen_svc_pick_cb = _find_callback(gen_services_screen["reply_markup"], ah.CB_BIZ_TOKG_SVC_PICK_PREFIX)
+        _assert(gen_svc_pick_cb is not None, f"gen service pick callback not found; screen={gen_services_screen}")
+        _assert(
+            f"{ah.CB_BIZ_TOKG_SVC_PICK_PREFIX}{service_id}|" in str(gen_svc_pick_cb),
+            f"gen service callback mismatch: expected service_id={service_id}, got={gen_svc_pick_cb}",
+        )
+
+        await ah.cb_biz_tokg_service_pick(_DummyCallback(str(gen_svc_pick_cb)))  # type: ignore[arg-type]
+        gen_places_screen = render_calls[-1]
+        _assert("Оберіть заклад" in gen_places_screen["text"], f"unexpected gen places text: {gen_places_screen}")
+        gen_rotate_cb = _find_callback(gen_places_screen["reply_markup"], ah.CB_BIZ_TOKG_PLACE_ROTATE_PREFIX)
+        _assert(gen_rotate_cb is not None, f"gen rotate callback not found; screen={gen_places_screen}")
+        _assert(
+            f"{ah.CB_BIZ_TOKG_PLACE_ROTATE_PREFIX}{place_id}|" in str(gen_rotate_cb),
+            f"gen rotate callback mismatch: expected place_id={place_id}, got={gen_rotate_cb}",
+        )
+
+        await ah.cb_biz_tokg_place_rotate(_DummyCallback(str(gen_rotate_cb)))  # type: ignore[arg-type]
+        gen_rotate_screen = render_calls[-1]
+        _assert("Новий код згенеровано" in gen_rotate_screen["text"], f"unexpected gen rotate text: {gen_rotate_screen}")
+        token_3 = _extract_token(str(gen_rotate_screen["text"]))
+        _assert(token_3 != token_2, f"token did not rotate in gen branch: {token_2} == {token_3}")
     finally:
         ah.render = original_render
 
@@ -191,10 +224,16 @@ async def _run_checks(db_path: Path, service_id: int, place_id: int, admin_id: i
             "SELECT token, status FROM business_claim_tokens WHERE token = ? LIMIT 1",
             (token_2,),
         ).fetchone()
+        row_3 = conn.execute(
+            "SELECT token, status FROM business_claim_tokens WHERE token = ? LIMIT 1",
+            (token_3,),
+        ).fetchone()
         _assert(row_1 is not None, f"first token not found in DB: {token_1}")
         _assert(row_2 is not None, f"rotated token not found in DB: {token_2}")
+        _assert(row_3 is not None, f"gen-rotated token not found in DB: {token_3}")
         _assert(str(row_1[1]) == "revoked", f"first token must be revoked after rotate: {row_1}")
-        _assert(str(row_2[1]) == "active", f"second token must be active: {row_2}")
+        _assert(str(row_2[1]) == "revoked", f"second token must be revoked after gen rotate: {row_2}")
+        _assert(str(row_3[1]) == "active", f"third token must be active: {row_3}")
     finally:
         conn.close()
 
