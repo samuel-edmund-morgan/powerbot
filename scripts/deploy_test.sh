@@ -460,6 +460,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_promo_code_policy.py"
 echo "Running business coupon-open contract smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_coupon_open_contract.py"
 
+# Automated smoke: resident link/coupon callback runtime (redirect/alert + analytics writes).
+echo "Running business link/coupon callback runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_link_coupon_callbacks_runtime.py"
+
 # Automated smoke: shared plan matrix (titles/prices/tiers) policy.
 echo "Running business plan matrix policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_plan_matrix_policy.py"
