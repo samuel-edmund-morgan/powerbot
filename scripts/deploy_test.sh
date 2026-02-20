@@ -356,6 +356,10 @@ python3 "${REPO_DIR}/scripts/smoke_admin_business_places_ui_policy.py"
 echo "Running admin claim-tokens UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_business_claim_tokens_ui_policy.py"
 
+# Automated smoke: admin claim-token callback handler flow (menu->service->place->open->rotate).
+echo "Running admin claim-tokens handler flow smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_claim_tokens_handler_flow.py"
+
 # Automated smoke: business owner address edit must use building-picker flow.
 echo "Running business address edit policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_address_edit_policy.py"
