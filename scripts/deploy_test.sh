@@ -388,6 +388,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 echo "Running business legacy admin-callbacks policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_legacy_admin_callbacks_policy.py"
 
+# Automated smoke: callback handlers must not be no-op stubs with dead code.
+echo "Running business callback dead-code policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_callback_deadcode_policy.py"
+
 # Automated smoke: owner/admin downgrade responsibilities (owner cancel-only, admin can force free).
 echo "Running business owner/admin downgrade policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_owner_admin_downgrade_policy.py"
