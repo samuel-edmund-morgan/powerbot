@@ -452,6 +452,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"
 echo "Running business partner gallery policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_partner_gallery_policy.py"
 
+# Automated smoke: Partner branded resident card runtime (badge + description + offers + photo CTAs).
+echo "Running business partner branded-card runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_partner_branded_card_runtime.py"
+
 # Automated smoke: businessbot QR deep-link policy for Light+ owners.
 echo "Running business QR deep-link policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
