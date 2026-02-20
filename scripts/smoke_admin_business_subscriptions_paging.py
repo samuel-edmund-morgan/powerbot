@@ -42,6 +42,8 @@ REPO_ROOT = _resolve_repo_root()
 SCHEMA_SQL = REPO_ROOT / "schema.sql"
 
 TOTAL_ROWS = 123
+SPECIAL_OWNER_PENDING_TG_ID = 29991
+SPECIAL_OWNER_APPROVED_TG_ID = 29992
 
 
 def _assert(cond: bool, msg: str) -> None:
@@ -53,8 +55,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _setup_temp_db(db_path: Path) -> None:
+def _setup_temp_db(db_path: Path) -> int:
     conn = sqlite3.connect(db_path)
+    special_place_id = 0
     try:
         schema = SCHEMA_SQL.read_text(encoding="utf-8")
         conn.executescript(schema)
@@ -92,7 +95,7 @@ def _setup_temp_db(db_path: Path) -> None:
                     chat_id, username, first_name, subscribed_at
                 ) VALUES(?, ?, ?, ?)
                 """,
-                (tg_user_id, f"owner{idx}", f"Owner{idx}", created_at),
+                (tg_user_id, f"user{tg_user_id}", f"User{tg_user_id}", created_at),
             )
 
             conn.execute(
@@ -110,6 +113,44 @@ def _setup_temp_db(db_path: Path) -> None:
                     1,
                 ),
             )
+            if idx == 1:
+                special_place_id = place_id
+                # Insert conflicting owner rows to ensure status priority:
+                # approved must win over pending even if pending is newer.
+                conn.execute(
+                    "INSERT INTO subscribers(chat_id, username, first_name, subscribed_at) VALUES(?, ?, ?, ?)",
+                    (
+                        SPECIAL_OWNER_PENDING_TG_ID,
+                        f"user{SPECIAL_OWNER_PENDING_TG_ID}",
+                        f"User{SPECIAL_OWNER_PENDING_TG_ID}",
+                        created_at,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO subscribers(chat_id, username, first_name, subscribed_at) VALUES(?, ?, ?, ?)",
+                    (
+                        SPECIAL_OWNER_APPROVED_TG_ID,
+                        f"user{SPECIAL_OWNER_APPROVED_TG_ID}",
+                        f"User{SPECIAL_OWNER_APPROVED_TG_ID}",
+                        created_at,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO business_owners(
+                        place_id, tg_user_id, role, status, created_at, approved_at, approved_by
+                    ) VALUES(?, ?, 'owner', 'pending', datetime(?, '+10 seconds'), NULL, NULL)
+                    """,
+                    (place_id, SPECIAL_OWNER_PENDING_TG_ID, created_at),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO business_owners(
+                        place_id, tg_user_id, role, status, created_at, approved_at, approved_by
+                    ) VALUES(?, ?, 'owner', 'approved', datetime(?, '-10 seconds'), ?, ?)
+                    """,
+                    (place_id, SPECIAL_OWNER_APPROVED_TG_ID, created_at, created_at, 1),
+                )
             tier = "free"
             status = "inactive"
             expires_at = None
@@ -138,11 +179,12 @@ def _setup_temp_db(db_path: Path) -> None:
                 ),
             )
         conn.commit()
+        return int(special_place_id)
     finally:
         conn.close()
 
 
-async def _run_checks() -> None:
+async def _run_checks(special_place_id: int) -> None:
     import sys
 
     if "dotenv" not in sys.modules:
@@ -179,10 +221,8 @@ async def _run_checks() -> None:
 
         owner_tg_user_id = int(row.get("owner_tg_user_id") or 0)
         _assert(owner_tg_user_id > 0, f"owner_tg_user_id must be present: {row}")
-        owner_idx = owner_tg_user_id - 20000
-        _assert(owner_idx > 0, f"unexpected owner_tg_user_id: {owner_tg_user_id}")
-        expected_username = f"owner{owner_idx}"
-        expected_first_name = f"Owner{owner_idx}"
+        expected_username = f"user{owner_tg_user_id}"
+        expected_first_name = f"User{owner_tg_user_id}"
         _assert(
             str(row.get("owner_username") or "") == expected_username,
             f"owner_username mismatch: expected={expected_username} row={row}",
@@ -207,12 +247,24 @@ async def _run_checks() -> None:
     all_ids = [int(row.get("place_id") or 0) for row in all_rows]
     _assert(len(set(all_ids)) == TOTAL_ROWS, "duplicate/missing place ids in export loop")
 
+    special_rows = [row for row in all_rows if int(row.get("place_id") or 0) == int(special_place_id)]
+    _assert(bool(special_rows), f"special place not found in subscription list: place_id={special_place_id}")
+    special = special_rows[0]
+    _assert(
+        int(special.get("owner_tg_user_id") or 0) == SPECIAL_OWNER_APPROVED_TG_ID,
+        f"owner priority mismatch for special place: {special}",
+    )
+    _assert(
+        str(special.get("owner_status") or "") == "approved",
+        f"owner status mismatch for special place: {special}",
+    )
+
 
 def main() -> None:
     tmpdir = Path(tempfile.mkdtemp(prefix="powerbot-smoke-admin-subs-"))
     try:
         db_path = tmpdir / "state.db"
-        _setup_temp_db(db_path)
+        special_place_id = _setup_temp_db(db_path)
 
         os.environ["DB_PATH"] = str(db_path)
         os.environ.setdefault("BOT_TOKEN", "smoke-test-token")
@@ -223,7 +275,7 @@ def main() -> None:
 
         sys.path.insert(0, str(REPO_ROOT / "src"))
 
-        asyncio.run(_run_checks())
+        asyncio.run(_run_checks(int(special_place_id)))
         print("OK: admin business subscriptions paging smoke test passed.")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
