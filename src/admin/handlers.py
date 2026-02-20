@@ -32,6 +32,8 @@ from database import (
     default_section_for_building,
     list_place_reports,
     set_place_report_status,
+    list_business_support_requests,
+    set_business_support_request_status,
 )
 from admin.ui import escape, render, try_delete_user_message
 from business.repository import BusinessRepository
@@ -67,6 +69,10 @@ CB_BIZ_REPORTS = "abiz_reports"
 CB_BIZ_REPORTS_PAGE_PREFIX = "abiz_reports_page|"
 CB_BIZ_REPORTS_JUMP_PREFIX = "abiz_reports_jump|"
 CB_BIZ_REPORTS_RESOLVE_PREFIX = "abiz_reports_resolve|"
+CB_BIZ_SUPPORT = "abiz_support"
+CB_BIZ_SUPPORT_PAGE_PREFIX = "abiz_support_page|"
+CB_BIZ_SUPPORT_JUMP_PREFIX = "abiz_support_jump|"
+CB_BIZ_SUPPORT_RESOLVE_PREFIX = "abiz_support_resolve|"
 
 CB_BIZ_TOK_MENU = "abiz_tok_menu"
 CB_BIZ_TOK_LIST = "abiz_tok_list"
@@ -258,6 +264,20 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject 
                 message.chat.id,
                 index=0,
                 report_id=report_id,
+                prefer_message_id=None,
+            )
+            return
+    if args.startswith("bsup_"):
+        try:
+            support_request_id = int(args.split("_", 1)[1])
+        except Exception:
+            support_request_id = 0
+        if support_request_id > 0:
+            await _render_business_support(
+                message.bot,
+                message.chat.id,
+                index=0,
+                support_request_id=support_request_id,
                 prefer_message_id=None,
             )
             return
@@ -1068,6 +1088,7 @@ def _biz_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🛡 Модерація", callback_data=CB_BIZ_MOD),
                 InlineKeyboardButton(text="📝 Правки закладів", callback_data=CB_BIZ_REPORTS),
             ],
+            [InlineKeyboardButton(text="🧑‍💼 Підтримка Partner", callback_data=CB_BIZ_SUPPORT)],
             [
                 InlineKeyboardButton(text="🔐 Коди прив'язки", callback_data=CB_BIZ_TOK_MENU),
                 InlineKeyboardButton(text="🏢 Заклади", callback_data=CB_BIZ_PLACES_MENU),
@@ -2152,6 +2173,107 @@ async def _render_business_reports(
     )
 
 
+def _biz_support_keyboard(item: dict, *, index: int, total: int) -> InlineKeyboardMarkup:
+    request_id = int(item.get("id") or 0)
+    place_id = int(item.get("place_id") or 0)
+    service_id = int(item.get("service_id") or 0)
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="✅ Позначити опрацьованим", callback_data=f"{CB_BIZ_SUPPORT_RESOLVE_PREFIX}{request_id}|{index}")],
+    ]
+    if place_id > 0 and service_id > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🏢 Відкрити заклад",
+                    callback_data=f"{CB_BIZ_PLACES_PLACE_OPEN_PREFIX}all|{place_id}|{service_id}|0|0",
+                )
+            ]
+        )
+    if total > 1:
+        nav: list[InlineKeyboardButton] = []
+        if index > 0:
+            nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CB_BIZ_SUPPORT_PAGE_PREFIX}{index - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data=CB_ADMIN_NOOP))
+        if index < total - 1:
+            nav.append(InlineKeyboardButton(text="➡️", callback_data=f"{CB_BIZ_SUPPORT_PAGE_PREFIX}{index + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)])
+    rows.append([InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _render_business_support(
+    bot: Bot,
+    chat_id: int,
+    *,
+    index: int,
+    support_request_id: int | None = None,
+    prefer_message_id: int | None = None,
+) -> None:
+    try:
+        rows, total = await list_business_support_requests(status="pending", limit=5000, offset=0)
+    except Exception:
+        logger.exception("Failed to load business partner support queue")
+        await _render_business_menu(bot, chat_id, prefer_message_id=prefer_message_id, note="❌ Помилка завантаження підтримки.")
+        return
+    if total <= 0 or not rows:
+        await render(
+            bot,
+            chat_id=chat_id,
+            text="🧑‍💼 <b>Підтримка Partner</b>\n\nЧерга порожня.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="« Бізнес", callback_data=CB_BIZ_MENU)],
+                    [InlineKeyboardButton(text="« Головне меню", callback_data="admin_refresh")],
+                ]
+            ),
+            prefer_message_id=prefer_message_id,
+            force_new_message=True,
+        )
+        return
+
+    visible_total = len(rows)
+    safe_index = max(0, min(int(index), visible_total - 1))
+    notice = ""
+    if support_request_id is not None and int(support_request_id) > 0:
+        found = next((i for i, row in enumerate(rows) if int(row.get("id") or 0) == int(support_request_id)), None)
+        if found is not None:
+            safe_index = int(found)
+        else:
+            notice = f"⚠️ Запит <code>{int(support_request_id)}</code> не знайдено в pending-черзі.\n\n"
+
+    item = rows[safe_index]
+    owner_contact = _format_tg_contact(
+        tg_user_id=item.get("owner_tg_user_id"),
+        username=item.get("owner_username"),
+        first_name=item.get("owner_first_name"),
+    )
+    place_name = escape(str(item.get("place_name") or f"ID {int(item.get('place_id') or 0)}"))
+    place_address = escape(str(item.get("place_address") or "—"))
+    service_name = escape(str(item.get("service_name") or "—"))
+    message_text = escape(str(item.get("message_text") or "—"))
+    text = (
+        "🧑‍💼 <b>Підтримка Partner</b>\n\n"
+        f"{notice}"
+        f"Запит: <code>{int(item.get('id') or 0)}</code>\n"
+        f"Заклад: <b>{place_name}</b> (ID: <code>{int(item.get('place_id') or 0)}</code>)\n"
+        f"Категорія: {service_name}\n"
+        "Пріоритет: 🔥 Partner\n"
+        f"Адреса: {place_address}\n"
+        f"Власник: {owner_contact}\n"
+        f"Створено: {escape(str(item.get('created_at') or ''))}\n\n"
+        f"Текст:\n{message_text}"
+    )
+    await render(
+        bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=_biz_support_keyboard(item, index=safe_index, total=visible_total),
+        prefer_message_id=prefer_message_id,
+        force_new_message=True,
+    )
+
+
 @router.callback_query(F.data == CB_BIZ_MOD)
 async def cb_business_moderation(callback: CallbackQuery) -> None:
     if not await _require_admin_callback(callback):
@@ -2275,6 +2397,92 @@ async def cb_business_reports_resolve(callback: CallbackQuery) -> None:
     else:
         await callback.answer("✅ Позначено як опрацьований")
     await _render_business_reports(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data == CB_BIZ_SUPPORT)
+async def cb_business_support(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    await _render_business_support(
+        callback.bot,
+        callback.message.chat.id,
+        index=0,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_SUPPORT_PAGE_PREFIX))
+async def cb_business_support_page(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        index = int(callback.data.split("|", 1)[1])
+    except Exception:
+        index = 0
+    await _render_business_support(
+        callback.bot,
+        callback.message.chat.id,
+        index=index,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_SUPPORT_JUMP_PREFIX))
+async def cb_business_support_jump(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await callback.answer()
+    try:
+        support_request_id = int(callback.data.split("|", 1)[1])
+    except Exception:
+        support_request_id = 0
+    await _render_business_support(
+        callback.bot,
+        callback.message.chat.id,
+        index=0,
+        support_request_id=support_request_id if support_request_id > 0 else None,
+        prefer_message_id=callback.message.message_id,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BIZ_SUPPORT_RESOLVE_PREFIX))
+async def cb_business_support_resolve(callback: CallbackQuery) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    raw = callback.data[len(CB_BIZ_SUPPORT_RESOLVE_PREFIX) :]
+    parts = raw.split("|", 1)
+    if len(parts) != 2:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+    try:
+        support_request_id = int(parts[0])
+        index = int(parts[1])
+    except Exception:
+        await callback.answer("❌ Некоректні дані", show_alert=True)
+        return
+
+    try:
+        updated = await set_business_support_request_status(
+            support_request_id,
+            "resolved",
+            resolved_by=int(callback.from_user.id),
+        )
+    except Exception:
+        logger.exception("Failed to resolve partner support request id=%s", support_request_id)
+        await callback.answer("❌ Помилка", show_alert=True)
+        return
+    if not updated:
+        await callback.answer("⚠️ Запит уже опрацьовано або не знайдено", show_alert=True)
+    else:
+        await callback.answer("✅ Позначено як опрацьований")
+    await _render_business_support(
         callback.bot,
         callback.message.chat.id,
         index=index,

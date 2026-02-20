@@ -67,6 +67,7 @@ USER_DATA_TABLES = {
     "business_audit_log",
     "business_payment_events",
     "business_claim_tokens",
+    "business_support_requests",
     "admin_jobs",
 }
 
