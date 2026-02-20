@@ -39,6 +39,13 @@ def main() -> None:
     _must(text, '"🔒 Фото 1 (Partner)"', errors=errors)
     _must(text, '"🔒 Фото 2 (Partner)"', errors=errors)
     _must(text, '"🔒 Фото 3 (Partner)"', errors=errors)
+    _must(text, "premium_style = None if has_premium_access else STYLE_PRIMARY", errors=errors)
+    _must(text, "partner_style = None if has_partner_access else STYLE_SUCCESS", errors=errors)
+    _must(text, 'ikb(', errors=errors)
+    _must(text, 'callback_data=f"bef:{place_id}:menu_url"', errors=errors)
+    _must(text, "style=premium_style", errors=errors)
+    _must(text, 'callback_data=f"bef:{place_id}:photo_1_url"', errors=errors)
+    _must(text, "style=partner_style", errors=errors)
 
     # Owner card lock CTA for free.
     _must(text, 'edit_text = "✏️ Редагувати" if can_edit else f"🔒 Редагувати ({PLAN_TITLES[\'light\']})"', errors=errors)
