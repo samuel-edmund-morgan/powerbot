@@ -388,6 +388,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_inline_menu_policy.py"
 echo "Running business legacy admin-callbacks policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_legacy_admin_callbacks_policy.py"
 
+# Automated smoke: businessbot must not expose legacy admin command surface.
+echo "Running business no-admin-commands policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_no_admin_commands_policy.py"
+
 # Automated smoke: callback handlers must not be no-op stubs with dead code.
 echo "Running business callback dead-code policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_callback_deadcode_policy.py"
