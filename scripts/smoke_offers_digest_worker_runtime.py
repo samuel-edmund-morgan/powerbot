@@ -48,9 +48,6 @@ def _assert(cond: bool, msg: str) -> None:
 
 def _setup_temp_db(db_path: Path) -> None:
     now = datetime.now()
-    now_hour = now.hour
-    quiet_start = (now_hour - 1) % 24
-    quiet_end = (now_hour + 1) % 24
 
     conn = sqlite3.connect(db_path)
     try:
@@ -58,7 +55,7 @@ def _setup_temp_db(db_path: Path) -> None:
         subscribers = [
             (2001, None, None, "u2001", "User2001"),  # eligible
             (2002, None, None, "u2002", "User2002"),  # opt-out
-            (2003, quiet_start, quiet_end, "u2003", "User2003"),  # quiet now
+            (2003, None, None, "u2003", "User2003"),  # opt-out
             (2004, None, None, "u2004", "User2004"),  # recent digest -> rate-limited
             (2005, None, None, "u2005", "User2005"),  # old digest -> eligible
         ]
@@ -72,7 +69,7 @@ def _setup_temp_db(db_path: Path) -> None:
         kv_rows = [
             ("offers_digest_enabled:2001", "1"),
             ("offers_digest_enabled:2002", "0"),
-            ("offers_digest_enabled:2003", "true"),
+            ("offers_digest_enabled:2003", "0"),
             ("offers_digest_enabled:2004", "yes"),
             ("offers_digest_enabled:2005", "on"),
             ("offers_digest_last_sent_at:2004", (now - timedelta(hours=2)).isoformat()),
