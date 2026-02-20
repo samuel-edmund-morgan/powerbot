@@ -46,6 +46,12 @@ def _assert(cond: bool, msg: str) -> None:
         raise AssertionError(msg)
 
 
+def _safe_int(value) -> int:
+    if value is None:
+        return -1
+    return int(value)
+
+
 def _setup_temp_db(db_path: Path) -> None:
     now = datetime.now()
 
@@ -129,8 +135,8 @@ async def _run_checks() -> None:
 
         state_1 = await get_admin_job(int(job_id_1))
         _assert(state_1 is not None, "first job state is missing")
-        _assert(int(state_1.get("progress_current") or -1) == 2, f"unexpected progress_current: {state_1}")
-        _assert(int(state_1.get("progress_total") or -1) == 2, f"unexpected progress_total: {state_1}")
+        _assert(_safe_int(state_1.get("progress_current")) == 2, f"unexpected progress_current: {state_1}")
+        _assert(_safe_int(state_1.get("progress_total")) == 2, f"unexpected progress_total: {state_1}")
 
         for chat_id in (2001, 2005):
             raw = str((await db_get(f"offers_digest_last_sent_at:{chat_id}")) or "").strip()
@@ -152,8 +158,8 @@ async def _run_checks() -> None:
 
         state_2 = await get_admin_job(int(job_id_2))
         _assert(state_2 is not None, "second job state is missing")
-        _assert(int(state_2.get("progress_current") or -1) == 0, f"unexpected progress_current: {state_2}")
-        _assert(int(state_2.get("progress_total") or -1) == 0, f"unexpected progress_total: {state_2}")
+        _assert(_safe_int(state_2.get("progress_current")) == 0, f"unexpected progress_current: {state_2}")
+        _assert(_safe_int(state_2.get("progress_total")) == 0, f"unexpected progress_total: {state_2}")
     finally:
         Bot.send_message = original_send_message  # type: ignore[assignment]
         worker.broadcast_messages = original_broadcast_messages  # type: ignore[assignment]
