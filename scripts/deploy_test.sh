@@ -516,6 +516,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_p
 echo "Running business place-card entitlement smoke test..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_place_card_entitlement.py"
 
+# Automated smoke: free/unverified resident card must not expose paid/contact CTAs.
+echo "Running business free-card no-paid-CTA runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_free_card_no_paid_cta_runtime.py"
+
 # Automated smoke: resident catalog ranking contract (partner -> promo -> verified -> unverified).
 echo "Running business catalog ranking policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_catalog_ranking_policy.py"
