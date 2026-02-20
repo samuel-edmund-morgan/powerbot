@@ -2547,6 +2547,38 @@ async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
             ]
 
 
+async def get_partner_places_for_sponsored() -> list[dict]:
+    """List active Partner places for optional sponsored row in resident menu."""
+    async with open_db() as db:
+        async with db.execute(
+            """
+            SELECT p.id, p.service_id, p.name,
+                   COALESCE(l.likes_count, 0) AS likes_count
+              FROM places p
+              LEFT JOIN (
+                    SELECT place_id, COUNT(*) AS likes_count
+                      FROM place_likes
+                     GROUP BY place_id
+              ) l ON p.id = l.place_id
+             WHERE p.is_published = 1
+               AND COALESCE(p.business_enabled, 0) = 1
+               AND COALESCE(p.is_verified, 0) = 1
+               AND lower(COALESCE(p.verified_tier, '')) = 'partner'
+             ORDER BY likes_count DESC, p.name COLLATE NOCASE ASC, p.id ASC
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+            return [
+                {
+                    "id": int(r[0]),
+                    "service_id": int(r[1]),
+                    "name": str(r[2] or ""),
+                    "likes_count": int(r[3] or 0),
+                }
+                for r in rows
+            ]
+
+
 # ============ Функції для укриттів ============
 
 async def get_all_shelter_places() -> list[dict]:

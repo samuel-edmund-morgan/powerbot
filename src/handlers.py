@@ -150,7 +150,7 @@ async def handle_webapp_reply_keyboard(message: Message) -> bool:
     alert_status = await get_alert_status_text()
     menu_msg = await message.answer(
         f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
-        reply_markup=get_main_keyboard(),
+        reply_markup=await get_main_keyboard_for_user(message.chat.id),
     )
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
     return True
@@ -312,6 +312,87 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _sponsored_enabled_key(chat_id: int) -> str:
+    return f"sponsored_offers_enabled:{int(chat_id)}"
+
+
+def _sponsored_last_seen_day_key(chat_id: int) -> str:
+    return f"sponsored_last_seen_day:{int(chat_id)}"
+
+
+def _truncate_sponsored_place_name(name: str, max_len: int = 34) -> str:
+    text = str(name or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
+
+
+async def _is_sponsored_offers_enabled(chat_id: int) -> bool:
+    raw = str((await db_get(_sponsored_enabled_key(chat_id))) or "").strip().lower()
+    if raw in {"0", "false", "off", "no"}:
+        return False
+    return True
+
+
+async def _set_sponsored_offers_enabled(chat_id: int, enabled: bool) -> None:
+    await db_set(_sponsored_enabled_key(chat_id), "1" if enabled else "0")
+
+
+async def _pick_sponsored_partner_place() -> dict[str, Any] | None:
+    """Choose partner place for sponsored row with deterministic rotation."""
+    from business import is_business_feature_enabled
+    from database import get_partner_places_for_sponsored
+
+    if not is_business_feature_enabled():
+        return None
+    places = await get_partner_places_for_sponsored()
+    if not places:
+        return None
+
+    raw_hours = str((await db_get("sponsored_rotation_hours")) or "").strip()
+    try:
+        rotation_hours = int(raw_hours)
+    except Exception:
+        rotation_hours = 48
+    if rotation_hours <= 0:
+        rotation_hours = 48
+
+    window = max(1, rotation_hours * 3600)
+    slot = int(datetime.utcnow().timestamp() // window) % len(places)
+    return places[slot]
+
+
+async def get_main_keyboard_for_user(chat_id: int) -> InlineKeyboardMarkup:
+    """Main keyboard with optional sponsored row (at most once/day per user)."""
+    base_rows = [list(row) for row in get_main_keyboard().inline_keyboard]
+
+    try:
+        if not await _is_sponsored_offers_enabled(chat_id):
+            return InlineKeyboardMarkup(inline_keyboard=base_rows)
+
+        place = await _pick_sponsored_partner_place()
+        if not place:
+            return InlineKeyboardMarkup(inline_keyboard=base_rows)
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        if str((await db_get(_sponsored_last_seen_day_key(chat_id))) or "").strip() == today:
+            return InlineKeyboardMarkup(inline_keyboard=base_rows)
+
+        place_id = int(place.get("id") or 0)
+        if place_id <= 0:
+            return InlineKeyboardMarkup(inline_keyboard=base_rows)
+        place_name = _truncate_sponsored_place_name(str(place.get("name") or "Заклад"))
+        sponsored_row = [InlineKeyboardButton(text=f"⭐ Спонсоровано: {place_name}", callback_data=f"place_{place_id}")]
+        # Place sponsored row near catalog actions.
+        insert_idx = 3 if len(base_rows) >= 3 else len(base_rows)
+        base_rows.insert(insert_idx, sponsored_row)
+        await db_set(_sponsored_last_seen_day_key(chat_id), today)
+    except Exception:
+        logger.exception("Failed to build sponsored main-menu row for chat_id=%s", chat_id)
+
+    return InlineKeyboardMarkup(inline_keyboard=base_rows)
+
+
 def get_service_keyboard() -> InlineKeyboardMarkup:
     """Клавіатура сервісної служби з телефонами."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -368,10 +449,12 @@ def get_quiet_keyboard(back_callback: str = "notifications_menu") -> InlineKeybo
 async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     """Клавіатура для меню сповіщень з поточними налаштуваннями."""
     settings = await get_notification_settings(chat_id)
+    sponsored_enabled = await _is_sponsored_offers_enabled(chat_id)
     
     light_status = "✅" if settings["light_notifications"] else "❌"
     alert_status = "✅" if settings["alert_notifications"] else "❌"
     schedule_status = "✅" if settings["schedule_notifications"] else "❌"
+    sponsored_status = "✅" if sponsored_enabled else "❌"
     
     # Формуємо текст для тихих годин
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:
@@ -396,6 +479,12 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"📅 Графіки відключень: {schedule_status}",
                 callback_data="notif_toggle_schedule"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"⭐ Пропозиції партнерів: {sponsored_status}",
+                callback_data="notif_toggle_sponsored"
             ),
         ],
         [
@@ -640,7 +729,7 @@ async def cmd_start(message: Message):
     await remove_reply_keyboard(message)
     menu_msg = await message.answer(
         f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
-        reply_markup=get_main_keyboard()
+        reply_markup=await get_main_keyboard_for_user(message.chat.id)
     )
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
@@ -656,7 +745,7 @@ async def cmd_menu(message: Message):
     await remove_reply_keyboard(message)
     menu_msg = await message.answer(
         f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
-        reply_markup=get_main_keyboard()
+        reply_markup=await get_main_keyboard_for_user(message.chat.id)
     )
     await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
@@ -774,6 +863,7 @@ async def cb_menu(callback: CallbackQuery):
     light_status = await get_light_status_text(callback.message.chat.id)
     alert_status = await get_alert_status_text()
     text = f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:"
+    main_keyboard = await get_main_keyboard_for_user(callback.message.chat.id)
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
     menu_msg = None
@@ -782,14 +872,14 @@ async def cb_menu(callback: CallbackQuery):
             await callback.message.delete()
         except Exception:
             pass
-        menu_msg = await callback.message.answer(text, reply_markup=get_main_keyboard())
+        menu_msg = await callback.message.answer(text, reply_markup=main_keyboard)
     else:
         try:
-            await callback.message.edit_text(text, reply_markup=get_main_keyboard())
+            await callback.message.edit_text(text, reply_markup=main_keyboard)
             menu_msg = callback.message
         except Exception:
             # Якщо не вдалось редагувати - надсилаємо нове
-            menu_msg = await callback.message.answer(text, reply_markup=get_main_keyboard())
+            menu_msg = await callback.message.answer(text, reply_markup=main_keyboard)
     if menu_msg:
         await save_last_bot_message(callback.message.chat.id, menu_msg.message_id)
     await safe_callback_answer(callback)
@@ -1256,6 +1346,20 @@ async def cb_toggle_schedule_notifications(callback: CallbackQuery):
 
     status = "увімкнено ✅" if new_value else "вимкнено ❌"
     await safe_callback_answer(callback, f"📅 Сповіщення про графіки {status}")
+
+    await cb_notifications_menu(callback)
+
+
+@router.callback_query(F.data == "notif_toggle_sponsored")
+async def cb_toggle_sponsored_offers(callback: CallbackQuery):
+    """Переключити показ спонсорованих пропозицій у головному меню."""
+    chat_id = callback.message.chat.id
+    enabled = await _is_sponsored_offers_enabled(chat_id)
+    new_value = not enabled
+    await _set_sponsored_offers_enabled(chat_id, new_value)
+
+    status = "увімкнено ✅" if new_value else "вимкнено ❌"
+    await safe_callback_answer(callback, f"⭐ Спонсоровані пропозиції {status}")
 
     await cb_notifications_menu(callback)
 
