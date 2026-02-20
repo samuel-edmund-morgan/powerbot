@@ -390,7 +390,7 @@ python3 "${REPO_DIR}/scripts/smoke_business_owner_tier_gating_policy.py"
 
 # Automated smoke: runtime styles for locked/unlocked owner edit keyboard fields.
 echo "Running business edit-keyboard runtime style smoke test..."
-python3 "${REPO_DIR}/scripts/smoke_business_edit_keyboard_styles_runtime.py"
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_edit_keyboard_styles_runtime.py"
 
 # Automated smoke: business owner card activity stats block (views + coupon opens).
 echo "Running business card activity stats policy smoke test..."
