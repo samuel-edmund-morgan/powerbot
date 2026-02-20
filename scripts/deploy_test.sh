@@ -460,6 +460,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_p
 echo "Running business QR deep-link policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
 
+# Automated smoke: Partner QR-kit (locked CTA + partner PNG templates/instructions).
+echo "Running business partner QR-kit policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_partner_qr_kit_policy.py"
+
 # Automated smoke: QR access behavior (Free lock -> plans, Light -> QR screen/deep-link).
 echo "Running business QR access flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_qr_access_flow.py"
