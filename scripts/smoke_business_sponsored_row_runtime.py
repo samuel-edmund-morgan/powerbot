@@ -6,6 +6,8 @@ Validates:
 - Partner place can be shown as sponsored row in main menu (once per day per user).
 - User can disable/enable sponsored offers via notifications setting.
 - Notifications keyboard reflects sponsored toggle status.
+- Partner rotation selection follows `sponsored_rotation_hours` window.
+- Invalid/empty `sponsored_rotation_hours` falls back to 48h window.
 """
 
 from __future__ import annotations
@@ -87,11 +89,12 @@ async def _run_checks() -> None:
         dotenv_stub.load_dotenv = _noop_load_dotenv  # type: ignore[attr-defined]
         sys.modules["dotenv"] = dotenv_stub
 
-    from database import db_set, open_db  # noqa: WPS433
+    from database import db_set, get_partner_places_for_sponsored, open_db  # noqa: WPS433
     import handlers as resident_handlers  # noqa: WPS433
 
     stamp = int(time.time())
     chat_id = 960000 + (stamp % 10000)
+    created_partner_ids: set[int] = set()
 
     async with open_db() as db:
         async with db.execute(
@@ -102,37 +105,56 @@ async def _run_checks() -> None:
         _assert(row is not None, "smoke service missing")
         service_id = int(row[0])
 
-        cur = await db.execute(
-            """
-            INSERT INTO places(
-                service_id, name, description, address, keywords, is_published,
-                business_enabled, is_verified, verified_tier
-            ) VALUES(?, ?, ?, ?, ?, 1, 1, 1, 'partner')
-            """,
-            (
-                service_id,
-                f"Partner Sponsor {stamp}",
-                "smoke sponsor place",
-                "SMOKE sponsored address",
-                "sponsor smoke",
-            ),
-        )
-        place_id = int(cur.lastrowid)
+        # Create several Partner places to validate both row-visibility and rotation logic.
+        partner_specs = [
+            (f"Partner Sponsor A {stamp}", 7),
+            (f"Partner Sponsor B {stamp}", 5),
+            (f"Partner Sponsor C {stamp}", 1),
+        ]
+        for idx, (name, likes) in enumerate(partner_specs, start=1):
+            cur = await db.execute(
+                """
+                INSERT INTO places(
+                    service_id, name, description, address, keywords, is_published,
+                    business_enabled, is_verified, verified_tier
+                ) VALUES(?, ?, ?, ?, ?, 1, 1, 1, 'partner')
+                """,
+                (
+                    service_id,
+                    name,
+                    "smoke sponsor place",
+                    f"SMOKE sponsored address {idx}",
+                    f"sponsor smoke {idx}",
+                ),
+            )
+            place_id = int(cur.lastrowid)
+            created_partner_ids.add(place_id)
+            for vote in range(likes):
+                await db.execute(
+                    "INSERT INTO place_likes(place_id, chat_id, liked_at) VALUES(?, ?, datetime('now'))",
+                    (place_id, 9800000 + place_id * 100 + vote),
+                )
         await db.commit()
 
     # 1) First main-menu render: sponsored row should appear.
     kb_first = await resident_handlers.get_main_keyboard_for_user(chat_id)
     first_callbacks = _callbacks(kb_first)
+    sponsored_first = next((cb for cb in first_callbacks if cb.startswith("place_")), "")
+    _assert(bool(sponsored_first), f"sponsored row callback missing on first render: {first_callbacks}")
+    sponsored_first_id = int(sponsored_first.split("_", 1)[1])
     _assert(
-        any(cb == f"place_{place_id}" for cb in first_callbacks),
-        f"sponsored row callback missing on first render: {first_callbacks}",
+        sponsored_first_id in created_partner_ids,
+        f"unexpected sponsored place on first render: {sponsored_first_id}",
     )
 
     # 2) Second render same day: row should not appear again.
     kb_second = await resident_handlers.get_main_keyboard_for_user(chat_id)
     second_callbacks = _callbacks(kb_second)
     _assert(
-        not any(cb == f"place_{place_id}" for cb in second_callbacks),
+        not any(
+            cb.startswith("place_") and int(cb.split("_", 1)[1]) in created_partner_ids
+            for cb in second_callbacks
+        ),
         f"sponsored row must be throttled to once/day: {second_callbacks}",
     )
 
@@ -148,7 +170,10 @@ async def _run_checks() -> None:
     kb_disabled = await resident_handlers.get_main_keyboard_for_user(chat_id)
     disabled_callbacks = _callbacks(kb_disabled)
     _assert(
-        not any(cb == f"place_{place_id}" for cb in disabled_callbacks),
+        not any(
+            cb.startswith("place_") and int(cb.split("_", 1)[1]) in created_partner_ids
+            for cb in disabled_callbacks
+        ),
         f"sponsored row must be hidden when disabled: {disabled_callbacks}",
     )
     notif_kb_off = await resident_handlers.get_notifications_keyboard(chat_id)
@@ -162,9 +187,87 @@ async def _run_checks() -> None:
     kb_enabled_again = await resident_handlers.get_main_keyboard_for_user(chat_id)
     enabled_callbacks = _callbacks(kb_enabled_again)
     _assert(
-        any(cb == f"place_{place_id}" for cb in enabled_callbacks),
+        any(
+            cb.startswith("place_") and int(cb.split("_", 1)[1]) in created_partner_ids
+            for cb in enabled_callbacks
+        ),
         f"sponsored row must reappear after re-enable: {enabled_callbacks}",
     )
+
+    # 6) Rotation contract: selection follows window size, invalid config falls back to 48h.
+    places_ordered = await get_partner_places_for_sponsored()
+    ordered_ids = [int(item.get("id") or 0) for item in places_ordered if int(item.get("id") or 0) in created_partner_ids]
+    _assert(len(ordered_ids) >= 3, f"expected >=3 partner places for rotation, got: {ordered_ids}")
+
+    original_datetime = resident_handlers.datetime
+
+    class _FakeDateTime:
+        current = datetime(2026, 2, 1, 0, 5, 0)
+
+        @classmethod
+        def utcnow(cls):
+            return cls.current
+
+    try:
+        resident_handlers.datetime = _FakeDateTime  # type: ignore[assignment]
+
+        # Explicit 1h rotation window.
+        await db_set("sponsored_rotation_hours", "1")
+
+        t0 = datetime(2026, 2, 1, 0, 5, 0)
+        _FakeDateTime.current = t0
+        picked_t0 = await resident_handlers._pick_sponsored_partner_place()  # noqa: SLF001
+        slot_t0 = int(t0.timestamp() // 3600) % len(ordered_ids)
+        expected_t0 = ordered_ids[slot_t0]
+        _assert(int((picked_t0 or {}).get("id") or 0) == expected_t0, f"rotation(1h) t0 mismatch: got={picked_t0} expected={expected_t0}")
+
+        # Same window -> same place.
+        t_same = datetime(2026, 2, 1, 0, 35, 0)
+        _FakeDateTime.current = t_same
+        picked_same = await resident_handlers._pick_sponsored_partner_place()  # noqa: SLF001
+        _assert(
+            int((picked_same or {}).get("id") or 0) == expected_t0,
+            f"rotation(1h) same-window mismatch: got={picked_same} expected={expected_t0}",
+        )
+
+        # Next window -> deterministic next slot.
+        t_next = datetime(2026, 2, 1, 1, 6, 0)
+        _FakeDateTime.current = t_next
+        picked_next = await resident_handlers._pick_sponsored_partner_place()  # noqa: SLF001
+        slot_next = int(t_next.timestamp() // 3600) % len(ordered_ids)
+        expected_next = ordered_ids[slot_next]
+        _assert(
+            int((picked_next or {}).get("id") or 0) == expected_next,
+            f"rotation(1h) next-window mismatch: got={picked_next} expected={expected_next}",
+        )
+
+        # Invalid value -> fallback 48h.
+        await db_set("sponsored_rotation_hours", "invalid")
+        base_ts = (48 * 3600) * 500 + 1000  # stable point inside a 48h window
+        t_fallback_a = datetime.utcfromtimestamp(base_ts)
+        t_fallback_b = datetime.utcfromtimestamp(base_ts + 3600)  # still same 48h window
+        t_fallback_c = datetime.utcfromtimestamp(base_ts + (48 * 3600))  # next 48h window
+
+        _FakeDateTime.current = t_fallback_a
+        picked_a = await resident_handlers._pick_sponsored_partner_place()  # noqa: SLF001
+        slot_a = int(t_fallback_a.timestamp() // (48 * 3600)) % len(ordered_ids)
+        expected_a = ordered_ids[slot_a]
+        _assert(int((picked_a or {}).get("id") or 0) == expected_a, f"rotation(48h fallback) A mismatch: got={picked_a} expected={expected_a}")
+
+        _FakeDateTime.current = t_fallback_b
+        picked_b = await resident_handlers._pick_sponsored_partner_place()  # noqa: SLF001
+        _assert(
+            int((picked_b or {}).get("id") or 0) == expected_a,
+            f"rotation(48h fallback) same-window mismatch: got={picked_b} expected={expected_a}",
+        )
+
+        _FakeDateTime.current = t_fallback_c
+        picked_c = await resident_handlers._pick_sponsored_partner_place()  # noqa: SLF001
+        slot_c = int(t_fallback_c.timestamp() // (48 * 3600)) % len(ordered_ids)
+        expected_c = ordered_ids[slot_c]
+        _assert(int((picked_c or {}).get("id") or 0) == expected_c, f"rotation(48h fallback) C mismatch: got={picked_c} expected={expected_c}")
+    finally:
+        resident_handlers.datetime = original_datetime  # type: ignore[assignment]
 
 
 def main() -> None:
