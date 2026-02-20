@@ -252,6 +252,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_s
 echo "Running business subscription cancel smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_subscription_cancel.py"
 
+# Automated smoke: owner card copy for canceled subscription (status + active until).
+echo "Running business owner-card canceled-copy smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_owner_card_cancel_copy.py"
+
 # Automated smoke: plans keyboard contract for active/canceled/free flows.
 echo "Running business plan-keyboard cancel contract smoke test..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_plan_keyboard_cancel_contract.py"
