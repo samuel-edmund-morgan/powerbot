@@ -436,6 +436,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_p
 echo "Running business catalog ranking policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_catalog_ranking_policy.py"
 
+# Automated smoke: resident catalog colored button styles for partner/pro slots.
+echo "Running business catalog button styles policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_catalog_button_styles_policy.py"
+
 # Automated smoke: resident verified badge contract in list + detail card.
 echo "Running business verified badge policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_verified_badge_policy.py"
