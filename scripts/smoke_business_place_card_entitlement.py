@@ -96,7 +96,7 @@ def main() -> None:
             "contact_type": "chat",
             "contact_value": "@light_chat",
             "link_url": "https://example.org/menu",
-            "logo_url": "https://example.org/logo.jpg",
+            "logo_url": "AgACAgIAAxkBAAIBQ2abcdefghijklmnoPQRSTUVWXYZ1234567890",
             "promo_code": "LIGHT100",
         }
     )
@@ -164,7 +164,7 @@ def main() -> None:
             "promo_code": "PRO500",
             "menu_url": "https://example.org/menu",
             "order_url": "https://example.org/order",
-            "offer_1_image_url": "https://example.org/offer1.jpg",
+            "offer_1_image_url": "AgACAgIAAxkBAAIBQ3abcdefghijklmnoPQRSTUVWXYZ1234567890",
             "offer_2_image_url": "https://example.org/offer2.jpg",
             "photo_1_url": "https://example.org/p1.jpg",
             "photo_2_url": "https://example.org/p2.jpg",
@@ -197,7 +197,7 @@ def main() -> None:
             "contact_type": "chat",
             "contact_value": "@partner_chat",
             "logo_url": "https://example.org/logo-partner.jpg",
-            "photo_1_url": "https://example.org/partner-photo-1.jpg",
+            "photo_1_url": "AgACAgIAAxkBAAIBQ4abcdefghijklmnoPQRSTUVWXYZ1234567890",
             "photo_2_url": "https://example.org/partner-photo-2.jpg",
             "photo_3_url": "https://example.org/partner-photo-3.jpg",
         }

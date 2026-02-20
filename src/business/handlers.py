@@ -235,6 +235,32 @@ class PartnerSupportRequestStates(StatesGroup):
     waiting_text = State()
 
 
+BUSINESS_PROFILE_FIELDS = {
+    "opening_hours",
+    "link_url",
+    "logo_url",
+    "promo_code",
+    "menu_url",
+    "order_url",
+    "offer_1_text",
+    "offer_2_text",
+    "offer_1_image_url",
+    "offer_2_image_url",
+    "photo_1_url",
+    "photo_2_url",
+    "photo_3_url",
+}
+
+MEDIA_PROFILE_FIELDS = {
+    "logo_url",
+    "offer_1_image_url",
+    "offer_2_image_url",
+    "photo_1_url",
+    "photo_2_url",
+    "photo_3_url",
+}
+
+
 def build_main_menu(user_id: int) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -2310,17 +2336,17 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
         "address": "адресу",
         "opening_hours": "години роботи",
         "link_url": "посилання",
-        "logo_url": "посилання на логотип/фото",
+        "logo_url": "URL або file_id логотипу/фото",
         "promo_code": "промокод",
         "menu_url": "посилання на меню/прайс",
         "order_url": "посилання на замовлення/запис",
         "offer_1_text": "текст оферу №1",
         "offer_2_text": "текст оферу №2",
-        "offer_1_image_url": "посилання на фото оферу №1",
-        "offer_2_image_url": "посилання на фото оферу №2",
-        "photo_1_url": "посилання на фото №1",
-        "photo_2_url": "посилання на фото №2",
-        "photo_3_url": "посилання на фото №3",
+        "offer_1_image_url": "URL або file_id фото оферу №1",
+        "offer_2_image_url": "URL або file_id фото оферу №2",
+        "photo_1_url": "URL або file_id фото №1",
+        "photo_2_url": "URL або file_id фото №2",
+        "photo_3_url": "URL або file_id фото №3",
     }.get(field, field)
     await state.set_state(EditPlaceStates.waiting_value)
     await state.update_data(place_id=place_id, field=field)
@@ -2333,22 +2359,10 @@ async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None
     if callback.message:
         await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
         extra_note = ""
-        if field in {
-            "opening_hours",
-            "link_url",
-            "logo_url",
-            "promo_code",
-            "menu_url",
-            "order_url",
-            "offer_1_text",
-            "offer_2_text",
-            "offer_1_image_url",
-            "offer_2_image_url",
-            "photo_1_url",
-            "photo_2_url",
-            "photo_3_url",
-        }:
+        if field in BUSINESS_PROFILE_FIELDS:
             extra_note = "\n\nНадішли <code>-</code>, щоб прибрати це поле."
+        if field in MEDIA_PROFILE_FIELDS:
+            extra_note += "\n\nДля медіа можна надіслати URL, Telegram <code>file_id</code> або просто фото повідомленням."
         if field == "promo_code":
             extra_note += "\n\nФормат: 2-32 символи, латиниця/цифри, також дозволено <code>-</code> та <code>_</code>."
         await ui_render(
@@ -2716,21 +2730,7 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
     place_id = int(data["place_id"])
     field = str(data["field"])
     try:
-        if field in {
-            "opening_hours",
-            "link_url",
-            "logo_url",
-            "promo_code",
-            "menu_url",
-            "order_url",
-            "offer_1_text",
-            "offer_2_text",
-            "offer_1_image_url",
-            "offer_2_image_url",
-            "photo_1_url",
-            "photo_2_url",
-            "photo_3_url",
-        }:
+        if field in BUSINESS_PROFILE_FIELDS:
             updated_place = await cabinet_service.update_place_business_profile_field(
                 tg_user_id=message.from_user.id if message.from_user else message.chat.id,
                 place_id=place_id,
@@ -2769,6 +2769,73 @@ async def edit_place_apply(message: Message, state: FSMContext) -> None:
     await try_delete_user_message(message)
     await state.clear()
     await render_place_card_updated(message, place_id=place_id, note_text="✅ Картку оновлено.")
+
+
+@router.message(EditPlaceStates.waiting_value, F.photo)
+async def edit_place_apply_photo(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    place_id = int(data["place_id"])
+    field = str(data["field"])
+    if field not in MEDIA_PROFILE_FIELDS:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Для цього поля надішли текстове значення.",
+            reply_markup=build_cancel_menu(),
+        )
+        return
+    if not message.photo:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Не вдалося прочитати фото. Спробуй ще раз.",
+            reply_markup=build_cancel_menu(),
+        )
+        return
+
+    file_id = str(message.photo[-1].file_id or "").strip()
+    if not file_id:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Не вдалося отримати file_id для фото. Спробуй ще раз.",
+            reply_markup=build_cancel_menu(),
+        )
+        return
+
+    try:
+        await cabinet_service.update_place_business_profile_field(
+            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+            place_id=place_id,
+            field=field,
+            value=file_id,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        if isinstance(error, AccessDeniedError):
+            await try_delete_user_message(message)
+            await state.clear()
+            try:
+                await _render_place_plan_menu(
+                    message,
+                    tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+                    place_id=place_id,
+                    source="card",
+                    notice="🔒 Редагування картки доступне з активним тарифом Light або вище.",
+                )
+            except Exception:
+                pass
+            return
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=build_cancel_menu(),
+        )
+        return
+
+    await try_delete_user_message(message)
+    await state.clear()
+    await render_place_card_updated(message, place_id=place_id, note_text="✅ Фото оновлено.")
 
 
 @router.message(Command("plans"))

@@ -36,6 +36,7 @@ RESIDENT_VERIFIED_TIER_TITLES = {
     "pro": "Premium",
     "partner": "Partner",
 }
+TELEGRAM_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 
 
 def _resident_verified_tier_title(raw_tier: str | None) -> str:
@@ -2180,6 +2181,75 @@ def _normalize_place_link(raw: str | None) -> str | None:
     return None
 
 
+def _is_telegram_file_id(raw: str | None) -> bool:
+    value = str(raw or "").strip()
+    if not value:
+        return False
+    lowered = value.lower()
+    if (
+        lowered.startswith("http://")
+        or lowered.startswith("https://")
+        or lowered.startswith("tg://")
+        or lowered.startswith("t.me/")
+        or value.startswith("@")
+    ):
+        return False
+    return bool(TELEGRAM_FILE_ID_RE.fullmatch(value))
+
+
+def _resolve_place_media_target(raw: str | None) -> tuple[str, str] | None:
+    url = _normalize_place_link(raw)
+    if url:
+        return ("url", url)
+    value = str(raw or "").strip()
+    if _is_telegram_file_id(value):
+        return ("file_id", value)
+    return None
+
+
+async def _open_place_media_target(
+    callback: CallbackQuery,
+    *,
+    raw_media_value: str | None,
+    missing_message: str,
+    fallback_label: str,
+) -> bool:
+    target = _resolve_place_media_target(raw_media_value)
+    if not target:
+        await safe_callback_answer(callback, missing_message, show_alert=True)
+        return False
+
+    target_type, target_value = target
+    if target_type == "url":
+        try:
+            await safe_callback_answer(callback, url=target_value)
+            return True
+        except Exception:
+            if callback.message:
+                await callback.message.answer(
+                    f"🖼 Відкрити {fallback_label}:",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text=f"🖼 {fallback_label}", url=target_value)]]
+                    ),
+                )
+                await safe_callback_answer(callback)
+                return True
+            await safe_callback_answer(callback, "Не вдалося відкрити медіа.", show_alert=True)
+            return False
+
+    # Telegram file_id path.
+    try:
+        if callback.message:
+            await callback.message.answer_photo(photo=target_value)
+            await safe_callback_answer(callback)
+            return True
+        await safe_callback_answer(callback, "Не вдалося відкрити медіа.", show_alert=True)
+        return False
+    except Exception:
+        await safe_callback_answer(callback, "Не вдалося відкрити медіа.", show_alert=True)
+        return False
+
+
 def _normalize_tel_url(raw: str | None) -> str | None:
     value = str(raw or "").strip()
     if not value:
@@ -2225,8 +2295,8 @@ def build_place_detail_keyboard(
         if link_url:
             # Track link opens (action=link) and then redirect.
             action_buttons.append(InlineKeyboardButton(text="🔗 Посилання", callback_data=f"plink_{place_id}"))
-        logo_url = _normalize_place_link(place_enriched.get("logo_url"))
-        if logo_url:
+        logo_target = _resolve_place_media_target(place_enriched.get("logo_url"))
+        if logo_target:
             # Track logo opens (action=logo_open) and then redirect.
             action_buttons.append(InlineKeyboardButton(text="🖼 Логотип/фото", callback_data=f"plogo_{place_id}"))
 
@@ -2238,21 +2308,21 @@ def build_place_detail_keyboard(
             order_url = _normalize_place_link(place_enriched.get("order_url"))
             if order_url:
                 action_buttons.append(InlineKeyboardButton(text="🛒 Замовити/Запис", callback_data=f"porder_{place_id}"))
-            offer_1_image_url = _normalize_place_link(place_enriched.get("offer_1_image_url"))
-            if offer_1_image_url:
+            offer_1_image_target = _resolve_place_media_target(place_enriched.get("offer_1_image_url"))
+            if offer_1_image_target:
                 action_buttons.append(InlineKeyboardButton(text="🖼 Фото оферу 1", callback_data=f"pmimg1_{place_id}"))
-            offer_2_image_url = _normalize_place_link(place_enriched.get("offer_2_image_url"))
-            if offer_2_image_url:
+            offer_2_image_target = _resolve_place_media_target(place_enriched.get("offer_2_image_url"))
+            if offer_2_image_target:
                 action_buttons.append(InlineKeyboardButton(text="🖼 Фото оферу 2", callback_data=f"pmimg2_{place_id}"))
         if tier == "partner":
-            partner_photo_1_url = _normalize_place_link(place_enriched.get("photo_1_url"))
-            if partner_photo_1_url:
+            partner_photo_1_target = _resolve_place_media_target(place_enriched.get("photo_1_url"))
+            if partner_photo_1_target:
                 action_buttons.append(InlineKeyboardButton(text="📸 Фото 1", callback_data=f"pph1_{place_id}"))
-            partner_photo_2_url = _normalize_place_link(place_enriched.get("photo_2_url"))
-            if partner_photo_2_url:
+            partner_photo_2_target = _resolve_place_media_target(place_enriched.get("photo_2_url"))
+            if partner_photo_2_target:
                 action_buttons.append(InlineKeyboardButton(text="📸 Фото 2", callback_data=f"pph2_{place_id}"))
-            partner_photo_3_url = _normalize_place_link(place_enriched.get("photo_3_url"))
-            if partner_photo_3_url:
+            partner_photo_3_target = _resolve_place_media_target(place_enriched.get("photo_3_url"))
+            if partner_photo_3_target:
                 action_buttons.append(InlineKeyboardButton(text="📸 Фото 3", callback_data=f"pph3_{place_id}"))
 
     # Like button.
@@ -2727,22 +2797,13 @@ async def cb_place_logo_open(callback: CallbackQuery) -> None:
         await safe_callback_answer(callback, "Логотип для цього закладу недоступний.", show_alert=True)
         return
 
-    logo_url = _normalize_place_link(place_enriched.get("logo_url"))
-    if not logo_url:
-        await safe_callback_answer(callback, "Некоректне посилання на логотип.", show_alert=True)
-        return
-
     await record_place_click(place_id, "logo_open")
-    try:
-        await safe_callback_answer(callback, url=logo_url)
-    except Exception:
-        await callback.message.answer(
-            "🖼 Відкрити логотип/фото:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🖼 Логотип/фото", url=logo_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+    await _open_place_media_target(
+        callback,
+        raw_media_value=place_enriched.get("logo_url"),
+        missing_message="Логотип для цього закладу відсутній або некоректний.",
+        fallback_label="Логотип/фото",
+    )
 
 
 @router.callback_query(F.data.startswith("pmenu_"))
@@ -2858,22 +2919,13 @@ async def cb_place_offer_1_image_open(callback: CallbackQuery) -> None:
         await safe_callback_answer(callback, "Фото оферу недоступне.", show_alert=True)
         return
 
-    image_url = _normalize_place_link(place_enriched.get("offer_1_image_url"))
-    if not image_url:
-        await safe_callback_answer(callback, "Посилання на фото оферу відсутнє.", show_alert=True)
-        return
-
     await record_place_click(place_id, "offer1_image")
-    try:
-        await safe_callback_answer(callback, url=image_url)
-    except Exception:
-        await callback.message.answer(
-            "🖼 Відкрити фото оферу 1:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🖼 Фото оферу 1", url=image_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+    await _open_place_media_target(
+        callback,
+        raw_media_value=place_enriched.get("offer_1_image_url"),
+        missing_message="Фото оферу 1 відсутнє або некоректне.",
+        fallback_label="Фото оферу 1",
+    )
 
 
 @router.callback_query(F.data.startswith("pmimg2_"))
@@ -2901,22 +2953,13 @@ async def cb_place_offer_2_image_open(callback: CallbackQuery) -> None:
         await safe_callback_answer(callback, "Фото оферу недоступне.", show_alert=True)
         return
 
-    image_url = _normalize_place_link(place_enriched.get("offer_2_image_url"))
-    if not image_url:
-        await safe_callback_answer(callback, "Посилання на фото оферу відсутнє.", show_alert=True)
-        return
-
     await record_place_click(place_id, "offer2_image")
-    try:
-        await safe_callback_answer(callback, url=image_url)
-    except Exception:
-        await callback.message.answer(
-            "🖼 Відкрити фото оферу 2:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🖼 Фото оферу 2", url=image_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+    await _open_place_media_target(
+        callback,
+        raw_media_value=place_enriched.get("offer_2_image_url"),
+        missing_message="Фото оферу 2 відсутнє або некоректне.",
+        fallback_label="Фото оферу 2",
+    )
 
 
 @router.callback_query(F.data.startswith("pph1_"))
@@ -2944,22 +2987,13 @@ async def cb_place_partner_photo_1_open(callback: CallbackQuery) -> None:
         await safe_callback_answer(callback, "Фото недоступне.", show_alert=True)
         return
 
-    image_url = _normalize_place_link(place_enriched.get("photo_1_url"))
-    if not image_url:
-        await safe_callback_answer(callback, "Посилання на фото відсутнє.", show_alert=True)
-        return
-
     await record_place_click(place_id, "partner_photo_1")
-    try:
-        await safe_callback_answer(callback, url=image_url)
-    except Exception:
-        await callback.message.answer(
-            "📸 Відкрити фото 1:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="📸 Фото 1", url=image_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+    await _open_place_media_target(
+        callback,
+        raw_media_value=place_enriched.get("photo_1_url"),
+        missing_message="Фото 1 відсутнє або некоректне.",
+        fallback_label="Фото 1",
+    )
 
 
 @router.callback_query(F.data.startswith("pph2_"))
@@ -2987,22 +3021,13 @@ async def cb_place_partner_photo_2_open(callback: CallbackQuery) -> None:
         await safe_callback_answer(callback, "Фото недоступне.", show_alert=True)
         return
 
-    image_url = _normalize_place_link(place_enriched.get("photo_2_url"))
-    if not image_url:
-        await safe_callback_answer(callback, "Посилання на фото відсутнє.", show_alert=True)
-        return
-
     await record_place_click(place_id, "partner_photo_2")
-    try:
-        await safe_callback_answer(callback, url=image_url)
-    except Exception:
-        await callback.message.answer(
-            "📸 Відкрити фото 2:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="📸 Фото 2", url=image_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+    await _open_place_media_target(
+        callback,
+        raw_media_value=place_enriched.get("photo_2_url"),
+        missing_message="Фото 2 відсутнє або некоректне.",
+        fallback_label="Фото 2",
+    )
 
 
 @router.callback_query(F.data.startswith("pph3_"))
@@ -3030,22 +3055,13 @@ async def cb_place_partner_photo_3_open(callback: CallbackQuery) -> None:
         await safe_callback_answer(callback, "Фото недоступне.", show_alert=True)
         return
 
-    image_url = _normalize_place_link(place_enriched.get("photo_3_url"))
-    if not image_url:
-        await safe_callback_answer(callback, "Посилання на фото відсутнє.", show_alert=True)
-        return
-
     await record_place_click(place_id, "partner_photo_3")
-    try:
-        await safe_callback_answer(callback, url=image_url)
-    except Exception:
-        await callback.message.answer(
-            "📸 Відкрити фото 3:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="📸 Фото 3", url=image_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+    await _open_place_media_target(
+        callback,
+        raw_media_value=place_enriched.get("photo_3_url"),
+        missing_message="Фото 3 відсутнє або некоректне.",
+        fallback_label="Фото 3",
+    )
 
 
 @router.callback_query(F.data.startswith("like_"))

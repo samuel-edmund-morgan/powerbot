@@ -47,7 +47,7 @@ def main() -> None:
     _must(service_text, '"logo_url"', where="src/business/service.py", errors=errors)
 
     _must(business_handlers_text, "bef:{place_id}:logo_url", where="src/business/handlers.py", errors=errors)
-    _must(business_handlers_text, "посилання на логотип/фото", where="src/business/handlers.py", errors=errors)
+    _must(business_handlers_text, "URL або file_id логотипу/фото", where="src/business/handlers.py", errors=errors)
     _must(business_handlers_text, "Відкриття логотипу/фото", where="src/business/handlers.py", errors=errors)
 
     _must(resident_handlers_text, 'callback_data=f"plogo_{place_id}"', where="src/handlers.py", errors=errors)
@@ -62,4 +62,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

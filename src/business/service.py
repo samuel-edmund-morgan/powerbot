@@ -39,6 +39,7 @@ CLAIM_TOKEN_GENERATION_ATTEMPTS = 12
 CLAIM_TOKEN_BULK_CHUNK_SIZE = 400  # Keep well under SQLite variable limit.
 PROMO_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,31}$")
 TG_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+TG_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 
 
 class BusinessCabinetError(RuntimeError):
@@ -154,6 +155,21 @@ def _normalize_chat_contact_value(raw_value: str) -> str:
         raise ValidationError("Для кнопки «Написати» вкажи @username або t.me/username.")
 
     return f"@{username}"
+
+
+def _is_supported_media_reference(raw_value: str) -> bool:
+    value = str(raw_value or "").strip()
+    if not value:
+        return False
+    lowered = value.lower()
+    if (
+        lowered.startswith("http://")
+        or lowered.startswith("https://")
+        or lowered.startswith("tg://")
+        or lowered.startswith("t.me/")
+    ):
+        return True
+    return bool(TG_FILE_ID_RE.fullmatch(value))
 
 
 class BusinessService(Protocol):
@@ -1667,6 +1683,14 @@ class BusinessCabinetService:
 
         raw = str(value or "").strip()
         clean_value = "" if raw == "-" else raw
+        media_fields = {
+            "logo_url",
+            "photo_1_url",
+            "photo_2_url",
+            "photo_3_url",
+            "offer_1_image_url",
+            "offer_2_image_url",
+        }
 
         if normalized_field == "opening_hours":
             if clean_value and len(clean_value) > 220:
@@ -1679,8 +1703,13 @@ class BusinessCabinetService:
         elif normalized_field in {"offer_1_text", "offer_2_text"}:
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Офер занадто довгий.")
+        elif normalized_field in media_fields:
+            if clean_value and len(clean_value) > 300:
+                raise ValidationError("Медіа‑посилання занадто довге.")
+            if clean_value and not _is_supported_media_reference(clean_value):
+                raise ValidationError("Для медіа вкажи URL або Telegram file_id.")
         else:
-            # link_url / logo_url / photo_*_url / menu_url / order_url / offer_*_image_url
+            # link_url / menu_url / order_url
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Посилання занадто довге.")
             if clean_value:
