@@ -26,10 +26,16 @@ def _must_have(text: str, token: str, *, file_label: str, errors: list[str]) -> 
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
+    schema_text = _read(root / "schema.sql")
     db_text = _read(root / "src/database.py")
     handlers_text = _read(root / "src/handlers.py")
 
     errors: list[str] = []
+
+    _must_have(schema_text, "CREATE TABLE IF NOT EXISTS place_clicks_daily", file_label="schema.sql", errors=errors)
+    _must_have(schema_text, "PRIMARY KEY (place_id, day, action)", file_label="schema.sql", errors=errors)
+    _must_have(schema_text, "idx_place_clicks_daily_day", file_label="schema.sql", errors=errors)
+    _must_have(schema_text, "idx_place_clicks_daily_action", file_label="schema.sql", errors=errors)
 
     _must_have(db_text, "CREATE TABLE IF NOT EXISTS place_clicks_daily", file_label="src/database.py", errors=errors)
     _must_have(db_text, "PRIMARY KEY (place_id, day, action)", file_label="src/database.py", errors=errors)

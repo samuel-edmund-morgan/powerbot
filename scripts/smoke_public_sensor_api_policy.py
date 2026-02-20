@@ -32,6 +32,7 @@ def _resolve(path_rel: str) -> Path:
 
 CONFIG_FILE = _resolve("src/config.py")
 API_FILE = _resolve("src/api_server.py")
+SCHEMA_FILE = _resolve("schema.sql")
 
 
 def _extract_function_body(text: str, func_name: str) -> str:
@@ -59,9 +60,11 @@ def _assert(cond: bool, msg: str) -> None:
 def main() -> None:
     _assert(CONFIG_FILE.exists(), f"file not found: {CONFIG_FILE}")
     _assert(API_FILE.exists(), f"file not found: {API_FILE}")
+    _assert(SCHEMA_FILE.exists(), f"file not found: {SCHEMA_FILE}")
 
     cfg = CONFIG_FILE.read_text(encoding="utf-8")
     api = API_FILE.read_text(encoding="utf-8")
+    schema = SCHEMA_FILE.read_text(encoding="utf-8")
 
     violations: list[str] = []
 
@@ -72,6 +75,15 @@ def main() -> None:
     ):
         if snippet not in cfg:
             violations.append(f"{CONFIG_FILE}: missing snippet `{snippet}`")
+
+    # Schema contract: stable external sensor ids table/index.
+    for snippet in (
+        "CREATE TABLE IF NOT EXISTS sensor_public_ids",
+        "sensor_uuid TEXT NOT NULL UNIQUE",
+        "idx_sensor_public_ids_sensor_uuid",
+    ):
+        if snippet not in schema:
+            violations.append(f"{SCHEMA_FILE}: missing snippet `{snippet}`")
 
     # Routes contract.
     for snippet in (
