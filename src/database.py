@@ -437,6 +437,31 @@ async def init_db():
         )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_place_reports_status_created ON place_reports (status, created_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_place_reports_place_id ON place_reports (place_id)")
+        # Запити Partner-власників у пріоритетну підтримку (ops).
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS business_support_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                owner_tg_user_id INTEGER NOT NULL,
+                owner_username TEXT DEFAULT NULL,
+                owner_first_name TEXT DEFAULT NULL,
+                owner_last_name TEXT DEFAULT NULL,
+                message_text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                resolved_at TEXT DEFAULT NULL,
+                resolved_by INTEGER DEFAULT NULL,
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_support_requests_status_created "
+            "ON business_support_requests (status, created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_business_support_requests_place_id "
+            "ON business_support_requests (place_id)"
+        )
         # Таблиця лайків укриттів
         await db.execute(
             """CREATE TABLE IF NOT EXISTS shelter_likes (
@@ -2400,6 +2425,7 @@ async def record_place_click(place_id: int, action: str) -> None:
 # ============ Функції для репортів про заклади ============
 
 _PLACE_REPORT_STATUSES = {"pending", "resolved", "rejected"}
+_BUSINESS_SUPPORT_REQUEST_STATUSES = {"pending", "resolved", "rejected"}
 
 
 async def create_place_report(
@@ -2597,6 +2623,198 @@ async def set_place_report_status(report_id: int, status: str, *, resolved_by: i
                     resolved_at,
                     resolved_by_value,
                     int(report_id),
+                    safe_status,
+                ),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    return await _with_sqlite_retry(_op)
+
+
+# ============ Пріоритетна підтримка Partner-власників ============
+
+async def create_business_support_request(
+    *,
+    place_id: int,
+    owner_tg_user_id: int,
+    owner_username: str | None,
+    owner_first_name: str | None,
+    owner_last_name: str | None,
+    message_text: str,
+) -> dict | None:
+    text = str(message_text or "").strip()
+    if not text:
+        return None
+
+    now = datetime.now().isoformat()
+
+    async def _op() -> dict | None:
+        async with open_db() as db:
+            async with db.execute(
+                "SELECT id FROM places WHERE id=?",
+                (int(place_id),),
+            ) as cur:
+                row = await cur.fetchone()
+            if not row:
+                return None
+
+            cursor = await db.execute(
+                """
+                INSERT INTO business_support_requests (
+                    place_id,
+                    owner_tg_user_id,
+                    owner_username,
+                    owner_first_name,
+                    owner_last_name,
+                    message_text,
+                    status,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    int(place_id),
+                    int(owner_tg_user_id),
+                    str(owner_username or "").strip() or None,
+                    str(owner_first_name or "").strip() or None,
+                    str(owner_last_name or "").strip() or None,
+                    text,
+                    now,
+                ),
+            )
+            request_id = int(cursor.lastrowid)
+            await db.commit()
+            return {
+                "id": request_id,
+                "place_id": int(place_id),
+                "owner_tg_user_id": int(owner_tg_user_id),
+                "message_text": text,
+                "status": "pending",
+                "created_at": now,
+            }
+
+    return await _with_sqlite_retry(_op)
+
+
+async def list_business_support_requests(
+    *,
+    status: str | None = "pending",
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    safe_limit = max(1, min(int(limit), 5000))
+    safe_offset = max(0, int(offset))
+    safe_status = str(status).strip().lower() if status is not None else None
+    if safe_status is not None and safe_status not in _BUSINESS_SUPPORT_REQUEST_STATUSES:
+        raise ValueError(f"Invalid business support request status: {status}")
+
+    where_sql = ""
+    params: list[object] = []
+    if safe_status is not None:
+        where_sql = " WHERE sr.status = ? "
+        params.append(safe_status)
+
+    async def _op() -> tuple[list[dict], int]:
+        async with open_db() as db:
+            async with db.execute(
+                f"""
+                SELECT COUNT(*)
+                  FROM business_support_requests sr
+                {where_sql}
+                """,
+                tuple(params),
+            ) as cur_count:
+                count_row = await cur_count.fetchone()
+            total = int(count_row[0]) if count_row else 0
+
+            async with db.execute(
+                f"""
+                SELECT
+                    sr.id,
+                    sr.place_id,
+                    p.service_id,
+                    p.name,
+                    p.address,
+                    gs.name,
+                    sr.owner_tg_user_id,
+                    sr.owner_username,
+                    sr.owner_first_name,
+                    sr.owner_last_name,
+                    sr.message_text,
+                    sr.status,
+                    sr.created_at,
+                    sr.resolved_at,
+                    sr.resolved_by
+                FROM business_support_requests sr
+                LEFT JOIN places p ON p.id = sr.place_id
+                LEFT JOIN general_services gs ON gs.id = p.service_id
+                {where_sql}
+                ORDER BY sr.created_at DESC, sr.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple([*params, safe_limit, safe_offset]),
+            ) as cur:
+                rows = await cur.fetchall()
+
+        result = [
+            {
+                "id": int(r[0]),
+                "place_id": int(r[1]) if r[1] is not None else 0,
+                "service_id": int(r[2]) if r[2] is not None else 0,
+                "place_name": r[3] or "",
+                "place_address": r[4] or "",
+                "service_name": r[5] or "",
+                "owner_tg_user_id": int(r[6]) if r[6] is not None else 0,
+                "owner_username": r[7] or "",
+                "owner_first_name": r[8] or "",
+                "owner_last_name": r[9] or "",
+                "message_text": r[10] or "",
+                "status": r[11] or "",
+                "created_at": r[12] or "",
+                "resolved_at": r[13] or "",
+                "resolved_by": int(r[14]) if r[14] is not None else None,
+            }
+            for r in rows
+        ]
+        return result, total
+
+    return await _with_sqlite_retry(_op)
+
+
+async def set_business_support_request_status(
+    request_id: int,
+    status: str,
+    *,
+    resolved_by: int | None = None,
+) -> bool:
+    safe_status = str(status or "").strip().lower()
+    if safe_status not in _BUSINESS_SUPPORT_REQUEST_STATUSES:
+        raise ValueError(f"Invalid business support request status: {status}")
+    now = datetime.now().isoformat()
+
+    if safe_status == "pending":
+        resolved_at = None
+        resolved_by_value = None
+    else:
+        resolved_at = now
+        resolved_by_value = int(resolved_by) if resolved_by is not None else None
+
+    async def _op() -> bool:
+        async with open_db() as db:
+            cursor = await db.execute(
+                """
+                UPDATE business_support_requests
+                   SET status=?,
+                       resolved_at=?,
+                       resolved_by=?
+                 WHERE id=?
+                   AND status <> ?
+                """,
+                (
+                    safe_status,
+                    resolved_at,
+                    resolved_by_value,
+                    int(request_id),
                     safe_status,
                 ),
             )

@@ -282,6 +282,24 @@ CREATE TABLE IF NOT EXISTS place_reports (
 CREATE INDEX IF NOT EXISTS idx_place_reports_status_created ON place_reports (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_place_reports_place_id ON place_reports (place_id);
 
+-- Запити Partner-власників у пріоритетну підтримку (ops)
+CREATE TABLE IF NOT EXISTS business_support_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,                -- FK на places
+    owner_tg_user_id INTEGER NOT NULL,        -- TG id власника
+    owner_username TEXT DEFAULT NULL,         -- @username власника
+    owner_first_name TEXT DEFAULT NULL,       -- first name власника
+    owner_last_name TEXT DEFAULT NULL,        -- last name власника
+    message_text TEXT NOT NULL,               -- Текст запиту
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending/resolved/rejected
+    created_at TEXT NOT NULL,                 -- ISO 8601
+    resolved_at TEXT DEFAULT NULL,            -- ISO 8601
+    resolved_by INTEGER DEFAULT NULL,         -- TG id адміністратора
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_business_support_requests_status_created ON business_support_requests (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_business_support_requests_place_id ON business_support_requests (place_id);
+
 -- Лайки укриттів
 CREATE TABLE IF NOT EXISTS shelter_likes (
     place_id INTEGER NOT NULL,

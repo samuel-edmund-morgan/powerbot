@@ -464,6 +464,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
 echo "Running business partner QR-kit policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_partner_qr_kit_policy.py"
 
+# Automated smoke: Partner priority support flow (owner CTA -> admin queue).
+echo "Running business partner support policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_partner_priority_support_policy.py"
+
 # Automated smoke: QR access behavior (Free lock -> plans, Light -> QR screen/deep-link).
 echo "Running business QR access flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_qr_access_flow.py"

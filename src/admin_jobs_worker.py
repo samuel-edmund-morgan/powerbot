@@ -33,6 +33,7 @@ JOB_KIND_OFFERS_DIGEST = "offers_digest"
 JOB_KIND_LIGHT_NOTIFY = "light_notify"
 JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
 JOB_KIND_ADMIN_PLACE_REPORT_ALERT = "admin_place_report_alert"
+JOB_KIND_ADMIN_PARTNER_SUPPORT_ALERT = "admin_partner_support_alert"
 JOB_KIND_SENSORS_FREEZE_ALL = "sensors_freeze_all"
 JOB_KIND_SENSORS_UNFREEZE_ALL = "sensors_unfreeze_all"
 SENSORS_FREEZE_FOREVER_MODE = "forever"
@@ -223,11 +224,16 @@ async def _handle_sensors_unfreeze_all(job: dict) -> tuple[int, int]:
     return unfrozen_ok, total
 
 
-def _build_adminbot_start_url(admin_bot_username: str | None, request_id: int) -> str | None:
+def _build_adminbot_prefixed_start_url(admin_bot_username: str | None, prefix: str, item_id: int) -> str | None:
     username = str(admin_bot_username or "").strip().lstrip("@")
-    if not username or request_id <= 0:
+    safe_prefix = str(prefix or "").strip().lower()
+    if not username or item_id <= 0 or not safe_prefix:
         return None
-    return f"https://t.me/{username}?start=bmod_{request_id}"
+    return f"https://t.me/{username}?start={safe_prefix}_{item_id}"
+
+
+def _build_adminbot_start_url(admin_bot_username: str | None, request_id: int) -> str | None:
+    return _build_adminbot_prefixed_start_url(admin_bot_username, "bmod", request_id)
 
 
 def _render_owner_request_alert_text(payload: dict, *, deep_link_url: str | None = None) -> str:
@@ -323,6 +329,53 @@ def _place_report_alert_keyboard(*, report_id: int, deep_link_url: str | None = 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _render_partner_support_alert_text(payload: dict, *, deep_link_url: str | None = None) -> str:
+    request_id = int(payload.get("support_request_id") or 0)
+    place_id = int(payload.get("place_id") or 0)
+    place_name = html.escape(str(payload.get("place_name") or f"place_id={place_id}"))
+    owner_tg_user_id = int(payload.get("owner_tg_user_id") or 0)
+    owner_username = str(payload.get("owner_username") or "").strip()
+    owner_first_name = str(payload.get("owner_first_name") or "").strip()
+    owner_last_name = str(payload.get("owner_last_name") or "").strip()
+    full_name = " ".join(part for part in [owner_first_name, owner_last_name] if part).strip()
+    if owner_username:
+        owner_label = f"@{html.escape(owner_username)}"
+    elif full_name:
+        owner_label = html.escape(full_name)
+    else:
+        owner_label = html.escape(str(owner_tg_user_id))
+    if owner_tg_user_id > 0:
+        owner_link = f'<a href="tg://user?id={owner_tg_user_id}">{owner_label}</a>'
+    else:
+        owner_link = owner_label
+    message_text = html.escape(str(payload.get("message_text") or "").strip())
+    created_at = html.escape(str(payload.get("created_at") or ""))
+    text = (
+        "🧑‍💼 Новий запит у пріоритетну підтримку (Partner)\n\n"
+        f"Запит: <code>{request_id}</code>\n"
+        f"Заклад: <b>{place_name}</b> (ID: <code>{place_id}</code>)\n"
+        f"Власник: {owner_link} / <code>{owner_tg_user_id}</code>\n"
+        f"Створено: {created_at}\n\n"
+        f"Текст:\n{message_text}\n\n"
+        "⚙️ Перевір в <b>adminbot</b> → <b>Бізнес</b> → <b>Підтримка Partner</b>."
+    )
+    if deep_link_url:
+        safe_url = html.escape(deep_link_url, quote=True)
+        text += f"\n🔗 Швидкий перехід: <a href=\"{safe_url}\">відкрити запит</a>."
+    return text
+
+
+def _partner_support_alert_keyboard(*, request_id: int, deep_link_url: str | None = None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="🧑‍💼 Відкрити запит", callback_data=f"abiz_support_jump|{int(request_id)}")],
+        [InlineKeyboardButton(text="🧭 Вся підтримка", callback_data="abiz_support")],
+    ]
+    if deep_link_url:
+        rows.append([InlineKeyboardButton(text="🔗 Deep-link", url=deep_link_url)])
+    rows.append([InlineKeyboardButton(text="🏠 Головне меню", callback_data="admin_refresh")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def _resolve_admin_bot_username(bot: Bot) -> str | None:
     global _ADMIN_BOT_USERNAME_CACHE, _ADMIN_BOT_USERNAME_RESOLVED
     if _ADMIN_BOT_USERNAME_RESOLVED:
@@ -378,6 +431,55 @@ async def _handle_admin_place_report_alert(job: dict) -> tuple[int, int]:
                     "Failed to send admin place-report alert to admin_id=%s report_id=%s",
                     admin_id,
                     report_id,
+                )
+    finally:
+        try:
+            await admin_bot.session.close()
+        except Exception:
+            pass
+
+    return sent_ok, total
+
+
+async def _handle_admin_partner_support_alert(job: dict) -> tuple[int, int]:
+    payload = job.get("payload") or {}
+    support_request_id = int(payload.get("support_request_id") or 0)
+    place_id = int(payload.get("place_id") or 0)
+    owner_tg_user_id = int(payload.get("owner_tg_user_id") or 0)
+    if support_request_id <= 0 or place_id <= 0 or owner_tg_user_id <= 0:
+        raise ValueError("admin_partner_support_alert requires support_request_id/place_id/owner_tg_user_id")
+    if not CFG.admin_ids:
+        raise ValueError("admin_partner_support_alert requires non-empty ADMIN_IDS")
+    if not (CFG.admin_bot_api_key or "").strip():
+        raise ValueError("admin_partner_support_alert requires non-empty ADMIN_BOT_API_KEY")
+
+    total = len(CFG.admin_ids)
+    sent_ok = 0
+
+    admin_bot = Bot(
+        token=CFG.admin_bot_api_key,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        admin_bot_username = await _resolve_admin_bot_username(admin_bot)
+        deep_link_url = _build_adminbot_prefixed_start_url(admin_bot_username, "bsup", support_request_id)
+        text = _render_partner_support_alert_text(payload, deep_link_url=deep_link_url)
+        kb = _partner_support_alert_keyboard(request_id=support_request_id, deep_link_url=deep_link_url)
+        for admin_id in CFG.admin_ids:
+            try:
+                await render_admin_ui(
+                    admin_bot,
+                    chat_id=int(admin_id),
+                    text=text,
+                    reply_markup=kb,
+                    force_new_message=True,
+                )
+                sent_ok += 1
+            except Exception:
+                logger.exception(
+                    "Failed to send admin partner-support alert to admin_id=%s support_request_id=%s",
+                    admin_id,
+                    support_request_id,
                 )
     finally:
         try:
@@ -463,6 +565,8 @@ async def admin_jobs_worker_loop(bot: Bot, *, poll_interval_sec: float = 1.0) ->
                     done_current, done_total = await _handle_admin_owner_request_alert(job)
                 elif kind == JOB_KIND_ADMIN_PLACE_REPORT_ALERT:
                     done_current, done_total = await _handle_admin_place_report_alert(job)
+                elif kind == JOB_KIND_ADMIN_PARTNER_SUPPORT_ALERT:
+                    done_current, done_total = await _handle_admin_partner_support_alert(job)
                 elif kind == JOB_KIND_SENSORS_FREEZE_ALL:
                     done_current, done_total = await _handle_sensors_freeze_all(job)
                 elif kind == JOB_KIND_SENSORS_UNFREEZE_ALL:
