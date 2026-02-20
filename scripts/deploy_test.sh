@@ -464,6 +464,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_qr_deeplink_policy.py"
 echo "Running business QR access flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_qr_access_flow.py"
 
+# Automated smoke: resident `/start place_<id>` deep-link renders full card + like uniqueness.
+echo "Running business QR resident deep-link like-flow smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_qr_resident_deeplink_like_flow.py"
+
 # Automated smoke: exactly one active Partner tier per category.
 echo "Running business partner-slot uniqueness smoke test..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_partner_slot_uniqueness.py"

@@ -205,48 +205,21 @@ def get_map_file_for_address(address: str | None) -> str | None:
 
 
 async def show_place_with_map(message: Message, place_id: int):
-    """Показати заклад з картою (для deep link з inline режиму)."""
-    from database import get_place, get_general_service, get_place_likes_count
-    
-    place = await get_place(place_id)
-    if not place:
+    """Показати заклад з картою для deep-link (`/start place_<id>`).
+
+    Використовуємо той самий рендер, що і в каталозі закладів:
+    лайк/анлайк, CTA-кнопки, офери, партнерські блоки та карту (якщо є).
+    """
+    user_id = int(message.chat.id)
+    if message.from_user:
+        try:
+            user_id = int(message.from_user.id)
+        except Exception:
+            user_id = int(message.chat.id)
+
+    shown = await _render_place_detail_message(message, place_id=place_id, user_id=user_id)
+    if not shown:
         await message.answer("❌ Заклад не знайдено.")
-        return
-    
-    service = await get_general_service(place["service_id"])
-    likes_count = await get_place_likes_count(place_id)
-    admin_tag = CFG.admin_tag or "адміністратору"
-    
-    text = f"🏢 <b>{place['name']}</b>\n\n"
-    
-    if service:
-        text += f"📁 Категорія: {service['name']}\n\n"
-    
-    if place["description"]:
-        text += f"📝 {place['description']}\n\n"
-    
-    if place["address"]:
-        text += f"📍 <b>Адреса:</b> {place['address']}\n\n"
-    
-    text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
-    text += f"💬 Побачили помилку? Пишіть {admin_tag}"
-    
-    # Визначаємо карту
-    map_file = get_map_file_for_address(place["address"])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="« Головне меню", callback_data="menu")],
-    ])
-    
-    if map_file:
-        photo = FSInputFile(map_file)
-        await message.answer_photo(
-            photo=photo,
-            caption=text,
-            reply_markup=keyboard
-        )
-    else:
-        await message.answer(text, reply_markup=keyboard)
 
 
 async def get_user_building_text(user_id: int) -> str:
