@@ -464,6 +464,10 @@ python3 "${REPO_DIR}/scripts/smoke_sqlite_transaction_boundary_policy.py"
 echo "Running sqlite transaction function-scope policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_sqlite_tx_function_scope_policy.py"
 
+# Automated smoke: deploy freeze/unfreeze ops policy (no global light OFF in deploy script).
+echo "Running ops freeze deploy policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_ops_freeze_deploy_policy.py"
+
 # Automated smoke: resident-facing BUSINESS_MODE guard policy.
 echo "Running business guard policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_guard_policy.py"
