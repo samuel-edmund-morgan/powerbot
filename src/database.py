@@ -300,6 +300,11 @@ async def init_db():
             await db.execute("ALTER TABLE places ADD COLUMN keywords TEXT DEFAULT NULL")
         except Exception:
             pass
+        # Міграція: видимість закладів у resident-каталозі (legacy БД без publish-флага).
+        try:
+            await db.execute("ALTER TABLE places ADD COLUMN is_published INTEGER NOT NULL DEFAULT 1")
+        except Exception:
+            pass
         # Міграція: колонки бізнес-режиму для places
         try:
             await db.execute("ALTER TABLE places ADD COLUMN is_verified INTEGER DEFAULT 0")
