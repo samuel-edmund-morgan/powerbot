@@ -544,6 +544,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_catalog_ranking_policy.py"
 echo "Running business catalog ranking runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_catalog_ranking_runtime.py"
 
+# Automated smoke: no medals must be shown for zero-like rows in BUSINESS_MODE catalog.
+echo "Running business catalog zero-like medal runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_catalog_zero_likes_medals_runtime.py"
+
 # Automated smoke: resident catalog colored button styles for partner/pro slots.
 echo "Running business catalog button styles policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_catalog_button_styles_policy.py"
