@@ -20,9 +20,11 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote_plus
+from io import BytesIO
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
+import img2pdf
 
 from business import get_business_service, is_business_feature_enabled
 from config import CFG
@@ -54,6 +56,7 @@ from database import (
     get_all_general_services,
     get_all_places_with_likes,
     get_places_by_service_with_likes,
+    get_place,
     tokenize_query,
     has_liked_place,
     like_place,
@@ -436,6 +439,111 @@ async def public_sensor_status_handler(request: web.Request) -> web.Response:
 
     is_up, _age_seconds = _sensor_is_online_by_heartbeat_only(sensor)
     return web.json_response({"id": int(sensor["public_id"]), "is_up": bool(is_up)})
+
+
+def _resident_place_deeplink(place_id: int) -> str | None:
+    bot_username = str(CFG.bot_username or "").strip().lstrip("@")
+    if not bot_username:
+        return None
+    return f"https://t.me/{bot_username}?start=place_{int(place_id)}"
+
+
+def _quickchart_qr_kit_png_url(*, deep_link: str, caption: str, size: int = 1400) -> str:
+    safe_size = max(300, min(int(size), 2000))
+    safe_caption = str(caption or "").strip()
+    return (
+        "https://quickchart.io/qr"
+        f"?text={quote_plus(deep_link)}"
+        f"&size={safe_size}"
+        f"&caption={quote_plus(safe_caption)}"
+        "&dark=111827"
+        "&light=ffffff"
+        "&ecLevel=M"
+        "&margin=1"
+    )
+
+
+async def _fetch_png_bytes(url: str, *, timeout_sec: float = 20.0) -> bytes | None:
+    timeout = ClientTimeout(total=max(1.0, float(timeout_sec)))
+    async with ClientSession(timeout=timeout) as session:
+        async with session.get(url, allow_redirects=True) as response:
+            if response.status != 200:
+                return None
+            content_type = str(response.headers.get("Content-Type") or "").lower()
+            if "image/" not in content_type:
+                return None
+            body = await response.read()
+            if not body:
+                return None
+            return body
+
+
+def _safe_pdf_filename(value: str) -> str:
+    raw = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(value or "").strip().lower())
+    cleaned = raw.strip("-_")
+    return cleaned or "qr-kit"
+
+
+async def business_qr_kit_pdf_handler(request: web.Request) -> web.Response:
+    """Generate printable QR-kit PDF for a place/variant."""
+    place_id_raw = str(request.query.get("place_id") or "").strip()
+    if not place_id_raw:
+        return web.json_response({"status": "error", "message": "place_id is required"}, status=400)
+    try:
+        place_id = int(place_id_raw)
+    except ValueError:
+        return web.json_response({"status": "error", "message": "place_id must be integer"}, status=400)
+    if place_id <= 0:
+        return web.json_response({"status": "error", "message": "place_id must be positive"}, status=400)
+
+    place = await get_place(place_id)
+    if not place:
+        return web.json_response({"status": "error", "message": "Place not found"}, status=404)
+
+    deep_link = _resident_place_deeplink(place_id)
+    if not deep_link:
+        return web.json_response(
+            {"status": "error", "message": "Resident bot username is not configured"},
+            status=503,
+        )
+
+    variant = str(request.query.get("variant") or "entrance").strip().lower()
+    variant_titles = {
+        "entrance": "ВХІД",
+        "cashier": "КАСА",
+        "table": "СТОЛИК",
+    }
+    if variant not in variant_titles:
+        return web.json_response(
+            {"status": "error", "message": "variant must be one of: entrance,cashier,table"},
+            status=400,
+        )
+
+    place_name = str(place.get("name") or f"Заклад {place_id}").strip()[:80]
+    caption = f"{place_name} • {variant_titles[variant]}"
+    png_url = _quickchart_qr_kit_png_url(deep_link=deep_link, caption=caption)
+    png_bytes = await _fetch_png_bytes(png_url)
+    if not png_bytes:
+        return web.json_response(
+            {"status": "error", "message": "Failed to generate QR image"},
+            status=502,
+        )
+
+    try:
+        pdf_bytes = img2pdf.convert(BytesIO(png_bytes))
+    except Exception:
+        logger.exception("Failed to generate QR PDF place_id=%s variant=%s", place_id, variant)
+        return web.json_response({"status": "error", "message": "Failed to generate PDF"}, status=500)
+
+    filename = _safe_pdf_filename(f"qr-kit-{place_name}-{variant}") + ".pdf"
+    return web.Response(
+        body=pdf_bytes,
+        content_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename=\"{filename}\"',
+            "Cache-Control": "public, max-age=43200",
+        },
+    )
 
 
 async def yasno_outages_handler(request: web.Request) -> web.Response:
@@ -1025,6 +1133,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/v1/sensors", sensors_info_handler)
     app.router.add_get("/api/v1/public/sensors/status", public_sensors_status_handler)
     app.router.add_get("/api/v1/public/sensors/{sensor_id:\\d+}/status", public_sensor_status_handler)
+    app.router.add_get("/api/v1/business/qr-kit/pdf", business_qr_kit_pdf_handler)
     app.router.add_get("/api/v1/yasno/outages", yasno_outages_handler)
 
     # Web App API
