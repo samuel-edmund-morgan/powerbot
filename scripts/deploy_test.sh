@@ -203,6 +203,10 @@ python3 "${REPO_DIR}/scripts/smoke_place_clicks_policy.py"
 echo "Running schema/runtime parity smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_schema_runtime_parity.py"
 
+# Automated smoke: legacy `places` schema backfill via init_db().
+echo "Running init_db legacy places backfill smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_init_db_legacy_places_columns.py"
+
 # Automated smoke: business mock payments state machine + idempotency.
 # Run inside container (all runtime deps are present there).
 echo "Running business payments smoke test in test container..."
