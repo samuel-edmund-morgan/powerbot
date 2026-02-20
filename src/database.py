@@ -893,6 +893,24 @@ async def db_get(k: str) -> str | None:
             return row[0] if row else None
 
 
+def sponsored_offers_enabled_key(chat_id: int) -> str:
+    """KV key for resident preference: sponsored partner offers in main menu."""
+    return f"sponsored_offers_enabled:{int(chat_id)}"
+
+
+async def get_sponsored_offers_enabled(chat_id: int) -> bool:
+    """Return whether sponsored partner offers are enabled for a resident."""
+    raw = str((await db_get(sponsored_offers_enabled_key(chat_id))) or "").strip().lower()
+    if raw in {"0", "false", "off", "no"}:
+        return False
+    return True
+
+
+async def set_sponsored_offers_enabled(chat_id: int, enabled: bool) -> None:
+    """Enable/disable sponsored partner offers for a resident."""
+    await db_set(sponsored_offers_enabled_key(chat_id), "1" if enabled else "0")
+
+
 # ============ Admin Jobs Queue (control-plane) ============
 
 _ADMIN_JOB_STATUSES = {"pending", "running", "done", "failed", "canceled"}
@@ -1507,9 +1525,18 @@ async def get_notification_settings(chat_id: int) -> dict:
     """
     Отримати налаштування сповіщень для користувача.
     Повертає словник з ключами: light_notifications, alert_notifications,
-    schedule_notifications, quiet_start, quiet_end
+    schedule_notifications, sponsored_offers_enabled, quiet_start, quiet_end
     """
     async with open_db() as db:
+        async with db.execute(
+            "SELECT v FROM kv WHERE k=?",
+            (sponsored_offers_enabled_key(chat_id),),
+        ) as cur:
+            sponsored_row = await cur.fetchone()
+            sponsored_raw = str(sponsored_row[0]) if sponsored_row and sponsored_row[0] is not None else ""
+
+        sponsored_enabled = sponsored_raw.strip().lower() not in {"0", "false", "off", "no"}
+
         async with db.execute(
             """SELECT light_notifications, alert_notifications, schedule_notifications, quiet_start, quiet_end 
                FROM subscribers WHERE chat_id=?""",
@@ -1521,6 +1548,7 @@ async def get_notification_settings(chat_id: int) -> dict:
                     "light_notifications": bool(row[0]) if row[0] is not None else True,
                     "alert_notifications": bool(row[1]) if row[1] is not None else True,
                     "schedule_notifications": bool(row[2]) if row[2] is not None else True,
+                    "sponsored_offers_enabled": sponsored_enabled,
                     "quiet_start": row[3],
                     "quiet_end": row[4],
                 }
@@ -1528,6 +1556,7 @@ async def get_notification_settings(chat_id: int) -> dict:
                 "light_notifications": True,
                 "alert_notifications": True,
                 "schedule_notifications": True,
+                "sponsored_offers_enabled": sponsored_enabled,
                 "quiet_start": None,
                 "quiet_end": None,
             }

@@ -468,6 +468,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_q
 echo "Running business sponsored-row runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_sponsored_row_runtime.py"
 
+# Automated smoke: WebApp sponsored-offers toggle contract (frontend + backend wiring).
+echo "Running business WebApp sponsored-toggle policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_webapp_sponsored_toggle_policy.py"
+
 # Automated smoke: resident `/start place_<id>` deep-link renders full card + like uniqueness.
 echo "Running business QR resident deep-link like-flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_qr_resident_deeplink_like_flow.py"

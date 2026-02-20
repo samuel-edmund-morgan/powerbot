@@ -21,7 +21,8 @@ from tg_buttons import STYLE_PRIMARY, STYLE_SUCCESS, ikb
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
     get_notification_settings, set_light_notifications, set_alert_notifications,
-    set_schedule_notifications,
+    set_schedule_notifications, get_sponsored_offers_enabled,
+    set_sponsored_offers_enabled, sponsored_offers_enabled_key,
     get_last_event, get_subscriber_building, get_building_by_id, save_last_bot_message
 )
 from services import state_text, calculate_stats, format_duration, format_light_status
@@ -313,7 +314,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
 
 
 def _sponsored_enabled_key(chat_id: int) -> str:
-    return f"sponsored_offers_enabled:{int(chat_id)}"
+    return sponsored_offers_enabled_key(chat_id)
 
 
 def _sponsored_last_seen_day_key(chat_id: int) -> str:
@@ -328,14 +329,11 @@ def _truncate_sponsored_place_name(name: str, max_len: int = 34) -> str:
 
 
 async def _is_sponsored_offers_enabled(chat_id: int) -> bool:
-    raw = str((await db_get(_sponsored_enabled_key(chat_id))) or "").strip().lower()
-    if raw in {"0", "false", "off", "no"}:
-        return False
-    return True
+    return await get_sponsored_offers_enabled(chat_id)
 
 
 async def _set_sponsored_offers_enabled(chat_id: int, enabled: bool) -> None:
-    await db_set(_sponsored_enabled_key(chat_id), "1" if enabled else "0")
+    await set_sponsored_offers_enabled(chat_id, enabled)
 
 
 async def _pick_sponsored_partner_place() -> dict[str, Any] | None:

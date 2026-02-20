@@ -43,6 +43,7 @@ from database import (
     set_light_notifications,
     set_alert_notifications,
     set_schedule_notifications,
+    set_sponsored_offers_enabled,
     set_quiet_hours,
     get_heating_stats,
     get_water_stats,
@@ -794,6 +795,8 @@ async def webapp_notifications_handler(request: web.Request) -> web.Response:
         await set_alert_notifications(user_id, bool(data["alert_notifications"]))
     if "schedule_notifications" in data:
         await set_schedule_notifications(user_id, bool(data["schedule_notifications"]))
+    if "sponsored_offers_enabled" in data:
+        await set_sponsored_offers_enabled(user_id, bool(data["sponsored_offers_enabled"]))
 
     quiet_start = data.get("quiet_start")
     quiet_end = data.get("quiet_end")
