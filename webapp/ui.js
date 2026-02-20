@@ -368,6 +368,9 @@
     if (elements.sponsoredToggle) {
       elements.sponsoredToggle.checked = settings.sponsored_offers_enabled !== false;
     }
+    if (elements.offersDigestToggle) {
+      elements.offersDigestToggle.checked = settings.offers_digest_enabled === true;
+    }
 
     if (settings.quiet_start === null || settings.quiet_end === null) {
       elements.quietSelect.value = "off";
