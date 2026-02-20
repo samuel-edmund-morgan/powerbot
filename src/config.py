@@ -80,6 +80,7 @@ class Config:
     business_bot_api_key: str
     business_bot_single_message_mode: bool
     business_payment_provider: str
+    offers_digest_min_interval_hours: int
 
 
 def parse_admin_ids(env_value: str) -> list[int]:
@@ -297,6 +298,7 @@ CFG = Config(
     business_bot_api_key=os.getenv("BUSINESS_BOT_API_KEY", "").strip().strip('"').strip("'"),
     business_bot_single_message_mode=parse_bool(os.getenv("BUSINESS_BOT_SINGLE_MESSAGE_MODE", "1")),
     business_payment_provider=os.getenv("BUSINESS_PAYMENT_PROVIDER", "telegram_stars").strip().strip('"').strip("'").lower(),
+    offers_digest_min_interval_hours=max(1, int(os.getenv("OFFERS_DIGEST_MIN_INTERVAL_HOURS", "168"))),
 )
 
 # Шлях до БД: з env або відносно робочого каталогу

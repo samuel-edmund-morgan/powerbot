@@ -177,7 +177,10 @@ def _menu_keyboard(light_enabled: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=light_label, callback_data="admin_toggle_light")],
-            [InlineKeyboardButton(text="📣 Розсилка (broadcast)", callback_data="admin_broadcast")],
+            [
+                InlineKeyboardButton(text="📣 Розсилка (broadcast)", callback_data="admin_broadcast"),
+                InlineKeyboardButton(text="📬 Дайджест акцій", callback_data="admin_offers_digest"),
+            ],
             [
                 InlineKeyboardButton(text="📡 Сенсори", callback_data="admin_sensors"),
                 InlineKeyboardButton(text="👥 Підписники", callback_data="admin_subs"),
@@ -205,6 +208,11 @@ async def _render_main_menu(bot, chat_id: int, *, prefer_message_id: int | None 
 
 
 class BroadcastState(StatesGroup):
+    waiting_text = State()
+    confirm = State()
+
+
+class OffersDigestState(StatesGroup):
     waiting_text = State()
     confirm = State()
 
@@ -378,6 +386,93 @@ async def cb_broadcast_confirm(callback: CallbackQuery, state: FSMContext) -> No
         created_by=int(callback.from_user.id),
     )
     note = f"✅ Розсилка поставлена в чергу.\nJob: <code>#{job_id}</code>"
+    await _render_main_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id, note=note)
+
+
+@router.callback_query(F.data == "admin_offers_digest")
+async def cb_offers_digest_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    await state.set_state(OffersDigestState.waiting_text)
+    await callback.answer()
+    text = (
+        "📬 <b>Дайджест акцій партнерів</b>\n\n"
+        "Надішліть текст дайджесту.\n"
+        "Він буде відправлений лише мешканцям, які увімкнули\n"
+        "«Акції тижня (дайджест)» у своїх налаштуваннях.\n\n"
+        f"Rate-limit: не частіше 1 раз на <b>{int(CFG.offers_digest_min_interval_hours)}</b> год для одного мешканця.\n\n"
+        "Або натисніть «Скасувати»."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+        ]
+    )
+    await render(
+        callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb,
+        prefer_message_id=callback.message.message_id,
+        force_new_message=True,
+    )
+
+
+@router.message(OffersDigestState.waiting_text)
+async def msg_offers_digest_text(message: Message, state: FSMContext) -> None:
+    if not await _require_admin_message(message):
+        return
+    text = (message.text or "").strip()
+    await try_delete_user_message(message)
+    if not text:
+        await _render_main_menu(message.bot, message.chat.id, note="❌ Порожній текст. Спробуйте ще раз.")
+        await state.clear()
+        return
+
+    await state.update_data(offers_digest_text=text)
+    await state.set_state(OffersDigestState.confirm)
+
+    preview = escape(text)
+    ui_text = (
+        "📬 <b>Підтвердіть дайджест акцій</b>\n\n"
+        "Ось як виглядатиме повідомлення:\n\n"
+        f"<code>{preview}</code>\n\n"
+        "Отримають лише opt-in мешканці, які не отримували дайджест\n"
+        f"за останні <b>{int(CFG.offers_digest_min_interval_hours)}</b> год.\n\n"
+        "Натисніть «Запустити» щоб поставити задачу в чергу."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Запустити", callback_data="admin_offers_digest_confirm")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel")],
+        ]
+    )
+    await render(message.bot, chat_id=message.chat.id, text=ui_text, reply_markup=kb, force_new_message=True)
+
+
+@router.callback_query(F.data == "admin_offers_digest_confirm")
+async def cb_offers_digest_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_admin_callback(callback):
+        return
+    data = await state.get_data()
+    text = str(data.get("offers_digest_text", "")).strip()
+    await state.clear()
+    if not text:
+        await callback.answer("❌ Немає тексту", show_alert=True)
+        await _render_main_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id)
+        return
+
+    await callback.answer("⏳ Додаю в чергу…")
+    job_id = await create_admin_job(
+        "offers_digest",
+        {
+            "text": text,
+            "prefix": "📬 ",
+            "min_interval_hours": int(CFG.offers_digest_min_interval_hours),
+        },
+        created_by=int(callback.from_user.id),
+    )
+    note = f"✅ Дайджест акцій поставлено в чергу.\nJob: <code>#{job_id}</code>"
     await _render_main_menu(callback.bot, callback.message.chat.id, prefer_message_id=callback.message.message_id, note=note)
 
 
