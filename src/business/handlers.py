@@ -111,6 +111,7 @@ CB_PAYMENT_RESULT_PREFIX = "bpayr:"
 CB_CONTACT_PICK_PREFIX = "bec:"
 CB_CONTACT_CLEAR_PREFIX = "bec_clear:"
 CB_QR_OPEN_PREFIX = "bqr:"
+CB_QR_KIT_OPEN_PREFIX = "bqrkit:"
 CB_FREE_EDIT_REQUEST_PREFIX = "bfr:"
 CB_FREE_EDIT_REQUEST_CANCEL_PREFIX = "bfrc:"
 
@@ -185,6 +186,29 @@ def _resident_place_qr_url(place_id: int) -> str | None:
     if not deeplink:
         return None
     return f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&data={quote_plus(deeplink)}"
+
+
+def _resident_place_qr_kit_png_url(
+    place_id: int,
+    *,
+    caption: str,
+    size: int = 1200,
+) -> str | None:
+    deeplink = _resident_place_deeplink(place_id)
+    if not deeplink:
+        return None
+    safe_size = max(300, min(int(size), 2000))
+    safe_caption = str(caption or "").strip()
+    return (
+        "https://quickchart.io/qr"
+        f"?text={quote_plus(deeplink)}"
+        f"&size={safe_size}"
+        f"&caption={quote_plus(safe_caption)}"
+        "&dark=111827"
+        "&light=ffffff"
+        "&ecLevel=M"
+        "&margin=1"
+    )
 
 
 class AddBusinessStates(StatesGroup):
@@ -1213,6 +1237,22 @@ async def render_place_card_updated(message: Message, *, place_id: int, note_tex
             else ikb(text=qr_text, callback_data=f"{CB_QR_OPEN_PREFIX}{place_id}", style=STYLE_PRIMARY)
         )
         keyboard_rows.append([qr_btn])
+        can_partner_qr_kit = _has_active_partner_subscription(item)
+        qr_kit_text = "🪧 QR-комплект" if can_partner_qr_kit else f"🔒 QR-комплект ({PLAN_TITLES['partner']})"
+        qr_kit_btn = (
+            InlineKeyboardButton(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}")
+            if can_partner_qr_kit
+            else ikb(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}", style=STYLE_SUCCESS)
+        )
+        keyboard_rows.append([qr_kit_btn])
+        can_partner_qr_kit = _has_active_partner_subscription(item)
+        qr_kit_text = "🪧 QR-комплект" if can_partner_qr_kit else f"🔒 QR-комплект ({PLAN_TITLES['partner']})"
+        qr_kit_btn = (
+            InlineKeyboardButton(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}")
+            if can_partner_qr_kit
+            else ikb(text=qr_kit_text, callback_data=f"{CB_QR_KIT_OPEN_PREFIX}{place_id}", style=STYLE_SUCCESS)
+        )
+        keyboard_rows.append([qr_kit_btn])
     keyboard_rows.append([InlineKeyboardButton(text="« Мої бізнеси", callback_data=CB_MENU_MINE)])
     keyboard_rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     card_text = await build_business_card_text(item)
@@ -2365,6 +2405,94 @@ async def cb_open_place_qr(callback: CallbackQuery) -> None:
                 [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
             ]
         ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_QR_KIT_OPEN_PREFIX))
+async def cb_open_place_qr_kit(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    payload = callback.data.split(":", 1)
+    if len(payload) != 2:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(payload[1])
+    except Exception:
+        await callback.answer("Некоректний заклад", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    rows = await cabinet_service.list_user_businesses(user_id)
+    item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+    if not item or item.get("ownership_status") != "approved":
+        await callback.answer("Доступ лише для підтвердженого власника закладу.", show_alert=True)
+        return
+    if not _has_active_partner_subscription(item):
+        await callback.answer(
+            f"🔒 QR-комплект доступний з активним тарифом {PLAN_TITLES['partner']}.",
+            show_alert=True,
+        )
+        await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+        try:
+            await _render_place_plan_menu(
+                callback.message,
+                tg_user_id=user_id,
+                place_id=place_id,
+                source="card",
+                prefer_message_id=callback.message.message_id,
+                notice=f"🔒 QR-комплект доступний з активним тарифом {PLAN_TITLES['partner']}.",
+            )
+        except Exception:
+            pass
+        return
+
+    deep_link = _resident_place_deeplink(place_id)
+    place_name = html.escape(str(item.get("place_name") or "вашого закладу"))
+    if not deep_link:
+        await callback.answer("Не налаштовано BOT_USERNAME для resident-бота.", show_alert=True)
+        return
+
+    entrance_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name} • ВХІД")
+    cashier_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name} • КАСА")
+    table_png = _resident_place_qr_kit_png_url(place_id, caption=f"{place_name} • СТОЛИК")
+
+    text = (
+        f"🪧 <b>QR-комплект</b>\n\n"
+        f"Заклад: <b>{place_name}</b>\n\n"
+        "Використай готові PNG-макети для друку (A4) або покажи QR на екрані.\n"
+        "Рекомендація: розмісти 2-3 точки (вхід, каса, столики), щоб збільшити охоплення.\n\n"
+        "Інструкція:\n"
+        "1) Відкрий один з PNG нижче.\n"
+        "2) Надрукуй у форматі A4.\n"
+        "3) Розмісти в потрібній зоні.\n\n"
+        f"Deep-link:\n<code>{html.escape(deep_link)}</code>"
+    )
+
+    rows_kb: list[list[InlineKeyboardButton]] = []
+    if entrance_png:
+        rows_kb.append([InlineKeyboardButton(text="🖼 PNG • Вхід", url=entrance_png)])
+    if cashier_png:
+        rows_kb.append([InlineKeyboardButton(text="🖼 PNG • Каса", url=cashier_png)])
+    if table_png:
+        rows_kb.append([InlineKeyboardButton(text="🖼 PNG • Столик", url=table_png)])
+    rows_kb.extend(
+        [
+            [InlineKeyboardButton(text="🔗 Відкрити deep-link", url=deep_link)],
+            [InlineKeyboardButton(text="« До закладу", callback_data=f"{CB_MY_OPEN_PREFIX}{place_id}")],
+            [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+        ]
+    )
+
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_kb),
     )
     await callback.answer()
 
