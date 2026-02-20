@@ -256,6 +256,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_s
 echo "Running business plan-keyboard cancel contract smoke test..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_plan_keyboard_cancel_contract.py"
 
+# Automated smoke: runtime style contract for plan buttons (light/pro/partner/cancel).
+echo "Running business plan-button runtime style smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_plan_button_styles_runtime.py"
+
 # Automated smoke: downgrade paid->free must purge likes gained during paid windows.
 echo "Running business paid-like purge smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_paid_likes_purge.py"
