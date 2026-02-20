@@ -400,6 +400,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_ui_copy_sanitized.py"
 echo "Running business owner tier-gating policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_owner_tier_gating_policy.py"
 
+# Automated smoke: owner place-card actions must come from one shared builder.
+echo "Running business owner card actions policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_owner_card_actions_policy.py"
+
 # Automated smoke: runtime styles for locked/unlocked owner edit keyboard fields.
 echo "Running business edit-keyboard runtime style smoke test..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_edit_keyboard_styles_runtime.py"
