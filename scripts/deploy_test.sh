@@ -528,6 +528,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_catalog_button_styles_policy.py"
 echo "Running business verified badge policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_verified_badge_policy.py"
 
+# Automated smoke: runtime verified tier display labels in resident place-card.
+echo "Running business verified tier-label runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_verified_tier_label_runtime.py"
+
 # Automated smoke: businessbot single-message rendering policy.
 echo "Running business single-message policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_single_message_policy.py"
