@@ -818,6 +818,9 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_places_business_enabled_verified ON places (business_enabled, is_verified)"
         )
         await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_places_service_published ON places (service_id, is_published)"
+        )
+        await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_places_verified_tier ON places (verified_tier)"
         )
         await db.execute(
