@@ -16,6 +16,8 @@ from database import (
     update_admin_job_progress,
     db_set,
     list_subscribers,
+    get_subscribers_for_offers_digest,
+    mark_offers_digest_sent,
     get_all_active_sensors,
     get_building_section_power_state,
     default_section_for_building,
@@ -27,6 +29,7 @@ from services import broadcast_messages
 logger = logging.getLogger(__name__)
 
 JOB_KIND_BROADCAST = "broadcast"
+JOB_KIND_OFFERS_DIGEST = "offers_digest"
 JOB_KIND_LIGHT_NOTIFY = "light_notify"
 JOB_KIND_ADMIN_OWNER_REQUEST_ALERT = "admin_owner_request_alert"
 JOB_KIND_ADMIN_PLACE_REPORT_ALERT = "admin_place_report_alert"
@@ -92,6 +95,65 @@ async def _handle_broadcast(bot: Bot, job: dict) -> tuple[int, int]:
     await broadcast_messages(subscribers, send_one)
 
     # Best-effort progress: we count only successful sends; total is recipients list size.
+    await update_admin_job_progress(job_id, current=sent_ok, total=total)
+    return sent_ok, total
+
+
+async def _handle_offers_digest(bot: Bot, job: dict) -> tuple[int, int]:
+    payload = job.get("payload") or {}
+    raw_text = payload.get("text")
+    if raw_text is None:
+        raise ValueError("offers_digest job requires payload.text")
+
+    text = str(raw_text).strip()
+    if not text:
+        raise ValueError("offers_digest job payload.text is empty")
+
+    prefix = str(payload.get("prefix", "📬 ")).strip()
+    msg_text = f"{prefix}{text}" if prefix else text
+    raw_interval = payload.get("min_interval_hours")
+    try:
+        min_interval_hours = int(raw_interval) if raw_interval is not None else int(CFG.offers_digest_min_interval_hours)
+    except Exception:
+        min_interval_hours = int(CFG.offers_digest_min_interval_hours)
+    min_interval_hours = max(1, min_interval_hours)
+
+    recipients = await get_subscribers_for_offers_digest(
+        current_hour=datetime.now().hour,
+        min_interval_hours=min_interval_hours,
+    )
+    total = len(recipients)
+
+    job_id = int(job["id"])
+    await update_admin_job_progress(job_id, current=0, total=total)
+    if total == 0:
+        return 0, 0
+
+    sent_ok = 0
+    sent_chat_ids: list[int] = []
+    sent_lock = asyncio.Lock()
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")]]
+    )
+
+    async def send_one(chat_id: int) -> None:
+        nonlocal sent_ok
+        await Bot.send_message(
+            bot,
+            chat_id=chat_id,
+            text=msg_text,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+            parse_mode=None,
+        )
+        async with sent_lock:
+            sent_ok += 1
+            sent_chat_ids.append(int(chat_id))
+
+    await broadcast_messages(recipients, send_one)
+    if sent_chat_ids:
+        await mark_offers_digest_sent(sent_chat_ids)
     await update_admin_job_progress(job_id, current=sent_ok, total=total)
     return sent_ok, total
 
@@ -395,6 +457,8 @@ async def admin_jobs_worker_loop(bot: Bot, *, poll_interval_sec: float = 1.0) ->
                     done_current, done_total = 1, 1
                 elif kind == JOB_KIND_BROADCAST:
                     done_current, done_total = await _handle_broadcast(bot, job)
+                elif kind == JOB_KIND_OFFERS_DIGEST:
+                    done_current, done_total = await _handle_offers_digest(bot, job)
                 elif kind == JOB_KIND_ADMIN_OWNER_REQUEST_ALERT:
                     done_current, done_total = await _handle_admin_owner_request_alert(job)
                 elif kind == JOB_KIND_ADMIN_PLACE_REPORT_ALERT:

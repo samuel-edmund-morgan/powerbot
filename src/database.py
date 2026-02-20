@@ -916,6 +916,11 @@ def offers_digest_enabled_key(chat_id: int) -> str:
     return f"offers_digest_enabled:{int(chat_id)}"
 
 
+def offers_digest_last_sent_at_key(chat_id: int) -> str:
+    """KV key for resident digest rate-limit timestamp (ISO datetime)."""
+    return f"offers_digest_last_sent_at:{int(chat_id)}"
+
+
 async def get_offers_digest_enabled(chat_id: int) -> bool:
     """Return whether weekly partner offers digest is enabled for a resident."""
     raw = str((await db_get(offers_digest_enabled_key(chat_id))) or "").strip().lower()
@@ -1469,6 +1474,24 @@ async def get_quiet_hours(chat_id: int) -> tuple[int | None, int | None]:
             return None, None
 
 
+def _is_in_quiet_hours(current_hour: int, quiet_start: int | None, quiet_end: int | None) -> bool:
+    """Return True when current hour is inside user's quiet hours."""
+    if quiet_start is None or quiet_end is None:
+        return False
+    if quiet_start <= quiet_end:
+        return quiet_start <= current_hour < quiet_end
+    return current_hour >= quiet_start or current_hour < quiet_end
+
+
+def _parse_iso_datetime(raw_value: str | None) -> datetime | None:
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw_value))
+    except Exception:
+        return None
+
+
 async def get_subscribers_for_notification(current_hour: int) -> list[int]:
     """
     Отримати список підписників, яким можна надсилати сповіщення зараз.
@@ -1482,18 +1505,8 @@ async def get_subscribers_for_notification(current_hour: int) -> list[int]:
     
     result = []
     for chat_id, quiet_start, quiet_end in rows:
-        if quiet_start is None or quiet_end is None:
-            # Тихі години не налаштовані
+        if not _is_in_quiet_hours(current_hour, quiet_start, quiet_end):
             result.append(chat_id)
-        elif quiet_start <= quiet_end:
-            # Звичайний діапазон (напр. 23:00 - 07:00 НЕ працює тут)
-            # Це для діапазону типу 09:00 - 18:00
-            if not (quiet_start <= current_hour < quiet_end):
-                result.append(chat_id)
-        else:
-            # Нічний діапазон (напр. 23:00 - 07:00)
-            if not (current_hour >= quiet_start or current_hour < quiet_end):
-                result.append(chat_id)
     
     return result
 
@@ -1634,14 +1647,8 @@ async def get_subscribers_for_light_notification(
     
     result = []
     for chat_id, quiet_start, quiet_end, _ in rows:
-        if quiet_start is None or quiet_end is None:
+        if not _is_in_quiet_hours(current_hour, quiet_start, quiet_end):
             result.append(chat_id)
-        elif quiet_start <= quiet_end:
-            if not (quiet_start <= current_hour < quiet_end):
-                result.append(chat_id)
-        else:
-            if not (current_hour >= quiet_start or current_hour < quiet_end):
-                result.append(chat_id)
     
     return result
 
@@ -1682,14 +1689,8 @@ async def get_subscribers_for_schedule_notification(
 
     result = []
     for chat_id, quiet_start, quiet_end, _ in rows:
-        if quiet_start is None or quiet_end is None:
+        if not _is_in_quiet_hours(current_hour, quiet_start, quiet_end):
             result.append(chat_id)
-        elif quiet_start <= quiet_end:
-            if not (quiet_start <= current_hour < quiet_end):
-                result.append(chat_id)
-        else:
-            if not (current_hour >= quiet_start or current_hour < quiet_end):
-                result.append(chat_id)
 
     return result
 
@@ -1708,16 +1709,95 @@ async def get_subscribers_for_alert_notification(current_hour: int) -> list[int]
     
     result = []
     for chat_id, quiet_start, quiet_end, _ in rows:
-        if quiet_start is None or quiet_end is None:
+        if not _is_in_quiet_hours(current_hour, quiet_start, quiet_end):
             result.append(chat_id)
-        elif quiet_start <= quiet_end:
-            if not (quiet_start <= current_hour < quiet_end):
-                result.append(chat_id)
-        else:
-            if not (current_hour >= quiet_start or current_hour < quiet_end):
-                result.append(chat_id)
     
     return result
+
+
+async def get_subscribers_for_offers_digest(
+    current_hour: int,
+    *,
+    min_interval_hours: int = 7 * 24,
+) -> list[int]:
+    """Get subscribers eligible for partner offers digest.
+
+    Eligibility rules:
+    - resident opted-in (`offers_digest_enabled=1/true/on/yes`);
+    - outside quiet hours;
+    - last digest sent earlier than `min_interval_hours`.
+    """
+    interval_hours = max(1, int(min_interval_hours))
+    cutoff = datetime.now() - timedelta(hours=interval_hours)
+
+    async with open_db() as db:
+        async with db.execute(
+            """
+            SELECT s.chat_id,
+                   s.quiet_start,
+                   s.quiet_end,
+                   opt.v AS opt_in_value,
+                   sent.v AS last_sent_at
+              FROM subscribers s
+         LEFT JOIN kv opt
+                ON opt.k = ('offers_digest_enabled:' || s.chat_id)
+         LEFT JOIN kv sent
+                ON sent.k = ('offers_digest_last_sent_at:' || s.chat_id)
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+
+    enabled_values = {"1", "true", "on", "yes"}
+    result: list[int] = []
+    for chat_id, quiet_start, quiet_end, opt_in_value, last_sent_at in rows:
+        opt_norm = str(opt_in_value or "").strip().lower()
+        if opt_norm not in enabled_values:
+            continue
+        if _is_in_quiet_hours(current_hour, quiet_start, quiet_end):
+            continue
+        last_sent = _parse_iso_datetime(str(last_sent_at or "").strip() or None)
+        if last_sent is not None and last_sent > cutoff:
+            continue
+        result.append(int(chat_id))
+
+    return result
+
+
+async def mark_offers_digest_sent(
+    chat_ids: list[int],
+    *,
+    sent_at: datetime | None = None,
+) -> int:
+    """Persist digest last-sent timestamp for successful recipients."""
+    if not chat_ids:
+        return 0
+
+    unique_set: set[int] = set()
+    for cid in chat_ids:
+        try:
+            value = int(cid)
+        except Exception:
+            continue
+        if value > 0:
+            unique_set.add(value)
+    unique_ids = sorted(unique_set)
+    if not unique_ids:
+        return 0
+
+    timestamp = (sent_at or datetime.now()).isoformat()
+
+    async def _op() -> int:
+        async with open_db() as db:
+            for chat_id in unique_ids:
+                await db.execute(
+                    "INSERT INTO kv(k,v) VALUES(?,?) "
+                    "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                    (offers_digest_last_sent_at_key(chat_id), timestamp),
+                )
+            await db.commit()
+        return len(unique_ids)
+
+    return await _with_sqlite_retry(_op)
 
 
 # ============ Історія подій ============
