@@ -590,6 +590,8 @@ def build_edit_fields_keyboard(
     photo_1_text = "📸 Фото 1" if has_partner_access else "🔒 Фото 1 (Partner)"
     photo_2_text = "📸 Фото 2" if has_partner_access else "🔒 Фото 2 (Partner)"
     photo_3_text = "📸 Фото 3" if has_partner_access else "🔒 Фото 3 (Partner)"
+    premium_style = None if has_premium_access else STYLE_PRIMARY
+    partner_style = None if has_partner_access else STYLE_SUCCESS
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -635,49 +637,58 @@ def build_edit_fields_keyboard(
                 ),
             ],
             [
-                InlineKeyboardButton(
+                ikb(
                     text=menu_text,
                     callback_data=f"bef:{place_id}:menu_url",
+                    style=premium_style,
                 ),
-                InlineKeyboardButton(
+                ikb(
                     text=order_text,
                     callback_data=f"bef:{place_id}:order_url",
+                    style=premium_style,
                 ),
             ],
             [
-                InlineKeyboardButton(
+                ikb(
                     text=offer_1_text,
                     callback_data=f"bef:{place_id}:offer_1_text",
+                    style=premium_style,
                 ),
-                InlineKeyboardButton(
+                ikb(
                     text=offer_2_text,
                     callback_data=f"bef:{place_id}:offer_2_text",
+                    style=premium_style,
                 ),
             ],
             [
-                InlineKeyboardButton(
+                ikb(
                     text=offer_1_image,
                     callback_data=f"bef:{place_id}:offer_1_image_url",
+                    style=premium_style,
                 ),
-                InlineKeyboardButton(
+                ikb(
                     text=offer_2_image,
                     callback_data=f"bef:{place_id}:offer_2_image_url",
+                    style=premium_style,
                 ),
             ],
             [
-                InlineKeyboardButton(
+                ikb(
                     text=photo_1_text,
                     callback_data=f"bef:{place_id}:photo_1_url",
+                    style=partner_style,
                 ),
-                InlineKeyboardButton(
+                ikb(
                     text=photo_2_text,
                     callback_data=f"bef:{place_id}:photo_2_url",
+                    style=partner_style,
                 ),
             ],
             [
-                InlineKeyboardButton(
+                ikb(
                     text=photo_3_text,
                     callback_data=f"bef:{place_id}:photo_3_url",
+                    style=partner_style,
                 ),
             ],
             [
