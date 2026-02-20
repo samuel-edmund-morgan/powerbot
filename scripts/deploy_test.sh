@@ -480,6 +480,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_partner_gallery_policy.py"
 echo "Running business media file_id runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_media_file_id_runtime.py"
 
+# Automated smoke: owner handler-flow for media photo input in waiting_value state.
+echo "Running business media photo-input handler flow smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_media_photo_input_handler_flow.py"
+
 # Automated smoke: Partner branded resident card runtime (badge + description + offers + photo CTAs).
 echo "Running business partner branded-card runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_partner_branded_card_runtime.py"
