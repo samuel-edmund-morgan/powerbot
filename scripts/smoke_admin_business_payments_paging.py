@@ -6,6 +6,7 @@ What it validates:
 - `list_payment_events_admin()` returns stable paged slices with correct total.
 - pages do not overlap and cover all rows when iterated.
 - owner/contact fields are present (for admin communication needs).
+- owner contact fields are hydrated from `subscribers` (`owner_username`, `owner_first_name`).
 - export-like loop (page_size=100) collects full dataset.
 
 Run:
@@ -74,6 +75,14 @@ def _setup_temp_db(db_path: Path) -> None:
             place_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             place_ids.append(place_id)
             tg_user_id = 30000 + idx
+            conn.execute(
+                """
+                INSERT INTO subscribers(
+                    chat_id, username, first_name, subscribed_at
+                ) VALUES(?, ?, ?, ?)
+                """,
+                (tg_user_id, f"payowner{idx}", f"PayOwner{idx}", created_at),
+            )
             conn.execute(
                 """
                 INSERT INTO business_owners(
@@ -160,8 +169,24 @@ async def _run_checks() -> None:
     for row in page0_rows + page1_rows:
         _assert("owner_tg_user_id" in row, f"owner_tg_user_id missing in row: {row}")
         _assert("owner_status" in row, f"owner_status missing in row: {row}")
+        _assert("owner_username" in row, f"owner_username missing in row: {row}")
+        _assert("owner_first_name" in row, f"owner_first_name missing in row: {row}")
         _assert("place_name" in row, f"place_name missing in row: {row}")
         _assert("external_payment_id" in row, f"external_payment_id missing in row: {row}")
+        owner_tg_user_id = int(row.get("owner_tg_user_id") or 0)
+        _assert(owner_tg_user_id > 0, f"owner_tg_user_id must be positive: {row}")
+        owner_idx = owner_tg_user_id - 30000
+        _assert(owner_idx > 0, f"unexpected owner_tg_user_id: {owner_tg_user_id}")
+        expected_username = f"payowner{owner_idx}"
+        expected_first_name = f"PayOwner{owner_idx}"
+        _assert(
+            str(row.get("owner_username") or "") == expected_username,
+            f"owner_username mismatch: expected={expected_username} row={row}",
+        )
+        _assert(
+            str(row.get("owner_first_name") or "") == expected_first_name,
+            f"owner_first_name mismatch: expected={expected_first_name} row={row}",
+        )
 
     all_rows: list[dict] = []
     offset = 0
