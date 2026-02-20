@@ -107,7 +107,7 @@ def _setup_temp_db(db_path: Path) -> int:
                 (
                     place_id,
                     tg_user_id,
-                    "approved" if idx % 5 else "pending",
+                    "pending" if idx == 1 else ("approved" if idx % 5 else "pending"),
                     created_at,
                     created_at,
                     1,
