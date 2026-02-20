@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Static smoke-check: WebApp sponsored-offers toggle contract.
+Static smoke-check: WebApp partner-offers toggles contract.
 
 Policy:
 - WebApp notifications view must include toggle `sponsoredToggle`.
+- WebApp notifications view must include toggle `offersDigestToggle`.
 - Frontend state/render/save flow must read/write `sponsored_offers_enabled`.
+- Frontend state/render/save flow must read/write `offers_digest_enabled`.
 - Backend notifications API must accept and persist `sponsored_offers_enabled`.
+- Backend notifications API must accept and persist `offers_digest_enabled`.
 - Shared notification settings must include `sponsored_offers_enabled`.
+- Shared notification settings must include `offers_digest_enabled`.
 """
 
 from __future__ import annotations
@@ -35,11 +39,19 @@ def main() -> None:
     webapp_state = _read(root / "webapp" / "state.js")
     webapp_ui = _read(root / "webapp" / "ui.js")
     webapp_app = _read(root / "webapp" / "app.js")
+    handlers = _read(root / "src" / "handlers.py")
 
     _must(webapp_index, 'id="sponsoredToggle"', errors=errors, where="webapp/index.html")
+    _must(webapp_index, 'id="offersDigestToggle"', errors=errors, where="webapp/index.html")
     _must(
         webapp_state,
         'sponsoredToggle: document.getElementById("sponsoredToggle")',
+        errors=errors,
+        where="webapp/state.js",
+    )
+    _must(
+        webapp_state,
+        'offersDigestToggle: document.getElementById("offersDigestToggle")',
         errors=errors,
         where="webapp/state.js",
     )
@@ -50,8 +62,20 @@ def main() -> None:
         where="webapp/ui.js",
     )
     _must(
+        webapp_ui,
+        "elements.offersDigestToggle.checked = settings.offers_digest_enabled === true",
+        errors=errors,
+        where="webapp/ui.js",
+    )
+    _must(
         webapp_app,
         "sponsored_offers_enabled: elements.sponsoredToggle?.checked ?? true",
+        errors=errors,
+        where="webapp/app.js",
+    )
+    _must(
+        webapp_app,
+        "offers_digest_enabled: elements.offersDigestToggle?.checked ?? false",
         errors=errors,
         where="webapp/app.js",
     )
@@ -69,19 +93,40 @@ def main() -> None:
         errors=errors,
         where="src/api_server.py",
     )
+    _must(api_server, "set_offers_digest_enabled", errors=errors, where="src/api_server.py")
+    _must(
+        api_server,
+        'if "offers_digest_enabled" in data:',
+        errors=errors,
+        where="src/api_server.py",
+    )
+    _must(
+        api_server,
+        'await set_offers_digest_enabled(user_id, bool(data["offers_digest_enabled"]))',
+        errors=errors,
+        where="src/api_server.py",
+    )
 
     _must(database, "def sponsored_offers_enabled_key(chat_id: int) -> str:", errors=errors, where="src/database.py")
     _must(database, "async def get_sponsored_offers_enabled(chat_id: int) -> bool:", errors=errors, where="src/database.py")
     _must(database, "async def set_sponsored_offers_enabled(chat_id: int, enabled: bool) -> None:", errors=errors, where="src/database.py")
+    _must(database, "def offers_digest_enabled_key(chat_id: int) -> str:", errors=errors, where="src/database.py")
+    _must(database, "async def get_offers_digest_enabled(chat_id: int) -> bool:", errors=errors, where="src/database.py")
+    _must(database, "async def set_offers_digest_enabled(chat_id: int, enabled: bool) -> None:", errors=errors, where="src/database.py")
     _must(database, '"sponsored_offers_enabled": sponsored_enabled,', errors=errors, where="src/database.py")
+    _must(database, '"offers_digest_enabled": offers_digest_enabled,', errors=errors, where="src/database.py")
+
+    _must(handlers, "notif_toggle_offers_digest", errors=errors, where="src/handlers.py")
+    _must(handlers, "📬 Акції тижня:", errors=errors, where="src/handlers.py")
+    _must(handlers, "cb_toggle_offers_digest", errors=errors, where="src/handlers.py")
 
     if errors:
         raise SystemExit(
-            "ERROR: business webapp sponsored-toggle policy violation(s):\n- "
+            "ERROR: business webapp partner-offers toggles policy violation(s):\n- "
             + "\n- ".join(errors)
         )
 
-    print("OK: business webapp sponsored-toggle policy smoke passed.")
+    print("OK: business webapp partner-offers toggles policy smoke passed.")
 
 
 if __name__ == "__main__":

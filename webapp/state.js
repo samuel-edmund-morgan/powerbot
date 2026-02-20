@@ -48,6 +48,7 @@
     alertToggle: document.getElementById("alertToggle"),
     scheduleToggle: document.getElementById("scheduleToggle"),
     sponsoredToggle: document.getElementById("sponsoredToggle"),
+    offersDigestToggle: document.getElementById("offersDigestToggle"),
     quietSelect: document.getElementById("quietSelect"),
     saveSettings: document.getElementById("saveSettings"),
     toast: document.getElementById("toast"),

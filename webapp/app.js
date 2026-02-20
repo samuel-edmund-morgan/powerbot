@@ -146,6 +146,7 @@
       alert_notifications: elements.alertToggle.checked,
       schedule_notifications: elements.scheduleToggle?.checked ?? false,
       sponsored_offers_enabled: elements.sponsoredToggle?.checked ?? true,
+      offers_digest_enabled: elements.offersDigestToggle?.checked ?? false,
       quiet_start,
       quiet_end,
     };

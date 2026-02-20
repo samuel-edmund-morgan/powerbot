@@ -23,6 +23,7 @@ from database import (
     get_notification_settings, set_light_notifications, set_alert_notifications,
     set_schedule_notifications, get_sponsored_offers_enabled,
     set_sponsored_offers_enabled, sponsored_offers_enabled_key,
+    get_offers_digest_enabled, set_offers_digest_enabled,
     get_last_event, get_subscriber_building, get_building_by_id, save_last_bot_message
 )
 from services import state_text, calculate_stats, format_duration, format_light_status
@@ -336,6 +337,14 @@ async def _set_sponsored_offers_enabled(chat_id: int, enabled: bool) -> None:
     await set_sponsored_offers_enabled(chat_id, enabled)
 
 
+async def _is_offers_digest_enabled(chat_id: int) -> bool:
+    return await get_offers_digest_enabled(chat_id)
+
+
+async def _set_offers_digest_enabled(chat_id: int, enabled: bool) -> None:
+    await set_offers_digest_enabled(chat_id, enabled)
+
+
 async def _pick_sponsored_partner_place() -> dict[str, Any] | None:
     """Choose partner place for sponsored row with deterministic rotation."""
     from business import is_business_feature_enabled
@@ -448,11 +457,13 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     """Клавіатура для меню сповіщень з поточними налаштуваннями."""
     settings = await get_notification_settings(chat_id)
     sponsored_enabled = await _is_sponsored_offers_enabled(chat_id)
+    offers_digest_enabled = await _is_offers_digest_enabled(chat_id)
     
     light_status = "✅" if settings["light_notifications"] else "❌"
     alert_status = "✅" if settings["alert_notifications"] else "❌"
     schedule_status = "✅" if settings["schedule_notifications"] else "❌"
     sponsored_status = "✅" if sponsored_enabled else "❌"
+    digest_status = "✅" if offers_digest_enabled else "❌"
     
     # Формуємо текст для тихих годин
     if settings["quiet_start"] is not None and settings["quiet_end"] is not None:
@@ -483,6 +494,12 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"⭐ Пропозиції партнерів: {sponsored_status}",
                 callback_data="notif_toggle_sponsored"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"📬 Акції тижня: {digest_status}",
+                callback_data="notif_toggle_offers_digest"
             ),
         ],
         [
@@ -1359,6 +1376,19 @@ async def cb_toggle_sponsored_offers(callback: CallbackQuery):
     status = "увімкнено ✅" if new_value else "вимкнено ❌"
     await safe_callback_answer(callback, f"⭐ Спонсоровані пропозиції {status}")
 
+    await cb_notifications_menu(callback)
+
+
+@router.callback_query(F.data == "notif_toggle_offers_digest")
+async def cb_toggle_offers_digest(callback: CallbackQuery):
+    """Переключити підписку на щотижневий дайджест акцій партнерів."""
+    chat_id = callback.message.chat.id
+    enabled = await _is_offers_digest_enabled(chat_id)
+    new_value = not enabled
+    await _set_offers_digest_enabled(chat_id, new_value)
+
+    status = "увімкнено ✅" if new_value else "вимкнено ❌"
+    await safe_callback_answer(callback, f"📬 Акції тижня {status}")
     await cb_notifications_menu(callback)
 
 
