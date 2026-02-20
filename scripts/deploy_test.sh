@@ -344,6 +344,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_reports_priority_policy.py"
 echo "Running business free edit-request policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_free_edit_request_policy.py"
 
+# Automated smoke: businessbot free edit-request handler flow (FSM submit -> report + admin job).
+echo "Running business free edit-request handler-flow smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_free_edit_request_handler_flow.py"
+
 # Automated smoke: admin places UI contract (publish/hide/delete/reject/edit/promo).
 echo "Running admin business places UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_admin_business_places_ui_policy.py"
