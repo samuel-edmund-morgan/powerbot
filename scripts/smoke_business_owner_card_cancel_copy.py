@@ -88,8 +88,17 @@ def main() -> None:
     }
 
     text = format_business_card(item)
-    _assert("📅 Статус підписки: 🔴 Скасована" in text, f"canceled status line missing:\n{text}")
-    _assert(f"🕒 Активно до: {expires_at}" in text, f"expires line missing for canceled subscription:\n{text}")
+    has_canceled_status = (
+        "🔁 Стан підписки: 🔴 Скасована" in text
+        or "📅 Статус підписки: 🔴 Скасована" in text
+    )
+    _assert(has_canceled_status, f"canceled status line missing:\n{text}")
+
+    has_expires_line = (
+        f"⏳ Активно до: {expires_at}" in text
+        or f"🕒 Активно до: {expires_at}" in text
+    )
+    _assert(has_expires_line, f"expires line missing for canceled subscription:\n{text}")
 
     print("OK: business owner card canceled-copy smoke passed.")
 
