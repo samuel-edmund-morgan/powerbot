@@ -40,6 +40,9 @@ def main() -> None:
     _must(text, 'text += "⭐ <b>Офіційний партнер категорії</b>\\n\\n"', errors=errors)
     _must(text, 'text += f"✅ <b>Verified{tier_text}</b>\\n\\n"', errors=errors)
     _must(text, 'tier_norm = str(place_enriched.get("verified_tier") or "").strip().lower()', errors=errors)
+    _must(text, 'tier = _resident_verified_tier_title(tier_norm)', errors=errors)
+    _must(text, 'RESIDENT_VERIFIED_TIER_TITLES = {', errors=errors)
+    _must(text, '"pro": "Premium"', errors=errors)
 
     if errors:
         raise SystemExit("ERROR: business verified badge policy violation(s):\n- " + "\n- ".join(errors))
