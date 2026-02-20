@@ -2077,10 +2077,16 @@ async def cb_places_category(callback: CallbackQuery):
         places.extend(verified_by_likes)
         places.extend(unverified_places)
 
-        # У business-режимі медалі відображають місця в рейтингу (verified-first).
-        for idx, item in enumerate(places[:3]):
+        # У business-режимі медалі відображають лише місця з реальними лайками (>0).
+        medal_idx = 0
+        for item in places:
+            if medal_idx >= len(medals):
+                break
+            if int(item.get("likes_count") or 0) <= 0:
+                continue
             try:
-                medal_map[int(item["id"])] = medals[idx]
+                medal_map[int(item["id"])] = medals[medal_idx]
+                medal_idx += 1
             except Exception:
                 continue
     else:
