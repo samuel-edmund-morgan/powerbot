@@ -296,6 +296,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_r
 echo "Running business approve->publish smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_approve_publish.py"
 
+# Automated smoke: moderation approve/reject audit side-effects contract.
+echo "Running business moderation audit contract smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_moderation_audit_contract.py"
+
 # Automated smoke: resident catalog visibility gate (publish controls exposure).
 echo "Running business visibility publish-gate smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_visibility_publish_gate.py"
