@@ -404,6 +404,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_offers_policy.py"
 echo "Running business promo-code policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_promo_code_policy.py"
 
+# Automated smoke: coupon-open contract (resident CTA + analytics counters).
+echo "Running business coupon-open contract smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_coupon_open_contract.py"
+
 # Automated smoke: shared plan matrix (titles/prices/tiers) policy.
 echo "Running business plan matrix policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_plan_matrix_policy.py"
