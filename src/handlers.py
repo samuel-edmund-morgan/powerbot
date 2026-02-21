@@ -24,6 +24,7 @@ from database import (
     set_schedule_notifications, get_sponsored_offers_enabled,
     set_sponsored_offers_enabled, sponsored_offers_enabled_key,
     get_offers_digest_enabled, set_offers_digest_enabled,
+    has_any_published_verified_business_place,
     get_last_event, get_subscriber_building, get_building_by_id, save_last_bot_message
 )
 from services import state_text, calculate_stats, format_duration, format_light_status
@@ -357,6 +358,19 @@ async def _set_offers_digest_enabled(chat_id: int, enabled: bool) -> None:
     await set_offers_digest_enabled(chat_id, enabled)
 
 
+async def _is_business_offers_ui_visible() -> bool:
+    """Monetization controls are visible only after first published verified place."""
+    from business import is_business_feature_enabled
+
+    if not is_business_feature_enabled():
+        return False
+    try:
+        return await has_any_published_verified_business_place()
+    except Exception:
+        logger.exception("Failed to evaluate business offers UI visibility")
+        return False
+
+
 async def _pick_sponsored_partner_place() -> dict[str, Any] | None:
     """Choose partner place for sponsored row with deterministic rotation."""
     from business import is_business_feature_enabled
@@ -468,8 +482,9 @@ def get_quiet_keyboard(back_callback: str = "notifications_menu") -> InlineKeybo
 async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     """Клавіатура для меню сповіщень з поточними налаштуваннями."""
     settings = await get_notification_settings(chat_id)
-    sponsored_enabled = await _is_sponsored_offers_enabled(chat_id)
-    offers_digest_enabled = await _is_offers_digest_enabled(chat_id)
+    business_offers_visible = await _is_business_offers_ui_visible()
+    sponsored_enabled = await _is_sponsored_offers_enabled(chat_id) if business_offers_visible else False
+    offers_digest_enabled = await _is_offers_digest_enabled(chat_id) if business_offers_visible else False
     
     light_status = "✅" if settings["light_notifications"] else "❌"
     alert_status = "✅" if settings["alert_notifications"] else "❌"
@@ -483,7 +498,7 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     else:
         quiet_text = "🔔 Вимкнено"
     
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
                 text=f"☀️ Світло: {light_status}",
@@ -502,28 +517,41 @@ async def get_notifications_keyboard(chat_id: int) -> InlineKeyboardMarkup:
                 callback_data="notif_toggle_schedule"
             ),
         ],
+    ]
+
+    if business_offers_visible:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"⭐ Пропозиції партнерів: {sponsored_status}",
+                    callback_data="notif_toggle_sponsored"
+                ),
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"📬 Акції тижня: {digest_status}",
+                    callback_data="notif_toggle_offers_digest"
+                ),
+            ]
+        )
+
+    rows.extend(
         [
-            InlineKeyboardButton(
-                text=f"⭐ Пропозиції партнерів: {sponsored_status}",
-                callback_data="notif_toggle_sponsored"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"📬 Акції тижня: {digest_status}",
-                callback_data="notif_toggle_offers_digest"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"⏰ Тихі години: {quiet_text}",
-                callback_data="notif_quiet_hours"
-            ),
-        ],
-        [
-            InlineKeyboardButton(text="« Меню", callback_data="menu"),
-        ],
-    ])
+            [
+                InlineKeyboardButton(
+                    text=f"⏰ Тихі години: {quiet_text}",
+                    callback_data="notif_quiet_hours"
+                ),
+            ],
+            [
+                InlineKeyboardButton(text="« Меню", callback_data="menu"),
+            ],
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_buildings_keyboard() -> InlineKeyboardMarkup:
@@ -1380,6 +1408,15 @@ async def cb_toggle_schedule_notifications(callback: CallbackQuery):
 @router.callback_query(F.data == "notif_toggle_sponsored")
 async def cb_toggle_sponsored_offers(callback: CallbackQuery):
     """Переключити показ спонсорованих пропозицій у головному меню."""
+    if not await _is_business_offers_ui_visible():
+        await safe_callback_answer(
+            callback,
+            "Опція зʼявиться після появи першого Verified закладу.",
+            show_alert=True,
+        )
+        await cb_notifications_menu(callback)
+        return
+
     chat_id = callback.message.chat.id
     enabled = await _is_sponsored_offers_enabled(chat_id)
     new_value = not enabled
@@ -1394,6 +1431,15 @@ async def cb_toggle_sponsored_offers(callback: CallbackQuery):
 @router.callback_query(F.data == "notif_toggle_offers_digest")
 async def cb_toggle_offers_digest(callback: CallbackQuery):
     """Переключити підписку на щотижневий дайджест акцій партнерів."""
+    if not await _is_business_offers_ui_visible():
+        await safe_callback_answer(
+            callback,
+            "Опція зʼявиться після появи першого Verified закладу.",
+            show_alert=True,
+        )
+        await cb_notifications_menu(callback)
+        return
+
     chat_id = callback.message.chat.id
     enabled = await _is_offers_digest_enabled(chat_id)
     new_value = not enabled
