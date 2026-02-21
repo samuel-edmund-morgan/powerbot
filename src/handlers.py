@@ -125,7 +125,24 @@ class CallbackAutoAnswerMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         if isinstance(event, CallbackQuery):
-            asyncio.create_task(_auto_answer_callback(event))
+            callback_data = str(event.data or "")
+            # Do not pre-answer callbacks that should return URL/show_alert explicitly.
+            no_auto_prefixes = (
+                "pcoupon_",
+                "pchat_",
+                "pcall_",
+                "plink_",
+                "plogo_",
+                "pmenu_",
+                "porder_",
+                "pmimg1_",
+                "pmimg2_",
+                "pph1_",
+                "pph2_",
+                "pph3_",
+            )
+            if not callback_data.startswith(no_auto_prefixes):
+                asyncio.create_task(_auto_answer_callback(event))
         return await handler(event, data)
 
 
@@ -2277,16 +2294,11 @@ async def _open_place_media_target(
             await safe_callback_answer(callback, url=target_value)
             return True
         except Exception:
-            if callback.message:
-                await callback.message.answer(
-                    f"🖼 Відкрити {fallback_label}:",
-                    reply_markup=InlineKeyboardMarkup(
-                        inline_keyboard=[[InlineKeyboardButton(text=f"🖼 {fallback_label}", url=target_value)]]
-                    ),
-                )
-                await safe_callback_answer(callback)
-                return True
-            await safe_callback_answer(callback, "Не вдалося відкрити медіа.", show_alert=True)
+            await safe_callback_answer(
+                callback,
+                f"Не вдалося відкрити «{fallback_label}». Спробуйте ще раз.",
+                show_alert=True,
+            )
             return False
 
     # Telegram file_id path.
@@ -2737,14 +2749,7 @@ async def cb_place_chat_open(callback: CallbackQuery) -> None:
     try:
         await safe_callback_answer(callback, url=chat_url)
     except Exception:
-        # Fallback in case client rejects redirect URL from callback answer.
-        await callback.message.answer(
-            "💬 Відкрити чат:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="💬 Написати", url=chat_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+        await safe_callback_answer(callback, "Не вдалося відкрити чат. Спробуйте ще раз.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("pcall_"))
@@ -2780,13 +2785,10 @@ async def cb_place_call_open(callback: CallbackQuery) -> None:
         return
 
     await record_place_click(place_id, "call")
-    await callback.message.answer(
-        "📞 Відкрити дзвінок:",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="📞 Подзвонити", url=tel_url)]]
-        ),
-    )
-    await safe_callback_answer(callback)
+    try:
+        await safe_callback_answer(callback, url=tel_url)
+    except Exception:
+        await safe_callback_answer(callback, f"📞 Телефон: {contact_value}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("plink_"))
@@ -2819,13 +2821,7 @@ async def cb_place_link_open(callback: CallbackQuery) -> None:
     try:
         await safe_callback_answer(callback, url=link_url)
     except Exception:
-        await callback.message.answer(
-            "🔗 Відкрити посилання:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🔗 Посилання", url=link_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+        await safe_callback_answer(callback, "Не вдалося відкрити посилання. Спробуйте ще раз.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("plogo_"))
@@ -2893,13 +2889,7 @@ async def cb_place_menu_open(callback: CallbackQuery) -> None:
     try:
         await safe_callback_answer(callback, url=menu_url)
     except Exception:
-        await callback.message.answer(
-            "📋 Відкрити меню/прайс:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="📋 Меню/Прайс", url=menu_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+        await safe_callback_answer(callback, "Не вдалося відкрити меню/прайс. Спробуйте ще раз.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("porder_"))
@@ -2937,13 +2927,7 @@ async def cb_place_order_open(callback: CallbackQuery) -> None:
     try:
         await safe_callback_answer(callback, url=order_url)
     except Exception:
-        await callback.message.answer(
-            "🛒 Відкрити замовлення/запис:",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🛒 Замовити/Запис", url=order_url)]]
-            ),
-        )
-        await safe_callback_answer(callback)
+        await safe_callback_answer(callback, "Не вдалося відкрити замовлення/запис. Спробуйте ще раз.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("pmimg1_"))
