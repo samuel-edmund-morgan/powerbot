@@ -365,11 +365,16 @@
     if (elements.scheduleToggle) {
       elements.scheduleToggle.checked = settings.schedule_notifications;
     }
+    const businessOffersVisible = settings.business_offers_visible === true;
     if (elements.sponsoredToggle) {
-      elements.sponsoredToggle.checked = settings.sponsored_offers_enabled !== false;
+      elements.sponsoredToggle.checked = settings.sponsored_offers_enabled === true;
+      const sponsoredRow = elements.sponsoredToggle.closest("label.toggle");
+      if (sponsoredRow) sponsoredRow.hidden = !businessOffersVisible;
     }
     if (elements.offersDigestToggle) {
       elements.offersDigestToggle.checked = settings.offers_digest_enabled === true;
+      const digestRow = elements.offersDigestToggle.closest("label.toggle");
+      if (digestRow) digestRow.hidden = !businessOffersVisible;
     }
 
     if (settings.quiet_start === null || settings.quiet_end === null) {

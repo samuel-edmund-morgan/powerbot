@@ -72,6 +72,7 @@ from database import (
     default_section_for_building,
     get_building_section_count,
     is_valid_section_for_building,
+    has_any_published_verified_business_place,
 )
 
 
@@ -108,6 +109,27 @@ def _sensor_is_online_by_heartbeat_only(sensor: dict) -> tuple[bool, int | None]
         return False, None
     age_seconds = max(0, int((datetime.now() - last_heartbeat).total_seconds()))
     return age_seconds < int(CFG.sensor_timeout), age_seconds
+
+
+async def _is_business_offers_ui_visible() -> bool:
+    """Monetization controls are visible only after first published verified place."""
+    if not is_business_feature_enabled():
+        return False
+    try:
+        return await has_any_published_verified_business_place()
+    except Exception:
+        logger.exception("Failed to evaluate business offers UI visibility in WebApp API")
+        return False
+
+
+def _sanitize_notification_settings_for_ui(settings: dict, business_offers_visible: bool) -> dict:
+    """Hide monetization toggles from UI until first verified place exists."""
+    sanitized = dict(settings or {})
+    sanitized["business_offers_visible"] = bool(business_offers_visible)
+    if not business_offers_visible:
+        sanitized["sponsored_offers_enabled"] = False
+        sanitized["offers_digest_enabled"] = False
+    return sanitized
 
 
 def _filter_places_by_query(
@@ -774,6 +796,7 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
     building_id, section_id = await get_subscriber_building_and_section(user_id)
     buildings = await get_all_buildings()
     notifications = await get_notification_settings(user_id)
+    business_offers_visible = await _is_business_offers_ui_visible()
     power = await _get_power_payload(building_id, section_id)
     schedule = await _get_schedule_payload(building_id, section_id)
     alerts_payload = await _get_alert_payload()
@@ -792,7 +815,7 @@ async def webapp_bootstrap_handler(request: web.Request) -> web.Response:
             "first_name": user.get("first_name"),
         },
         "settings": {
-            **notifications,
+            **_sanitize_notification_settings_for_ui(notifications, business_offers_visible),
             "building_id": building_id,
             "section_id": section_id,
         },
@@ -898,15 +921,16 @@ async def webapp_notifications_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": "Invalid JSON"}, status=400)
 
     user_id = int(user["id"])
+    business_offers_visible = await _is_business_offers_ui_visible()
     if "light_notifications" in data:
         await set_light_notifications(user_id, bool(data["light_notifications"]))
     if "alert_notifications" in data:
         await set_alert_notifications(user_id, bool(data["alert_notifications"]))
     if "schedule_notifications" in data:
         await set_schedule_notifications(user_id, bool(data["schedule_notifications"]))
-    if "sponsored_offers_enabled" in data:
+    if business_offers_visible and "sponsored_offers_enabled" in data:
         await set_sponsored_offers_enabled(user_id, bool(data["sponsored_offers_enabled"]))
-    if "offers_digest_enabled" in data:
+    if business_offers_visible and "offers_digest_enabled" in data:
         await set_offers_digest_enabled(user_id, bool(data["offers_digest_enabled"]))
 
     quiet_start = data.get("quiet_start")
@@ -920,7 +944,12 @@ async def webapp_notifications_handler(request: web.Request) -> web.Response:
 
     webapp_logger.info("User %s webapp: update notifications", _format_webapp_user_label(user))
     settings = await get_notification_settings(user_id)
-    return web.json_response({"status": "ok", "settings": settings})
+    return web.json_response(
+        {
+            "status": "ok",
+            "settings": _sanitize_notification_settings_for_ui(settings, business_offers_visible),
+        }
+    )
 
 
 async def webapp_vote_handler(request: web.Request) -> web.Response:

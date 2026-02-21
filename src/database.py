@@ -2936,6 +2936,23 @@ async def get_partner_places_for_sponsored() -> list[dict]:
             ]
 
 
+async def has_any_published_verified_business_place() -> bool:
+    """Return True when at least one published verified business place exists."""
+    async with open_db() as db:
+        async with db.execute(
+            """
+            SELECT 1
+              FROM places
+             WHERE is_published = 1
+               AND COALESCE(business_enabled, 0) = 1
+               AND COALESCE(is_verified, 0) = 1
+             LIMIT 1
+            """
+        ) as cur:
+            row = await cur.fetchone()
+            return row is not None
+
+
 # ============ Функції для укриттів ============
 
 async def get_all_shelter_places() -> list[dict]:

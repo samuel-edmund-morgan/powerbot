@@ -5,10 +5,10 @@ Static smoke-check: WebApp partner-offers toggles contract.
 Policy:
 - WebApp notifications view must include toggle `sponsoredToggle`.
 - WebApp notifications view must include toggle `offersDigestToggle`.
-- Frontend state/render/save flow must read/write `sponsored_offers_enabled`.
-- Frontend state/render/save flow must read/write `offers_digest_enabled`.
-- Backend notifications API must accept and persist `sponsored_offers_enabled`.
-- Backend notifications API must accept and persist `offers_digest_enabled`.
+- Frontend render must hide/show monetization toggles by `settings.business_offers_visible`.
+- Frontend save must send monetization toggles only when `business_offers_visible=true`.
+- Backend must sanitize notification settings for UI via `business_offers_visible`.
+- Backend notifications API must persist monetization toggles only when business offers are visible.
 - Shared notification settings must include `sponsored_offers_enabled`.
 - Shared notification settings must include `offers_digest_enabled`.
 """
@@ -57,7 +57,19 @@ def main() -> None:
     )
     _must(
         webapp_ui,
-        "elements.sponsoredToggle.checked = settings.sponsored_offers_enabled !== false",
+        "const businessOffersVisible = settings.business_offers_visible === true",
+        errors=errors,
+        where="webapp/ui.js",
+    )
+    _must(
+        webapp_ui,
+        "elements.sponsoredToggle.checked = settings.sponsored_offers_enabled === true",
+        errors=errors,
+        where="webapp/ui.js",
+    )
+    _must(
+        webapp_ui,
+        'elements.sponsoredToggle.closest("label.toggle")',
         errors=errors,
         where="webapp/ui.js",
     )
@@ -68,14 +80,26 @@ def main() -> None:
         where="webapp/ui.js",
     )
     _must(
+        webapp_ui,
+        'elements.offersDigestToggle.closest("label.toggle")',
+        errors=errors,
+        where="webapp/ui.js",
+    )
+    _must(
         webapp_app,
-        "sponsored_offers_enabled: elements.sponsoredToggle?.checked ?? true",
+        "state.settings?.business_offers_visible === true",
         errors=errors,
         where="webapp/app.js",
     )
     _must(
         webapp_app,
-        "offers_digest_enabled: elements.offersDigestToggle?.checked ?? false",
+        "payload.sponsored_offers_enabled = elements.sponsoredToggle?.checked ?? false",
+        errors=errors,
+        where="webapp/app.js",
+    )
+    _must(
+        webapp_app,
+        "payload.offers_digest_enabled = elements.offersDigestToggle?.checked ?? false",
         errors=errors,
         where="webapp/app.js",
     )
@@ -83,26 +107,38 @@ def main() -> None:
     _must(api_server, "set_sponsored_offers_enabled", errors=errors, where="src/api_server.py")
     _must(
         api_server,
-        'if "sponsored_offers_enabled" in data:',
+        "has_any_published_verified_business_place",
         errors=errors,
         where="src/api_server.py",
     )
     _must(
         api_server,
-        'await set_sponsored_offers_enabled(user_id, bool(data["sponsored_offers_enabled"]))',
+        "def _sanitize_notification_settings_for_ui(",
+        errors=errors,
+        where="src/api_server.py",
+    )
+    _must(
+        api_server,
+        "business_offers_visible = await _is_business_offers_ui_visible()",
+        errors=errors,
+        where="src/api_server.py",
+    )
+    _must(
+        api_server,
+        'if business_offers_visible and "sponsored_offers_enabled" in data:',
         errors=errors,
         where="src/api_server.py",
     )
     _must(api_server, "set_offers_digest_enabled", errors=errors, where="src/api_server.py")
     _must(
         api_server,
-        'if "offers_digest_enabled" in data:',
+        'if business_offers_visible and "offers_digest_enabled" in data:',
         errors=errors,
         where="src/api_server.py",
     )
     _must(
         api_server,
-        'await set_offers_digest_enabled(user_id, bool(data["offers_digest_enabled"]))',
+        "_sanitize_notification_settings_for_ui(settings, business_offers_visible)",
         errors=errors,
         where="src/api_server.py",
     )

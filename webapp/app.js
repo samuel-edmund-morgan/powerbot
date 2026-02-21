@@ -145,11 +145,13 @@
       light_notifications: elements.lightToggle.checked,
       alert_notifications: elements.alertToggle.checked,
       schedule_notifications: elements.scheduleToggle?.checked ?? false,
-      sponsored_offers_enabled: elements.sponsoredToggle?.checked ?? true,
-      offers_digest_enabled: elements.offersDigestToggle?.checked ?? false,
       quiet_start,
       quiet_end,
     };
+    if (state.settings?.business_offers_visible === true) {
+      payload.sponsored_offers_enabled = elements.sponsoredToggle?.checked ?? false;
+      payload.offers_digest_enabled = elements.offersDigestToggle?.checked ?? false;
+    }
 
     const result = await app.api("/notifications", { method: "POST", body: JSON.stringify(payload) });
     state.settings = { ...state.settings, ...result.settings };
