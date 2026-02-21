@@ -483,7 +483,7 @@ async def get_main_keyboard_for_user(chat_id: int) -> InlineKeyboardMarkup:
         if place_id <= 0:
             return InlineKeyboardMarkup(inline_keyboard=base_rows)
         place_name = _truncate_sponsored_place_name(str(place.get("name") or "Заклад"))
-        sponsored_row = [InlineKeyboardButton(text=f"⭐ Спонсоровано: {place_name}", callback_data=f"place_{place_id}")]
+        sponsored_row = [InlineKeyboardButton(text=f"⭐ Партнер: {place_name}", callback_data=f"place_{place_id}")]
         # Place sponsored row near catalog actions.
         insert_idx = 3 if len(base_rows) >= 3 else len(base_rows)
         base_rows.insert(insert_idx, sponsored_row)
@@ -2343,15 +2343,15 @@ async def _open_place_media_target(
     target_type, target_value = target
     if target_type == "url":
         try:
-            await _render_external_open_panel(
+            return await _render_external_open_panel(
                 callback,
                 place_id=place_id,
                 title=f"🖼 <b>{html.escape(fallback_label)}</b>",
                 button_text=f"🖼 Відкрити {fallback_label}",
                 url=target_value,
             )
-            return True
         except Exception:
+            logger.exception("Failed to open place media URL panel for place_id=%s", place_id)
             await safe_callback_answer(
                 callback,
                 f"Не вдалося відкрити «{fallback_label}». Спробуйте ще раз.",
@@ -2405,7 +2405,23 @@ async def _render_external_open_panel(
         await safe_callback_answer(callback)
         return True
     except Exception:
-        await safe_callback_answer(callback, "Не вдалося підготувати посилання.", show_alert=True)
+        logger.exception("Failed to render external open panel; using fallback for place_id=%s", place_id)
+        # Fallback 1: open URL directly via callback query (no extra chat message).
+        try:
+            await safe_callback_answer(callback, url=url)
+            return True
+        except Exception:
+            logger.exception("Failed direct callback URL fallback for place_id=%s", place_id)
+
+        # Fallback 2: send standalone message with URL button.
+        try:
+            await callback.message.answer(panel_text, reply_markup=panel_markup)
+            await safe_callback_answer(callback)
+            return True
+        except Exception:
+            logger.exception("Failed message fallback for external open panel, place_id=%s", place_id)
+
+        await safe_callback_answer(callback, "Не вдалося відкрити посилання.", show_alert=True)
         return False
 
 
