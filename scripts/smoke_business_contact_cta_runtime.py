@@ -3,8 +3,8 @@
 Dynamic smoke test: resident contact CTA callbacks runtime contract.
 
 Validates:
-- `pchat_` callback redirects to normalized `t.me` URL and records `chat` click.
-- `pcall_` callback redirects to normalized `tel:` URL and records `call` click.
+- `pchat_` callback opens a single-message panel with normalized `t.me` URL and records `chat` click.
+- `pcall_` callback opens a single-message panel with normalized `tel:` URL and records `call` click.
 - invalid call contact does not record click and returns validation alert.
 """
 
@@ -103,9 +103,14 @@ async def _run_checks(place_id: int) -> None:
     class _DummyMessage:
         def __init__(self) -> None:
             self.answers: list[dict] = []
+            self.edits: list[dict] = []
 
         async def answer(self, text: str, reply_markup=None):
             self.answers.append({"text": str(text), "reply_markup": reply_markup})
+            return None
+
+        async def edit_text(self, text: str, reply_markup=None):
+            self.edits.append({"text": str(text), "reply_markup": reply_markup})
             return None
 
     class _DummyCallback:
@@ -138,10 +143,19 @@ async def _run_checks(place_id: int) -> None:
         after_chat = await _get_click_sum(int(place_id), "chat")
         _assert(after_chat == before_chat + 1, f"chat click counter mismatch: before={before_chat}, after={after_chat}")
         _assert(len(msg_chat.answers) == 0, f"chat success should not use message.answer fallback: {msg_chat.answers}")
+        _assert(len(msg_chat.edits) == 1, f"chat flow must edit current message once: {msg_chat.edits}")
+        chat_edit = msg_chat.edits[0]
+        _assert("Чат закладу" in str(chat_edit.get("text") or ""), f"chat panel title mismatch: {chat_edit}")
+        chat_buttons = [btn for row in getattr(chat_edit.get("reply_markup"), "inline_keyboard", []) for btn in row]
+        _assert(bool(chat_buttons), f"chat panel must contain buttons: {chat_edit}")
+        _assert(
+            str(getattr(chat_buttons[0], "url", "") or "") == "https://t.me/smoke_chat",
+            f"chat panel URL mismatch: {chat_buttons}",
+        )
         _assert(safe_calls, "safe_callback_answer calls missing for chat path")
         _assert(
-            str(safe_calls[-1]["kwargs"].get("url") or "") == "https://t.me/smoke_chat",
-            f"chat redirect URL mismatch: {safe_calls[-1]}",
+            safe_calls[-1]["kwargs"].get("url") is None,
+            f"chat flow must acknowledge without callback URL redirect: {safe_calls[-1]}",
         )
 
         # 2) Call CTA success.
@@ -159,9 +173,18 @@ async def _run_checks(place_id: int) -> None:
         after_call = await _get_click_sum(int(place_id), "call")
         _assert(after_call == before_call + 1, f"call click counter mismatch: before={before_call}, after={after_call}")
         _assert(len(msg_call.answers) == 0, f"call success should not use message.answer fallback: {msg_call.answers}")
+        _assert(len(msg_call.edits) == 1, f"call flow must edit current message once: {msg_call.edits}")
+        call_edit = msg_call.edits[0]
+        _assert("Дзвінок у заклад" in str(call_edit.get("text") or ""), f"call panel title mismatch: {call_edit}")
+        call_buttons = [btn for row in getattr(call_edit.get("reply_markup"), "inline_keyboard", []) for btn in row]
+        _assert(bool(call_buttons), f"call panel must contain buttons: {call_edit}")
         _assert(
-            str(safe_calls[-1]["kwargs"].get("url") or "") == "tel:+380671112233",
-            f"call redirect URL mismatch: {safe_calls[-1]}",
+            str(getattr(call_buttons[0], "url", "") or "") == "tel:+380671112233",
+            f"call panel URL mismatch: {call_buttons}",
+        )
+        _assert(
+            safe_calls[-1]["kwargs"].get("url") is None,
+            f"call flow must acknowledge without callback URL redirect: {safe_calls[-1]}",
         )
 
         # 3) Invalid call contact -> alert and no additional click increment.
@@ -179,6 +202,7 @@ async def _run_checks(place_id: int) -> None:
         after_bad = await _get_click_sum(int(place_id), "call")
         _assert(after_bad == before_bad, f"invalid call contact must not increment clicks: {before_bad}->{after_bad}")
         _assert(len(msg_bad.answers) == 0, f"invalid call contact should not send tel-button message: {msg_bad.answers}")
+        _assert(len(msg_bad.edits) == 0, f"invalid call contact should not edit panel: {msg_bad.edits}")
         _assert(
             str(safe_calls[-1]["text"] or "") == "Некоректний номер телефону.",
             f"invalid call should return validation alert text: {safe_calls[-1]}",

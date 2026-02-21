@@ -3,7 +3,7 @@
 Dynamic smoke test: resident link/coupon callback runtime contract.
 
 Validates:
-- `plink_` callback redirects to normalized URL and records `link` click.
+- `plink_` callback opens a single-message panel with normalized URL and records `link` click.
 - `pcoupon_` callback shows promo alert and records `coupon_open` click.
 - negative coupon path (not verified / no promo) does not increment counters.
 """
@@ -103,9 +103,14 @@ async def _run_checks(place_id: int) -> None:
     class _DummyMessage:
         def __init__(self) -> None:
             self.answers: list[dict] = []
+            self.edits: list[dict] = []
 
         async def answer(self, text: str, reply_markup=None):
             self.answers.append({"text": str(text), "reply_markup": reply_markup})
+            return None
+
+        async def edit_text(self, text: str, reply_markup=None):
+            self.edits.append({"text": str(text), "reply_markup": reply_markup})
             return None
 
     class _DummyCallback:
@@ -133,9 +138,18 @@ async def _run_checks(place_id: int) -> None:
         after_link = await _get_click_sum(int(place_id), "link")
         _assert(after_link == before_link + 1, f"link click counter mismatch: {before_link}->{after_link}")
         _assert(len(msg_link.answers) == 0, f"link success should not use message fallback: {msg_link.answers}")
+        _assert(len(msg_link.edits) == 1, f"link flow must edit current message once: {msg_link.edits}")
+        link_edit = msg_link.edits[0]
+        _assert("Посилання закладу" in str(link_edit.get("text") or ""), f"link panel title mismatch: {link_edit}")
+        link_buttons = [btn for row in getattr(link_edit.get("reply_markup"), "inline_keyboard", []) for btn in row]
+        _assert(bool(link_buttons), f"link panel must contain buttons: {link_edit}")
         _assert(
-            str(safe_calls[-1]["kwargs"].get("url") or "") == "https://t.me/smoke_link",
-            f"link redirect mismatch: {safe_calls[-1]}",
+            str(getattr(link_buttons[0], "url", "") or "") == "https://t.me/smoke_link",
+            f"link panel URL mismatch: {link_buttons}",
+        )
+        _assert(
+            safe_calls[-1]["kwargs"].get("url") is None,
+            f"link flow must acknowledge without callback URL redirect: {safe_calls[-1]}",
         )
 
         # 2) Coupon callback success path.
@@ -146,6 +160,7 @@ async def _run_checks(place_id: int) -> None:
         after_coupon = await _get_click_sum(int(place_id), "coupon_open")
         _assert(after_coupon == before_coupon + 1, f"coupon click counter mismatch: {before_coupon}->{after_coupon}")
         _assert(len(msg_coupon.answers) == 0, f"coupon handler should not use message.answer: {msg_coupon.answers}")
+        _assert(len(msg_coupon.edits) == 0, f"coupon handler should not edit message: {msg_coupon.edits}")
         _assert(
             str(safe_calls[-1]["text"] or "") == "🎟 Промокод: SAVE10",
             f"coupon success alert text mismatch: {safe_calls[-1]}",
