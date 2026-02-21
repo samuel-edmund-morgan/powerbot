@@ -516,7 +516,7 @@ python3 "${REPO_DIR}/scripts/smoke_business_partner_priority_support_policy.py"
 echo "Running business QR access flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_qr_access_flow.py"
 
-# Automated smoke: sponsored row runtime (once/day + resident opt-in toggle).
+# Automated smoke: sponsored row runtime (daily limit + resident opt-in toggle).
 echo "Running business sponsored-row runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_sponsored_row_runtime.py"
 

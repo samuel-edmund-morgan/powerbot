@@ -3,7 +3,7 @@
 Dynamic smoke test: sponsored row in resident main menu.
 
 Validates:
-- Partner place can be shown as sponsored row in main menu (once per day per user).
+- Partner place can be shown as sponsored row in main menu (up to daily limit per user).
 - User can disable/enable sponsored offers via notifications setting.
 - Notifications keyboard reflects sponsored toggle status.
 - Partner rotation selection follows `sponsored_rotation_hours` window.
@@ -147,15 +147,19 @@ async def _run_checks() -> None:
         f"unexpected sponsored place on first render: {sponsored_first_id}",
     )
 
-    # 2) Second render same day: row should not appear again.
-    kb_second = await resident_handlers.get_main_keyboard_for_user(chat_id)
-    second_callbacks = _callbacks(kb_second)
+    # 2) Same-day render budget: sponsored row appears up to limit, then hides.
+    for idx in range(2, 6):
+        kb = await resident_handlers.get_main_keyboard_for_user(chat_id)
+        callbacks = _callbacks(kb)
+        _assert(
+            any(cb.startswith("place_") and int(cb.split("_", 1)[1]) in created_partner_ids for cb in callbacks),
+            f"sponsored row must be visible on same-day render #{idx}: {callbacks}",
+        )
+    kb_sixth = await resident_handlers.get_main_keyboard_for_user(chat_id)
+    callbacks_sixth = _callbacks(kb_sixth)
     _assert(
-        not any(
-            cb.startswith("place_") and int(cb.split("_", 1)[1]) in created_partner_ids
-            for cb in second_callbacks
-        ),
-        f"sponsored row must be throttled to once/day: {second_callbacks}",
+        not any(cb.startswith("place_") and int(cb.split("_", 1)[1]) in created_partner_ids for cb in callbacks_sixth),
+        f"sponsored row must be throttled after daily limit: {callbacks_sixth}",
     )
 
     # 3) Notifications menu should contain sponsored toggle and be ON by default.
@@ -166,7 +170,8 @@ async def _run_checks() -> None:
 
     # 4) Disable sponsored offers -> menu should hide row.
     await resident_handlers._set_sponsored_offers_enabled(chat_id, False)  # noqa: SLF001 - runtime smoke of internal contract
-    await db_set(resident_handlers._sponsored_last_seen_day_key(chat_id), "")  # noqa: SLF001 - reset throttle for deterministic check
+    await db_set(resident_handlers._sponsored_seen_counter_key(chat_id), "")  # noqa: SLF001 - reset throttle for deterministic check
+    await db_set(resident_handlers._sponsored_last_seen_day_key(chat_id), "")  # noqa: SLF001 - legacy marker reset
     kb_disabled = await resident_handlers.get_main_keyboard_for_user(chat_id)
     disabled_callbacks = _callbacks(kb_disabled)
     _assert(
@@ -183,6 +188,7 @@ async def _run_checks() -> None:
     # 5) Enable back and rewind throttle day -> row should appear again.
     await resident_handlers._set_sponsored_offers_enabled(chat_id, True)  # noqa: SLF001
     yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    await db_set(resident_handlers._sponsored_seen_counter_key(chat_id), f"{yesterday}|5")  # noqa: SLF001
     await db_set(resident_handlers._sponsored_last_seen_day_key(chat_id), yesterday)  # noqa: SLF001
     kb_enabled_again = await resident_handlers.get_main_keyboard_for_user(chat_id)
     enabled_callbacks = _callbacks(kb_enabled_again)

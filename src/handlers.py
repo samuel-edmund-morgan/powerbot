@@ -352,6 +352,57 @@ def _sponsored_last_seen_day_key(chat_id: int) -> str:
     return f"sponsored_last_seen_day:{int(chat_id)}"
 
 
+def _sponsored_seen_counter_key(chat_id: int) -> str:
+    return f"sponsored_seen_counter:{int(chat_id)}"
+
+
+SPONSORED_ROW_DAILY_LIMIT = 5
+
+
+def _today_utc_str() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def _parse_sponsored_counter(raw: str, *, today: str) -> int:
+    value = str(raw or "").strip()
+    if not value:
+        return 0
+    if "|" in value:
+        day, count_raw = value.split("|", 1)
+        if day.strip() != today:
+            return 0
+        try:
+            parsed = int(count_raw.strip())
+        except Exception:
+            return 0
+        return max(0, parsed)
+    # Backward compatibility (legacy numeric format).
+    try:
+        parsed = int(value)
+    except Exception:
+        return 0
+    return max(0, parsed)
+
+
+async def _get_sponsored_seen_today(chat_id: int, *, today: str) -> int:
+    raw_counter = str((await db_get(_sponsored_seen_counter_key(chat_id))) or "").strip()
+    if raw_counter:
+        return _parse_sponsored_counter(raw_counter, today=today)
+
+    # Legacy fallback (once/day marker): treat as 1 already shown today.
+    legacy_day = str((await db_get(_sponsored_last_seen_day_key(chat_id))) or "").strip()
+    return 1 if legacy_day == today else 0
+
+
+async def _mark_sponsored_seen(chat_id: int, *, today: str) -> int:
+    current = await _get_sponsored_seen_today(chat_id, today=today)
+    updated = current + 1
+    await db_set(_sponsored_seen_counter_key(chat_id), f"{today}|{updated}")
+    # Keep legacy key for compatibility with existing diagnostics/tools.
+    await db_set(_sponsored_last_seen_day_key(chat_id), today)
+    return updated
+
+
 def _truncate_sponsored_place_name(name: str, max_len: int = 34) -> str:
     text = str(name or "").strip()
     if len(text) <= max_len:
@@ -413,7 +464,7 @@ async def _pick_sponsored_partner_place() -> dict[str, Any] | None:
 
 
 async def get_main_keyboard_for_user(chat_id: int) -> InlineKeyboardMarkup:
-    """Main keyboard with optional sponsored row (at most once/day per user)."""
+    """Main keyboard with optional sponsored row (up to SPONSORED_ROW_DAILY_LIMIT/day per user)."""
     base_rows = [list(row) for row in get_main_keyboard().inline_keyboard]
 
     try:
@@ -424,8 +475,8 @@ async def get_main_keyboard_for_user(chat_id: int) -> InlineKeyboardMarkup:
         if not place:
             return InlineKeyboardMarkup(inline_keyboard=base_rows)
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        if str((await db_get(_sponsored_last_seen_day_key(chat_id))) or "").strip() == today:
+        today = _today_utc_str()
+        if await _get_sponsored_seen_today(chat_id, today=today) >= SPONSORED_ROW_DAILY_LIMIT:
             return InlineKeyboardMarkup(inline_keyboard=base_rows)
 
         place_id = int(place.get("id") or 0)
@@ -436,7 +487,7 @@ async def get_main_keyboard_for_user(chat_id: int) -> InlineKeyboardMarkup:
         # Place sponsored row near catalog actions.
         insert_idx = 3 if len(base_rows) >= 3 else len(base_rows)
         base_rows.insert(insert_idx, sponsored_row)
-        await db_set(_sponsored_last_seen_day_key(chat_id), today)
+        await _mark_sponsored_seen(chat_id, today=today)
     except Exception:
         logger.exception("Failed to build sponsored main-menu row for chat_id=%s", chat_id)
 
@@ -2279,6 +2330,7 @@ def _resolve_place_media_target(raw: str | None) -> tuple[str, str] | None:
 async def _open_place_media_target(
     callback: CallbackQuery,
     *,
+    place_id: int,
     raw_media_value: str | None,
     missing_message: str,
     fallback_label: str,
@@ -2291,7 +2343,13 @@ async def _open_place_media_target(
     target_type, target_value = target
     if target_type == "url":
         try:
-            await safe_callback_answer(callback, url=target_value)
+            await _render_external_open_panel(
+                callback,
+                place_id=place_id,
+                title=f"🖼 <b>{html.escape(fallback_label)}</b>",
+                button_text=f"🖼 Відкрити {fallback_label}",
+                url=target_value,
+            )
             return True
         except Exception:
             await safe_callback_answer(
@@ -2311,6 +2369,35 @@ async def _open_place_media_target(
         return False
     except Exception:
         await safe_callback_answer(callback, "Не вдалося відкрити медіа.", show_alert=True)
+        return False
+
+
+async def _render_external_open_panel(
+    callback: CallbackQuery,
+    *,
+    place_id: int,
+    title: str,
+    button_text: str,
+    url: str,
+) -> bool:
+    """Render single-message external link panel with a back button."""
+    if not callback.message:
+        await safe_callback_answer(callback, "Не вдалося відкрити посилання.", show_alert=True)
+        return False
+    try:
+        await callback.message.edit_text(
+            f"{title}\n\nНатисніть кнопку нижче, щоб відкрити.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=button_text, url=url)],
+                    [InlineKeyboardButton(text="« До картки", callback_data=f"place_{int(place_id)}")],
+                ]
+            ),
+        )
+        await safe_callback_answer(callback)
+        return True
+    except Exception:
+        await safe_callback_answer(callback, "Не вдалося підготувати посилання.", show_alert=True)
         return False
 
 
@@ -2746,10 +2833,13 @@ async def cb_place_chat_open(callback: CallbackQuery) -> None:
         return
 
     await record_place_click(place_id, "chat")
-    try:
-        await safe_callback_answer(callback, url=chat_url)
-    except Exception:
-        await safe_callback_answer(callback, "Не вдалося відкрити чат. Спробуйте ще раз.", show_alert=True)
+    await _render_external_open_panel(
+        callback,
+        place_id=place_id,
+        title="💬 <b>Чат закладу</b>",
+        button_text="💬 Написати",
+        url=chat_url,
+    )
 
 
 @router.callback_query(F.data.startswith("pcall_"))
@@ -2785,10 +2875,13 @@ async def cb_place_call_open(callback: CallbackQuery) -> None:
         return
 
     await record_place_click(place_id, "call")
-    try:
-        await safe_callback_answer(callback, url=tel_url)
-    except Exception:
-        await safe_callback_answer(callback, f"📞 Телефон: {contact_value}", show_alert=True)
+    await _render_external_open_panel(
+        callback,
+        place_id=place_id,
+        title="📞 <b>Дзвінок у заклад</b>",
+        button_text="📞 Подзвонити",
+        url=tel_url,
+    )
 
 
 @router.callback_query(F.data.startswith("plink_"))
@@ -2818,10 +2911,13 @@ async def cb_place_link_open(callback: CallbackQuery) -> None:
         return
 
     await record_place_click(place_id, "link")
-    try:
-        await safe_callback_answer(callback, url=link_url)
-    except Exception:
-        await safe_callback_answer(callback, "Не вдалося відкрити посилання. Спробуйте ще раз.", show_alert=True)
+    await _render_external_open_panel(
+        callback,
+        place_id=place_id,
+        title="🔗 <b>Посилання закладу</b>",
+        button_text="🔗 Відкрити посилання",
+        url=link_url,
+    )
 
 
 @router.callback_query(F.data.startswith("plogo_"))
@@ -2848,6 +2944,7 @@ async def cb_place_logo_open(callback: CallbackQuery) -> None:
     await record_place_click(place_id, "logo_open")
     await _open_place_media_target(
         callback,
+        place_id=place_id,
         raw_media_value=place_enriched.get("logo_url"),
         missing_message="Логотип для цього закладу відсутній або некоректний.",
         fallback_label="Логотип/фото",
@@ -2886,10 +2983,13 @@ async def cb_place_menu_open(callback: CallbackQuery) -> None:
         return
 
     await record_place_click(place_id, "menu")
-    try:
-        await safe_callback_answer(callback, url=menu_url)
-    except Exception:
-        await safe_callback_answer(callback, "Не вдалося відкрити меню/прайс. Спробуйте ще раз.", show_alert=True)
+    await _render_external_open_panel(
+        callback,
+        place_id=place_id,
+        title="📋 <b>Меню / прайс</b>",
+        button_text="📋 Відкрити меню/прайс",
+        url=menu_url,
+    )
 
 
 @router.callback_query(F.data.startswith("porder_"))
@@ -2924,10 +3024,13 @@ async def cb_place_order_open(callback: CallbackQuery) -> None:
         return
 
     await record_place_click(place_id, "order")
-    try:
-        await safe_callback_answer(callback, url=order_url)
-    except Exception:
-        await safe_callback_answer(callback, "Не вдалося відкрити замовлення/запис. Спробуйте ще раз.", show_alert=True)
+    await _render_external_open_panel(
+        callback,
+        place_id=place_id,
+        title="🛒 <b>Замовлення / запис</b>",
+        button_text="🛒 Відкрити замовлення/запис",
+        url=order_url,
+    )
 
 
 @router.callback_query(F.data.startswith("pmimg1_"))
@@ -2958,6 +3061,7 @@ async def cb_place_offer_1_image_open(callback: CallbackQuery) -> None:
     await record_place_click(place_id, "offer1_image")
     await _open_place_media_target(
         callback,
+        place_id=place_id,
         raw_media_value=place_enriched.get("offer_1_image_url"),
         missing_message="Фото оферу 1 відсутнє або некоректне.",
         fallback_label="Фото оферу 1",
@@ -2992,6 +3096,7 @@ async def cb_place_offer_2_image_open(callback: CallbackQuery) -> None:
     await record_place_click(place_id, "offer2_image")
     await _open_place_media_target(
         callback,
+        place_id=place_id,
         raw_media_value=place_enriched.get("offer_2_image_url"),
         missing_message="Фото оферу 2 відсутнє або некоректне.",
         fallback_label="Фото оферу 2",
@@ -3026,6 +3131,7 @@ async def cb_place_partner_photo_1_open(callback: CallbackQuery) -> None:
     await record_place_click(place_id, "partner_photo_1")
     await _open_place_media_target(
         callback,
+        place_id=place_id,
         raw_media_value=place_enriched.get("photo_1_url"),
         missing_message="Фото 1 відсутнє або некоректне.",
         fallback_label="Фото 1",
@@ -3060,6 +3166,7 @@ async def cb_place_partner_photo_2_open(callback: CallbackQuery) -> None:
     await record_place_click(place_id, "partner_photo_2")
     await _open_place_media_target(
         callback,
+        place_id=place_id,
         raw_media_value=place_enriched.get("photo_2_url"),
         missing_message="Фото 2 відсутнє або некоректне.",
         fallback_label="Фото 2",
@@ -3094,6 +3201,7 @@ async def cb_place_partner_photo_3_open(callback: CallbackQuery) -> None:
     await record_place_click(place_id, "partner_photo_3")
     await _open_place_media_target(
         callback,
+        place_id=place_id,
         raw_media_value=place_enriched.get("photo_3_url"),
         missing_message="Фото 3 відсутнє або некоректне.",
         fallback_label="Фото 3",
