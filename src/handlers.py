@@ -2392,7 +2392,7 @@ async def _render_external_open_panel(
         ]
     )
     try:
-        if callback.message.photo:
+        if getattr(callback.message, "photo", None):
             await callback.message.edit_caption(
                 caption=panel_text,
                 reply_markup=panel_markup,
