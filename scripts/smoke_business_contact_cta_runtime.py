@@ -4,7 +4,7 @@ Dynamic smoke test: resident contact CTA callbacks runtime contract.
 
 Validates:
 - `pchat_` callback redirects to normalized `t.me` URL and records `chat` click.
-- `pcall_` callback sends tel button and records `call` click.
+- `pcall_` callback redirects to normalized `tel:` URL and records `call` click.
 - invalid call contact does not record click and returns validation alert.
 """
 
@@ -158,17 +158,10 @@ async def _run_checks(place_id: int) -> None:
         await resident_handlers.cb_place_call_open(cb_call)
         after_call = await _get_click_sum(int(place_id), "call")
         _assert(after_call == before_call + 1, f"call click counter mismatch: before={before_call}, after={after_call}")
-        _assert(len(msg_call.answers) == 1, f"call flow must send one tel-button message: {msg_call.answers}")
-        first_answer = msg_call.answers[0]
-        _assert("📞 Відкрити дзвінок:" in str(first_answer.get("text") or ""), f"unexpected call text: {first_answer}")
-        kb = first_answer.get("reply_markup")
-        _assert(kb is not None, "call flow must send inline keyboard with tel URL")
-        buttons = [btn for row in getattr(kb, "inline_keyboard", []) for btn in row]
-        _assert(bool(buttons), "call keyboard must contain button")
-        _assert(str(getattr(buttons[0], "url", "") or "") == "tel:+380671112233", f"tel URL mismatch: {buttons[0]}")
+        _assert(len(msg_call.answers) == 0, f"call success should not use message.answer fallback: {msg_call.answers}")
         _assert(
-            safe_calls[-1]["kwargs"].get("url") is None,
-            f"call flow must acknowledge without redirect URL: {safe_calls[-1]}",
+            str(safe_calls[-1]["kwargs"].get("url") or "") == "tel:+380671112233",
+            f"call redirect URL mismatch: {safe_calls[-1]}",
         )
 
         # 3) Invalid call contact -> alert and no additional click increment.
