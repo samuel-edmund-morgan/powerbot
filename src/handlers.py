@@ -2384,16 +2384,24 @@ async def _render_external_open_panel(
     if not callback.message:
         await safe_callback_answer(callback, "Не вдалося відкрити посилання.", show_alert=True)
         return False
+    panel_text = f"{title}\n\nНатисніть кнопку нижче, щоб відкрити."
+    panel_markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=button_text, url=url)],
+            [InlineKeyboardButton(text="« До картки", callback_data=f"place_{int(place_id)}")],
+        ]
+    )
     try:
-        await callback.message.edit_text(
-            f"{title}\n\nНатисніть кнопку нижче, щоб відкрити.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=button_text, url=url)],
-                    [InlineKeyboardButton(text="« До картки", callback_data=f"place_{int(place_id)}")],
-                ]
-            ),
-        )
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=panel_text,
+                reply_markup=panel_markup,
+            )
+        else:
+            await callback.message.edit_text(
+                panel_text,
+                reply_markup=panel_markup,
+            )
         await safe_callback_answer(callback)
         return True
     except Exception:
