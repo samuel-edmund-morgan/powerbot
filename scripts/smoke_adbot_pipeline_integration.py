@@ -142,6 +142,24 @@ async def _run() -> None:
     _assert(len(forwarder.sent) == 1, "expected one audit summary message")
     _assert("intent" in forwarder.sent[0][1], f"audit payload missing intent: {forwarder.sent}")
 
+    # Duplicate guard by Telegram message id (same chat + same message_id) should suppress re-processing
+    # even when text/intent match and regardless of cooldown settings.
+    evt_dup_same_id = _FakeEvent(
+        text="Дайте номер електрика, будь ласка",
+        chat_id=-100123,
+        msg_id=501,  # same as evt_ok above
+        forwarder=forwarder,
+    )
+    handled_dup_same_id = await listener.process(evt_dup_same_id, source_chat_id=evt_dup_same_id.chat_id)
+    _assert(
+        handled_dup_same_id is False,
+        "expected duplicate-message-id guard to suppress second processing of same message id",
+    )
+    _assert(
+        len(evt_dup_same_id.responses) == 0,
+        "duplicate-message-id event must not produce response",
+    )
+
     # Cooldown dedupe for same chat+intent+message.
     evt_dup = _FakeEvent(
         text="Дайте номер електрика, будь ласка",

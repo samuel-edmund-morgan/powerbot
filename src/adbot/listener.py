@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from adbot.audit import build_audit_payload, build_decision_payload, log_decision, log_match
 from adbot.cooldown import CooldownGuard
@@ -35,6 +36,31 @@ class AdbotListener:
         self._allow_self_outgoing_e2e = bool(allow_self_outgoing_e2e)
         self._self_user_id = int(self_user_id) if self_user_id else None
         self._self_outgoing_prefix = str(self_outgoing_prefix or "[E2E]").strip() or "[E2E]"
+        # Guard against duplicate handling of the same Telegram message
+        # (e.g. NewMessage + self-outgoing poll fallback race).
+        self._seen_message_events: dict[str, float] = {}
+        self._seen_message_ttl_sec = 900
+
+    def _dedupe_event_key(self, chat_id: int, message_id: int) -> str:
+        return f"{int(chat_id)}:{int(message_id)}"
+
+    def _is_duplicate_message_event(self, chat_id: int, message_id: int) -> bool:
+        if int(message_id or 0) <= 0:
+            return False
+        now = time.time()
+        key = self._dedupe_event_key(chat_id, message_id)
+        ts = self._seen_message_events.get(key)
+        if ts is not None and now - ts < self._seen_message_ttl_sec:
+            return True
+
+        self._seen_message_events[key] = now
+        # Cheap periodic cleanup to prevent unbounded growth.
+        if len(self._seen_message_events) > 10_000:
+            cutoff = now - self._seen_message_ttl_sec
+            self._seen_message_events = {
+                k: v for k, v in self._seen_message_events.items() if v >= cutoff
+            }
+        return False
 
     async def process(self, event, *, source_chat_id: int) -> bool:
         """
@@ -42,7 +68,19 @@ class AdbotListener:
         """
         message_obj = event.message if hasattr(event, "message") else event
         text = (getattr(message_obj, "text", "") or "").strip()
+        message_id = int(getattr(message_obj, "id", 0) or 0)
         sender_id = int(getattr(message_obj, "sender_id", 0) or 0)
+        if self._is_duplicate_message_event(source_chat_id, message_id):
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=sender_id or None,
+                    reason="duplicate_message_event",
+                    message_text=text,
+                )
+            )
+            return False
+
         is_e2e_prefixed = self._allow_self_outgoing_e2e and text.startswith(self._self_outgoing_prefix)
         if not text:
             log_decision(
