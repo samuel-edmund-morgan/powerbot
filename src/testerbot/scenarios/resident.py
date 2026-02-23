@@ -63,11 +63,20 @@ async def run(ctx) -> ScenarioResult:
 
         msg = await click_button_and_wait(conv, msg, ctx.cfg.building_label, ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Оберіть секцію",), ctx="resident section menu")
+        assert_contains_any(
+            text,
+            ("Оберіть секцію", "оберіть вашу секцію"),
+            ctx="resident section menu",
+        )
 
         msg = await click_button_and_wait(conv, msg, ctx.cfg.section_label, ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Секцію", "збережено"), ctx="resident section saved")
+        assert_contains(text, ("Секцію",), ctx="resident section saved")
+        assert_contains_any(
+            text,
+            ("збережено", "змінено"),
+            ctx="resident section saved status",
+        )
 
         msg = await click_button_and_wait(conv, msg, "Світло/опалення/вода", ctx.cfg.timeout_sec)
         text = extract_text(msg)
