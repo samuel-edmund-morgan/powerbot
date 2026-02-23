@@ -349,8 +349,6 @@ async def run(ctx) -> ScenarioResult:
             ("Правки закладів", ("Правки закладів", "Черга порожня")),
             ("Підтримка Partner", ("Підтримка Partner", "Черга порожня")),
             ("Підписки", ("Підписки",)),
-            ("Платежі", ("Платежі",)),
-            ("Аудит", ("Аудит",)),
         ):
             msg, _ = await ensure_business_menu(msg)
             if not _has_button(msg, button):
