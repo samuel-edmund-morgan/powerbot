@@ -37,6 +37,18 @@ async def _click_first_non_nav_button(conv, message, timeout_sec: int):
     raise AssertionError("resident places: no non-navigation button found")
 
 
+async def _click_any_button(conv, message, needles: tuple[str, ...], timeout_sec: int):
+    last_exc: AssertionError | None = None
+    for needle in needles:
+        try:
+            return await click_button_and_wait(conv, message, needle, timeout_sec)
+        except AssertionError as exc:
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    raise AssertionError("resident flow: no button needles provided")
+
+
 async def run(ctx) -> ScenarioResult:
     """Resident path: /start -> building/section -> utilities/alerts/places/search."""
     started = time.perf_counter()
@@ -82,12 +94,17 @@ async def run(ctx) -> ScenarioResult:
             ctx="resident section saved status",
         )
 
-        msg = await click_button_and_wait(conv, msg, "Світло/опалення/вода", ctx.cfg.timeout_sec)
+        msg = await _click_any_button(
+            conv,
+            msg,
+            ("Світло/опалення/вода", "Перевірити світло"),
+            ctx.cfg.timeout_sec,
+        )
         text = extract_text(msg)
-        assert_contains(text, ("Світло",), ctx="resident utilities")
-
-        msg = await click_button_and_wait(conv, msg, "Світло", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
+        if "Стан електропостачання" not in text:
+            assert_contains(text, ("Світло",), ctx="resident utilities")
+            msg = await click_button_and_wait(conv, msg, "Світло", ctx.cfg.timeout_sec)
+            text = extract_text(msg)
         assert_contains(text, ("Стан електропостачання",), ctx="resident light status")
 
         # Back to main menu.
