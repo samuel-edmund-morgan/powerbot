@@ -139,6 +139,10 @@ python3 "${REPO_DIR}/scripts/bootstrap_telethon_targets.py" --env-file "${TEST_D
 echo "Running Telethon env preflight..."
 python3 "${REPO_DIR}/scripts/smoke_telethon_env_contract.py" --env-file "${TEST_DIR}/.env"
 
+# Automated smoke: Telethon env preflight must enforce StringSession/chat-id contract.
+echo "Running Telethon env contract-cases smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_telethon_env_contract_cases.py"
+
 # Увімкнути ЯСНО-графіки лише для тестового бота
 if grep -q "^YASNO_ENABLED=" "${TEST_DIR}/.env"; then
   sed -i -E 's/^YASNO_ENABLED=.*/YASNO_ENABLED=1/' "${TEST_DIR}/.env"
