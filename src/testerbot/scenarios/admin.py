@@ -240,8 +240,12 @@ async def run(ctx) -> ScenarioResult:
                 current, current_text = await click_and_wait(
                     current,
                     "Бізнес",
-                    predicate=lambda m, t: "Бізнес" in t and (
-                        _has_button(m, "Модерація") or _has_button(m, "Коди прив'язки")
+                    predicate=lambda m, t: (
+                        (
+                            "Бізнес" in t
+                            and (_has_button(m, "Модерація") or _has_button(m, "Коди прив'язки"))
+                        )
+                        or ("Оберіть дію" in t and _has_button(m, "Бізнес"))
                     ),
                     ctx_name="admin ensure business via business",
                 )
