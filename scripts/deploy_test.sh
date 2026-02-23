@@ -716,6 +716,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_catalog_ranking_policy.py"
 echo "Running business catalog ranking runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_catalog_ranking_runtime.py"
 
+# Automated smoke: Premium(Pro) promo-slot respects promo_slot_until runtime window.
+echo "Running business promo-slot window runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_promo_slot_window_runtime.py"
+
 # Automated smoke: no medals must be shown for zero-like rows in BUSINESS_MODE catalog.
 echo "Running business catalog zero-like medal runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_catalog_zero_likes_medals_runtime.py"

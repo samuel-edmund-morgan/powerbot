@@ -109,6 +109,23 @@ def _has_paid_entitlement(
     return expires_at_dt > ref_now
 
 
+def _promo_slot_until_for_entitlement(
+    *,
+    tier: str | None,
+    status: str | None,
+    expires_at: str | None,
+    now: datetime | None = None,
+) -> str | None:
+    """Return promo-slot deadline for Premium(Pro) tier when entitlement is active."""
+    normalized_tier = str(tier or "").strip().lower()
+    if normalized_tier != "pro":
+        return None
+    if not _has_paid_entitlement(tier=normalized_tier, status=status, expires_at=expires_at, now=now):
+        return None
+    parsed = _parse_iso_utc(str(expires_at or "").strip() or None)
+    return parsed.isoformat() if parsed else None
+
+
 def _normalize_phone_contact_value(raw_value: str) -> str:
     value = str(raw_value or "").strip()
     if not value:
@@ -243,6 +260,7 @@ class BusinessIntegrationService:
             merged["is_verified"] = int(meta.get("is_verified") or 0)
             merged["verified_tier"] = meta.get("verified_tier")
             merged["verified_until"] = meta.get("verified_until")
+            merged["promo_slot_until"] = meta.get("promo_slot_until")
             enriched.append(merged)
 
         return enriched
@@ -913,6 +931,7 @@ class BusinessCabinetService:
                         is_verified=0,
                         verified_tier=None,
                         verified_until=None,
+                        promo_slot_until=None,
                     )
                     await self.repository.write_audit_log(
                         place_id=place_id,
@@ -1258,6 +1277,11 @@ class BusinessCabinetService:
         sub_status = str(subscription.get("status") or "").strip().lower()
         sub_expires_at = str(subscription.get("expires_at") or "").strip() or None
         verified_until = sub_expires_at if _has_paid_entitlement(tier=tier, status=sub_status, expires_at=sub_expires_at) else None
+        promo_slot_until = _promo_slot_until_for_entitlement(
+            tier=tier,
+            status=sub_status,
+            expires_at=sub_expires_at,
+        )
         # New places created via business bot are created unpublished to avoid spam in resident catalog.
         # Publishing happens only after admin approval of the ownership request.
         await self.repository.set_place_published(updated["place_id"], is_published=1)
@@ -1267,6 +1291,7 @@ class BusinessCabinetService:
             is_verified=1 if verified_until else 0,
             verified_tier=tier if verified_until else None,
             verified_until=verified_until,
+            promo_slot_until=promo_slot_until,
         )
         await self.repository.write_audit_log(
             place_id=updated["place_id"],
@@ -1296,6 +1321,7 @@ class BusinessCabinetService:
                 is_verified=0,
                 verified_tier=None,
                 verified_until=None,
+                promo_slot_until=None,
             )
         await self.repository.write_audit_log(
             place_id=updated["place_id"],
@@ -1541,6 +1567,11 @@ class BusinessCabinetService:
             is_verified = 1
             verified_tier = normalized_tier
             verified_until = expires_at
+            promo_slot_until = _promo_slot_until_for_entitlement(
+                tier=normalized_tier,
+                status=sub_status,
+                expires_at=expires_at,
+            )
 
         if normalized_tier == "free":
             subscription, purge_stats, downgraded_at = await self._downgrade_to_free_and_purge_paid_likes(
@@ -1563,6 +1594,7 @@ class BusinessCabinetService:
                 is_verified=is_verified,
                 verified_tier=verified_tier,
                 verified_until=verified_until,
+                promo_slot_until=promo_slot_until,
             )
             await self.repository.create_subscription_period(
                 place_id=int(place_id),
@@ -1969,6 +2001,11 @@ class BusinessCabinetService:
             is_verified=1,
             verified_tier=normalized_tier,
             verified_until=effective_expires,
+            promo_slot_until=_promo_slot_until_for_entitlement(
+                tier=normalized_tier,
+                status="active",
+                expires_at=effective_expires,
+            ),
         )
         activation_source = str((audit_extra or {}).get("source") or "activation").strip() or "activation"
         await self.repository.create_subscription_period(
@@ -2016,6 +2053,7 @@ class BusinessCabinetService:
             is_verified=0,
             verified_tier=None,
             verified_until=None,
+            promo_slot_until=None,
         )
         purge_stats = await self.repository.purge_paid_period_likes(
             place_id=int(place_id),
@@ -2133,6 +2171,11 @@ class BusinessCabinetService:
             is_verified=1,
             verified_tier=tier,
             verified_until=expires_at,
+            promo_slot_until=_promo_slot_until_for_entitlement(
+                tier=tier,
+                status="canceled",
+                expires_at=expires_at,
+            ),
         )
         await self.repository.write_audit_log(
             place_id=int(place_id),

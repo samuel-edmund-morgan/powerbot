@@ -12,7 +12,7 @@ import os
 import html
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict
 import re
 
@@ -2154,12 +2154,29 @@ async def cb_places_category(callback: CallbackQuery):
         verified_places = [item for item in places if item.get("is_verified")]
         unverified_places = [item for item in places if not item.get("is_verified")]
 
+        def _is_active_pro_promo_slot(item: dict[str, Any]) -> bool:
+            if str(item.get("verified_tier") or "").strip().lower() != "pro":
+                return False
+            raw_slot_until = str(item.get("promo_slot_until") or "").strip()
+            if not raw_slot_until:
+                # Legacy fallback: old Pro rows without promo_slot_until still behave as promo candidates.
+                return True
+            raw_normalized = f"{raw_slot_until[:-1]}+00:00" if raw_slot_until.endswith("Z") else raw_slot_until
+            try:
+                parsed = datetime.fromisoformat(raw_normalized)
+            except Exception:
+                # Invalid slot timestamp should not break catalog ordering.
+                return False
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc) > datetime.now(timezone.utc)
+
         partner_places = [item for item in verified_places if str(item.get("verified_tier") or "").strip().lower() == "partner"]
-        pro_places = [item for item in verified_places if str(item.get("verified_tier") or "").strip().lower() == "pro"]
+        pro_places = [item for item in verified_places if _is_active_pro_promo_slot(item)]
         other_verified = [
             item
             for item in verified_places
-            if str(item.get("verified_tier") or "").strip().lower() not in {"partner", "pro"}
+            if str(item.get("verified_tier") or "").strip().lower() != "partner" and not _is_active_pro_promo_slot(item)
         ]
 
         partner_places.sort(key=lambda item: (-(item.get("likes_count") or 0), item.get("name") or ""))

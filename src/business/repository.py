@@ -572,7 +572,7 @@ class BusinessRepository:
             async with db.execute(
                 """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
                           p.is_published,
-                          p.is_verified, p.verified_tier, p.verified_until, p.business_enabled,
+                          p.is_verified, p.verified_tier, p.verified_until, p.promo_slot_until, p.business_enabled,
                           p.opening_hours, p.contact_type, p.contact_value, p.link_url, p.logo_url,
                           p.photo_1_url, p.photo_2_url, p.photo_3_url,
                           p.promo_code,
@@ -816,7 +816,7 @@ class BusinessRepository:
                 chunk = ids[i : i + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
                 query = (
-                    "SELECT id, business_enabled, is_verified, verified_tier, verified_until "
+                    "SELECT id, business_enabled, is_verified, verified_tier, verified_until, promo_slot_until "
                     f"FROM places WHERE id IN ({placeholders})"
                 )
                 async with db.execute(query, chunk) as cur:
@@ -1287,17 +1287,24 @@ class BusinessRepository:
         is_verified: int,
         verified_tier: str | None,
         verified_until: str | None,
+        promo_slot_until: str | None | object = _UNSET,
     ) -> None:
+        set_parts = [
+            "business_enabled = ?",
+            "is_verified = ?",
+            "verified_tier = ?",
+            "verified_until = ?",
+        ]
+        params: list[Any] = [business_enabled, is_verified, verified_tier, verified_until]
+        if promo_slot_until is not _UNSET:
+            set_parts.append("promo_slot_until = ?")
+            params.append(promo_slot_until)
+        params.append(place_id)
         async with open_business_db() as db:
             await execute_write_with_retry(
                 db,
-                """UPDATE places
-                      SET business_enabled = ?,
-                          is_verified = ?,
-                          verified_tier = ?,
-                          verified_until = ?
-                    WHERE id = ?""",
-                (business_enabled, is_verified, verified_tier, verified_until, place_id),
+                f"UPDATE places SET {', '.join(set_parts)} WHERE id = ?",
+                tuple(params),
             )
 
     async def list_user_businesses(self, tg_user_id: int) -> list[dict[str, Any]]:
@@ -1322,7 +1329,7 @@ class BusinessRepository:
                           p.offer_2_text AS place_offer_2_text,
                           p.offer_1_image_url AS place_offer_1_image_url,
                           p.offer_2_image_url AS place_offer_2_image_url,
-                          p.business_enabled, p.is_verified, p.verified_tier, p.verified_until,
+                          p.business_enabled, p.is_verified, p.verified_tier, p.verified_until, p.promo_slot_until,
                           COALESCE(bs.tier, 'free') AS tier,
                           COALESCE(bs.status, 'inactive') AS subscription_status,
                           bs.starts_at AS subscription_starts_at,
@@ -1393,7 +1400,7 @@ class BusinessRepository:
 
             async with db.execute(
                 """SELECT id, name, description, address, keywords,
-                          business_enabled, is_verified, verified_tier, verified_until
+                          business_enabled, is_verified, verified_tier, verified_until, promo_slot_until
                      FROM places
                     WHERE id = ?""",
                 (place_id,),
@@ -1832,6 +1839,7 @@ class BusinessRepository:
                        bs.created_at, bs.updated_at,
                        p.name AS place_name, p.address AS place_address,
                        p.business_enabled, p.is_published, p.is_verified, p.verified_tier, p.verified_until,
+                       p.promo_slot_until,
                        (
                          SELECT bo.tg_user_id
                            FROM business_owners bo

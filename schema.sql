@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS places (
     is_verified INTEGER DEFAULT 0,           -- Verified-статус для бізнес-режиму
     verified_tier TEXT DEFAULT NULL,         -- Рівень підписки (light/pro/partner)
     verified_until TEXT DEFAULT NULL,        -- Дата завершення Verified (ISO 8601)
+    promo_slot_until TEXT DEFAULT NULL,      -- Premium(Pro): до коли діє промо-слот у категорії (ISO 8601)
     business_enabled INTEGER DEFAULT 0,      -- Дозвіл на бізнес-функції (1/0)
     opening_hours TEXT DEFAULT NULL,         -- Години роботи (для verified/paid)
     contact_type TEXT DEFAULT NULL,          -- call/chat

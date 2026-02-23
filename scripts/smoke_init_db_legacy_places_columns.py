@@ -31,6 +31,7 @@ REQUIRED_PLACE_COLUMNS = {
     "is_verified",
     "verified_tier",
     "verified_until",
+    "promo_slot_until",
     "business_enabled",
     "opening_hours",
     "contact_type",

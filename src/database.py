@@ -319,7 +319,25 @@ async def init_db():
         except Exception:
             pass
         try:
+            await db.execute("ALTER TABLE places ADD COLUMN promo_slot_until TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
             await db.execute("ALTER TABLE places ADD COLUMN business_enabled INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        # Backfill legacy verified Pro rows: promo-slot follows verified window by default.
+        try:
+            await db.execute(
+                """
+                UPDATE places
+                   SET promo_slot_until = verified_until
+                 WHERE promo_slot_until IS NULL
+                   AND COALESCE(is_verified, 0) = 1
+                   AND lower(COALESCE(verified_tier, '')) = 'pro'
+                   AND verified_until IS NOT NULL
+                """
+            )
         except Exception:
             pass
         try:
