@@ -10,7 +10,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-from telethon.errors.rpcerrorlist import MessageIdInvalidError
+from telethon.errors.rpcerrorlist import DataInvalidError, MessageIdInvalidError
 
 from testerbot.assertions import assert_contains, assert_contains_any
 from testerbot.callbacks import extract_callback_data
@@ -183,10 +183,10 @@ async def run(ctx) -> ScenarioResult:
                 except AssertionError:
                     current, _ = await latest_bot_message(f"{ctx_name} (refresh after no update)")
                     continue
-            except MessageIdInvalidError:
+            except (MessageIdInvalidError, DataInvalidError):
                 current, _ = await wait_bot_message(
                     predicate=lambda m, _t: _has_button(m, needle),
-                    ctx_name=f"{ctx_name} (refresh stale message)",
+                    ctx_name=f"{ctx_name} (refresh stale/invalid callback message)",
                 )
                 continue
         raise AssertionError(f"{ctx_name}: unable to click button `{needle}` on current bot message")
@@ -203,10 +203,10 @@ async def run(ctx) -> ScenarioResult:
                     try:
                         ctx.record_clicked_callback("business", callback_at(current, row_idx, btn_idx))
                         await current.click(row_idx, btn_idx)
-                    except MessageIdInvalidError:
+                    except (MessageIdInvalidError, DataInvalidError):
                         current, _ = await wait_bot_message(
                             predicate=lambda m, _t: bool(getattr(m, "buttons", None)),
-                            ctx_name=f"{ctx_name} (refresh stale message)",
+                            ctx_name=f"{ctx_name} (refresh stale/invalid callback message)",
                         )
                         break
                     msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
@@ -257,10 +257,10 @@ async def run(ctx) -> ScenarioResult:
                 )
                 ctx.record_seen_callbacks("business", collect_message_callbacks(msg))
                 return msg, text
-            except MessageIdInvalidError:
+            except (MessageIdInvalidError, DataInvalidError):
                 current, _ = await wait_bot_message(
                     predicate=lambda m, _t: _find_button_pos_by_callback(m, callback_data) is not None,
-                    ctx_name=f"{ctx_name} (refresh stale message)",
+                    ctx_name=f"{ctx_name} (refresh stale/invalid callback message)",
                 )
                 continue
             except AssertionError:
