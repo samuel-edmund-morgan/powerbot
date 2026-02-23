@@ -45,6 +45,31 @@ def _has_button(message, needle: str) -> bool:
         return False
 
 
+def _has_recovery_controls(message) -> bool:
+    """Best-effort check that screen has navigation/recovery controls."""
+    labels: list[str] = []
+    for row in (getattr(message, "buttons", None) or []):
+        for btn in row:
+            labels.append(str(getattr(btn, "text", "")).strip())
+    # Some read-only screens can be buttonless; don't treat as dead-end.
+    if not labels:
+        return True
+    for label in labels:
+        normalized = label.casefold()
+        if _is_nav_button(label):
+            return True
+        if (
+            "оновити" in normalized
+            or "сповіщення" in normalized
+            or "тихі години" in normalized
+            or "укриття" in normalized
+            or "заклади" in normalized
+            or "категор" in normalized
+        ):
+            return True
+    return False
+
+
 def _text_has_any(text: str, *needles: str) -> bool:
     hay = (text or "").casefold()
     return any((needle or "").casefold() in hay for needle in needles)
@@ -150,6 +175,14 @@ async def run(ctx) -> ScenarioResult:
                 return msg, text
         raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
 
+    def assert_not_dead_end(current_msg, *, ctx_name: str) -> None:
+        if _has_recovery_controls(current_msg):
+            return
+        text = extract_text(current_msg)
+        raise AssertionError(
+            f"{ctx_name}: dead-end screen detected (no recovery controls). text={text[:220]!r}"
+        )
+
     async def recover_main_menu(*, ctx_name: str):
         await ctx.client.send_message(target, "/start")
         msg, text = await wait_bot_message(
@@ -198,6 +231,7 @@ async def run(ctx) -> ScenarioResult:
         ("Оберіть, що перевірити", "Оберіть що перевірити", "Світло", "Статистика"),
         ctx="resident utilities menu",
     )
+    assert_not_dead_end(msg, ctx_name="resident utilities menu")
 
     msg, text = await click_and_wait(
         msg,
@@ -283,6 +317,7 @@ async def run(ctx) -> ScenarioResult:
         ctx_name="resident service menu",
     )
     assert_contains(text, ("Сервісна служба",), ctx="resident service menu")
+    assert_not_dead_end(msg, ctx_name="resident service menu")
     service_buttons = (
         "Адміністрація",
         "Бухгалтерія",
@@ -324,6 +359,7 @@ async def run(ctx) -> ScenarioResult:
         ctx_name="resident notifications menu",
     )
     assert_contains(text, ("Сповіщення",), ctx="resident notifications menu")
+    assert_not_dead_end(msg, ctx_name="resident notifications menu")
     if _has_button(msg, "Тихі години"):
         msg, text = await click_and_wait(
             msg,
@@ -369,6 +405,7 @@ async def run(ctx) -> ScenarioResult:
         ctx_name="resident alerts menu",
     )
     assert_contains(text, ("Тривоги та укриття",), ctx="resident alerts menu")
+    assert_not_dead_end(msg, ctx_name="resident alerts menu")
 
     msg, text = await click_and_wait(
         msg,
@@ -452,6 +489,7 @@ async def run(ctx) -> ScenarioResult:
     )
     assert_contains(text, ("Заклади в ЖК",), ctx="resident places menu")
     assert_contains_any(text, ("Оберіть категорію", "Поки що категорій немає"), ctx="resident places categories")
+    assert_not_dead_end(msg, ctx_name="resident places menu")
 
     if "Поки що категорій немає" not in text:
         # Open one category.
