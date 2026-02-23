@@ -60,6 +60,11 @@ should_enable_adbot() {
   env_flag_true "$(get_env_value "ADBOT_ENABLED" "$env_file")"
 }
 
+should_enable_adbot_e2e() {
+  local env_file="$1"
+  env_flag_true "$(get_env_value "ADBOT_E2E_ENABLED" "$env_file")"
+}
+
 setup_docker_auth() {
   if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
     echo "Logging in to Docker Hub..."
@@ -237,6 +242,43 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_inline_contract.py"
 # Automated smoke: adbot listener/pipeline integration via mock stubs.
 echo "Running adbot pipeline integration smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
+
+# Optional real Telegram E2E for adbot on test groups.
+if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
+  echo "Running adbot E2E test-groups suite..."
+
+  ADBOT_E2E_DRIVER_SESSION_VAL="$(get_env_value "ADBOT_E2E_DRIVER_STRING_SESSION" "${TEST_DIR}/.env")"
+  ADBOT_E2E_SOURCE_CHAT_ID_VAL="$(get_env_value "ADBOT_E2E_SOURCE_CHAT_ID" "${TEST_DIR}/.env")"
+  ADBOT_E2E_INTERNAL_CHAT_ID_VAL="$(get_env_value "ADBOT_E2E_INTERNAL_CHAT_ID" "${TEST_DIR}/.env")"
+  ADBOT_E2E_TIMEOUT_SEC_VAL="$(get_env_value "ADBOT_E2E_TIMEOUT_SEC" "${TEST_DIR}/.env")"
+  ADBOT_E2E_POLL_SEC_VAL="$(get_env_value "ADBOT_E2E_POLL_SEC" "${TEST_DIR}/.env")"
+  ADBOT_E2E_VERIFY_FORWARD_VAL="$(get_env_value "ADBOT_E2E_VERIFY_FORWARD" "${TEST_DIR}/.env")"
+  TELETHON_API_ID_VAL="$(get_env_value "TELETHON_API_ID" "${TEST_DIR}/.env")"
+  TELETHON_API_HASH_VAL="$(get_env_value "TELETHON_API_HASH" "${TEST_DIR}/.env")"
+
+  if [[ -z "${ADBOT_E2E_DRIVER_SESSION_VAL}" || -z "${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" ]]; then
+    echo "ERROR: ADBOT_E2E_ENABLED=1 but required vars are missing:"
+    echo "  - ADBOT_E2E_DRIVER_STRING_SESSION"
+    echo "  - ADBOT_E2E_SOURCE_CHAT_ID"
+    exit 1
+  fi
+  if [[ -z "${TELETHON_API_ID_VAL}" || -z "${TELETHON_API_HASH_VAL}" ]]; then
+    echo "ERROR: ADBOT_E2E_ENABLED=1 but TELETHON_API_ID/TELETHON_API_HASH are missing."
+    exit 1
+  fi
+
+  TELETHON_API_ID="${TELETHON_API_ID_VAL}" \
+  TELETHON_API_HASH="${TELETHON_API_HASH_VAL}" \
+  ADBOT_E2E_DRIVER_STRING_SESSION="${ADBOT_E2E_DRIVER_SESSION_VAL}" \
+  ADBOT_E2E_SOURCE_CHAT_ID="${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" \
+  ADBOT_E2E_INTERNAL_CHAT_ID="${ADBOT_E2E_INTERNAL_CHAT_ID_VAL}" \
+  ADBOT_E2E_TIMEOUT_SEC="${ADBOT_E2E_TIMEOUT_SEC_VAL:-45}" \
+  ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
+  ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
+  python3 "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
+else
+  echo "Adbot E2E test-groups disabled (ADBOT_E2E_ENABLED!=1)."
+fi
 
 # Automated smoke: testerbot service must be test-only compose override.
 echo "Running testerbot compose isolation smoke test..."
