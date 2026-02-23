@@ -243,6 +243,10 @@ if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
 fi
 
+# Bootstrap deterministic claim-token precondition for testerbot admin read-only flow.
+echo "Bootstrapping testerbot claim-token precondition..."
+python3 "${REPO_DIR}/scripts/bootstrap_testerbot_claim_token.py" --db-path "${TEST_DIR}/state.db"
+
 # Automated testerbot E2E regression suite (runs on dedicated runtime and exits with result).
 if should_enable_testerbot "${TEST_DIR}/.env"; then
   echo "Running testerbot regression suite in test environment..."
@@ -378,6 +382,10 @@ python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_strict_policy.py"
 # Automated smoke: testerbot admin claim-token open path must stay read-only-safe.
 echo "Running testerbot admin claim-token readonly policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_admin_claim_tokens_readonly_policy.py"
+
+# Runtime smoke: testerbot claim-token bootstrap must be deterministic/idempotent.
+echo "Running testerbot claim-token bootstrap runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_claim_token_bootstrap_runtime.py"
 
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
