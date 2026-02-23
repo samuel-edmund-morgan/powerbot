@@ -6,12 +6,14 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import re
+import sqlite3
 import time
 from dataclasses import dataclass
 
 from telethon.errors.rpcerrorlist import MessageIdInvalidError
 
 from testerbot.assertions import assert_contains, assert_contains_any
+from testerbot.callbacks import extract_callback_data
 from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,34 @@ async def run(ctx) -> ScenarioResult:
     target = ctx.cfg.targets.businessbot
     bot_id = await ctx.client.get_peer_id(target)
     scenario_started_utc = datetime.now(timezone.utc)
+    me = await ctx.client.get_me()
+    actor_tg_user_id = int(getattr(me, "id", 0) or 0)
+
+    def _load_approved_place_ids() -> list[int]:
+        db_path = str(getattr(ctx.cfg, "db_path", "") or "").strip()
+        if not db_path or actor_tg_user_id <= 0:
+            return []
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+            rows = conn.execute(
+                """
+                SELECT DISTINCT place_id
+                FROM place_owners
+                WHERE tg_user_id = ? AND status = 'approved'
+                ORDER BY place_id
+                """,
+                (actor_tg_user_id,),
+            ).fetchall()
+            return [int(r[0]) for r in rows if r and int(r[0]) > 0]
+        except Exception as exc:
+            logger.warning("business testerbot: failed to load approved place ids: %s", exc)
+            return []
+        finally:
+            if conn is not None:
+                conn.close()
+
+    approved_place_ids = _load_approved_place_ids()
 
     async def wait_bot_message(
         *,
@@ -191,6 +221,53 @@ async def run(ctx) -> ScenarioResult:
             continue
         raise AssertionError(f"{ctx_name}: unable to click non-navigation button on current bot message")
 
+    def _find_button_pos_by_callback(message, callback_data: str) -> tuple[int, int] | None:
+        buttons = getattr(message, "buttons", None) or []
+        for row_idx, row in enumerate(buttons):
+            for col_idx, btn in enumerate(row):
+                raw = extract_callback_data(btn)
+                if raw == callback_data:
+                    return row_idx, col_idx
+        return None
+
+    async def click_callback_and_wait(message, callback_data: str, *, predicate, ctx_name: str):
+        current = message
+        for _ in range(4):
+            pos = _find_button_pos_by_callback(current, callback_data)
+            if pos is None:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _find_button_pos_by_callback(m, callback_data) is not None,
+                    ctx_name=f"{ctx_name} (refresh callback buttons)",
+                )
+                continue
+
+            i, j = pos
+            try:
+                ctx.record_clicked_callback("business", callback_at(current, i, j))
+                prev_snapshot = (
+                    getattr(current, "id", None),
+                    extract_text(current),
+                    _to_utc(getattr(current, "edit_date", None)),
+                )
+                await current.click(i, j)
+                msg, text = await wait_bot_message(
+                    predicate=predicate,
+                    ctx_name=ctx_name,
+                    previous_snapshot=prev_snapshot,
+                )
+                ctx.record_seen_callbacks("business", collect_message_callbacks(msg))
+                return msg, text
+            except MessageIdInvalidError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _find_button_pos_by_callback(m, callback_data) is not None,
+                    ctx_name=f"{ctx_name} (refresh stale message)",
+                )
+                continue
+            except AssertionError:
+                current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                continue
+        raise AssertionError(f"{ctx_name}: unable to click callback `{callback_data}`")
+
     async def exercise_paged_list(message, *, expect_tokens: tuple[str, ...], ctx_name: str):
         current = message
         text = extract_text(current)
@@ -257,7 +334,13 @@ async def run(ctx) -> ScenarioResult:
         assert_contains(current_text, ("Оберіть дію:",), ctx="business ensure main menu")
         return current, current_text
 
-    async def open_first_owner_card(message, *, ctx_name: str):
+    async def open_first_owner_card(
+        message,
+        *,
+        ctx_name: str,
+        preferred_place_id: int | None = None,
+        required_button: str | None = None,
+    ):
         current, _ = await ensure_main_menu(message)
         current, text = await click_and_wait(
             current,
@@ -272,29 +355,74 @@ async def run(ctx) -> ScenarioResult:
         )
         if "Оберіть заклад" not in text:
             raise AssertionError(f"{ctx_name}: no businesses to open owner card")
-        current, text = await click_first_non_nav_button(
-            current,
-            predicate=lambda _m, t: _is_owner_card_text(t),
-            ctx_name=f"{ctx_name} open owner card",
-        )
+        if preferred_place_id:
+            target_cb = f"bmy_o:{int(preferred_place_id)}"
+            located = False
+            for _ in range(8):
+                if _find_button_pos_by_callback(current, target_cb) is not None:
+                    current, text = await click_callback_and_wait(
+                        current,
+                        target_cb,
+                        predicate=lambda _m, t: _is_owner_card_text(t),
+                        ctx_name=f"{ctx_name} open owner card by place id",
+                    )
+                    located = True
+                    break
+                if _has_button(current, "➡️"):
+                    current, text = await click_and_wait(
+                        current,
+                        "➡️",
+                        predicate=lambda _m, t: ("Оберіть заклад" in t) or ("У тебе ще немає бізнесів" in t),
+                        ctx_name=f"{ctx_name} owner list next page",
+                    )
+                    continue
+                break
+            if not located:
+                raise AssertionError(f"{ctx_name}: place_id {preferred_place_id} not found in owner list")
+        else:
+            current, text = await click_first_non_nav_button(
+                current,
+                predicate=lambda _m, t: _is_owner_card_text(t),
+                ctx_name=f"{ctx_name} open owner card",
+            )
         assert_contains_any(text, ("Статус доступу", "Тариф", "Активно до"), ctx=f"{ctx_name} owner card")
+        if required_button and not _has_button(current, required_button):
+            raise AssertionError(f"{ctx_name}: owner card has no `{required_button}` button")
         return current, text
 
     async def ensure_owner_card_with_action(message, *, needle: str, ctx_name: str):
-        current, text = await open_first_owner_card(message, ctx_name=ctx_name)
+        last_error: Exception | None = None
+        for place_id in approved_place_ids:
+            try:
+                current, text = await open_first_owner_card(
+                    message,
+                    ctx_name=f"{ctx_name} place#{place_id}",
+                    preferred_place_id=place_id,
+                    required_button=needle,
+                )
+                return current, text
+            except AssertionError as exc:
+                last_error = exc
+
+        current, text = await open_first_owner_card(message, ctx_name=ctx_name, required_button=None)
         if _has_button(current, needle):
             return current, text
         # Retry on transient UI/state drift (edited owner-card without full action rows yet).
-        current, text = await wait_bot_message(
-            predicate=lambda m, t: _is_owner_card_text(t) and _has_button(m, needle),
-            ctx_name=f"{ctx_name} wait action `{needle}`",
-            previous_snapshot=(
-                getattr(current, "id", None),
-                extract_text(current),
-                _to_utc(getattr(current, "edit_date", None)),
-            ),
-        )
-        return current, text
+        try:
+            current, text = await wait_bot_message(
+                predicate=lambda m, t: _is_owner_card_text(t) and _has_button(m, needle),
+                ctx_name=f"{ctx_name} wait action `{needle}`",
+                previous_snapshot=(
+                    getattr(current, "id", None),
+                    extract_text(current),
+                    _to_utc(getattr(current, "edit_date", None)),
+                ),
+            )
+            return current, text
+        except AssertionError as exc:
+            if last_error is not None:
+                raise AssertionError(f"{ctx_name}: no owner-card with `{needle}` (last={last_error})") from exc
+            raise
 
     async def exercise_owner_card_actions(message):
         current = message
