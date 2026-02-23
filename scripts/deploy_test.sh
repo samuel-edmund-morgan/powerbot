@@ -130,6 +130,11 @@ if [[ -f "${REPO_DIR}/.env.example" ]]; then
   done < "${REPO_DIR}/.env.example"
 fi
 
+# Preflight: validate Telethon env contract before stack/bootstrap.
+# Helps fail fast when testerbot/adbot E2E are enabled with placeholder values.
+echo "Running Telethon env preflight..."
+python3 "${REPO_DIR}/scripts/smoke_telethon_env_contract.py" --env-file "${TEST_DIR}/.env"
+
 # Увімкнути ЯСНО-графіки лише для тестового бота
 if grep -q "^YASNO_ENABLED=" "${TEST_DIR}/.env"; then
   sed -i -E 's/^YASNO_ENABLED=.*/YASNO_ENABLED=1/' "${TEST_DIR}/.env"
