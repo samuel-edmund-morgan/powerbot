@@ -295,6 +295,10 @@ fi
 echo "Running testerbot compose isolation smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_compose_isolation.py"
 
+# Automated smoke: testerbot scenarios must stay idempotent/read-only by policy.
+echo "Running testerbot idempotence policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_idempotence_policy.py"
+
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sections.py"
