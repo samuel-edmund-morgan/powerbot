@@ -14,7 +14,7 @@ from pathlib import Path
 
 from logging_setup import configure_logging
 from testerbot.client import TesterbotConfig, build_telethon_client, ensure_enabled
-from testerbot.callbacks import parse_callback_inventory
+from testerbot.callbacks import filter_read_only_inventory, parse_callback_inventory
 from testerbot.reporting import (
     ScenarioReport,
     TesterbotRunReport,
@@ -264,11 +264,11 @@ async def main() -> int:
             if junit_path:
                 write_junit_xml(report, junit_path)
 
-            # Callback coverage telemetry (for full-click roadmap).
+            # Callback coverage telemetry (read-only subset for full-click roadmap).
             try:
                 strict = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "0")).strip() == "1"
                 repo_root = Path(__file__).resolve().parents[1]
-                inventory = parse_callback_inventory(repo_root)
+                inventory = filter_read_only_inventory(parse_callback_inventory(repo_root))
                 coverage_lines: list[str] = []
                 coverage_failed = False
                 for bot_name in ("resident", "admin", "business"):
@@ -298,7 +298,7 @@ async def main() -> int:
                             sorted(missing.get("startswith", set())),
                             sorted(missing.get("regexp", set())),
                         )
-                logger.info("testerbot callback coverage: %s", " | ".join(coverage_lines))
+                logger.info("testerbot callback coverage (read-only): %s", " | ".join(coverage_lines))
                 if strict and coverage_failed:
                     scenario_results.append(
                         ScenarioReport(
