@@ -268,6 +268,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_decision_logging.py"
 echo "Running adbot decision-file logging smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_decision_file_logging.py"
 
+# Automated smoke: adbot source-allowlist filter must emit decision logs.
+echo "Running adbot source-filter logging policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_source_filter_logging_policy.py"
+
 # Optional real Telegram E2E for adbot on test groups.
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   echo "Running adbot E2E test-groups suite..."

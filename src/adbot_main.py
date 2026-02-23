@@ -10,7 +10,7 @@ import os
 from adbot.cooldown import CooldownGuard
 from adbot.listener import AdbotListener
 from adbot.pipeline import PowerbotInlineClient, ResponsePipeline
-from adbot.audit import configure_decision_logging
+from adbot.audit import build_decision_payload, configure_decision_logging, log_decision
 from adbot_main_config import AdbotConfig, build_config
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,20 @@ async def _run(config: AdbotConfig) -> None:
     @client.on(events.NewMessage)
     async def on_new_message(event):
         if source_chat_ids and event.chat_id not in source_chat_ids:
+            message_obj = event.message if hasattr(event, "message") else None
+            text = (getattr(message_obj, "text", "") or "").strip()
+            sender_id = getattr(message_obj, "sender_id", None)
+            try:
+                log_decision(
+                    build_decision_payload(
+                        chat_id=int(event.chat_id),
+                        user_id=int(sender_id) if sender_id else None,
+                        reason="source_chat_not_allowed",
+                        message_text=text,
+                    )
+                )
+            except Exception:
+                logger.exception("failed to log source filter decision")
             return
 
         # Test mode can optionally disable source filtering for QA.
