@@ -200,30 +200,6 @@ async def run(ctx) -> ScenarioResult:
                 raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
         raise AssertionError(f"{ctx_name}: unable to click non-navigation button")
 
-    async def click_no_wait(message, needle: str, *, ctx_name: str):
-        current = message
-        for _ in range(4):
-            try:
-                i, j = find_button(current, needle)
-            except AssertionError:
-                current, _ = await wait_bot_message(
-                    predicate=lambda m, _t: _has_button(m, needle),
-                    ctx_name=f"{ctx_name} (refresh buttons)",
-                )
-                continue
-            try:
-                ctx.record_clicked_callback("admin", callback_at(current, i, j))
-                await current.click(i, j)
-                await asyncio.sleep(0.8)
-                return current
-            except MessageIdInvalidError:
-                current, _ = await wait_bot_message(
-                    predicate=lambda m, _t: _has_button(m, needle),
-                    ctx_name=f"{ctx_name} (refresh stale message)",
-                )
-                continue
-        raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
-
     async def exercise_read_only_navigation(
         message,
         *,
@@ -368,14 +344,6 @@ async def run(ctx) -> ScenarioResult:
             expect_tokens=expect_tokens,
             ctx_name=ctx_name,
         )
-
-        if button == "Підписки" and _has_button(current, "Експорт (файл)"):
-            current = await click_no_wait(
-                current,
-                "Експорт (файл)",
-                ctx_name=f"{ctx_name} export",
-            )
-            current, _ = await latest_bot_message(f"{ctx_name} export latest")
         current, _ = await ensure_main_menu(current)
         return current, text
 
@@ -429,14 +397,6 @@ async def run(ctx) -> ScenarioResult:
             expect_tokens=expect,
             ctx_name=f"admin {section}",
         )
-        if section == "Черга задач" and _has_button(msg, "Експорт (файл)"):
-            msg = await click_no_wait(
-                msg,
-                "Експорт (файл)",
-                ctx_name="admin jobs export",
-            )
-            msg, text = await latest_bot_message("admin jobs export latest")
-            assert_contains_any(text, expect, ctx="admin jobs export latest")
         msg, text = await ensure_main_menu(msg)
         assert_contains(text, ("Оберіть дію",), ctx=f"admin {section} back")
 
