@@ -51,21 +51,6 @@ services:
     restart: on-failure
     profiles: ["admin"]
 
-  testerbot:
-    image: semorgana/powerbot:latest
-    env_file:
-      - ./.env
-    environment:
-      DB_PATH: /data/state.db
-      APP_ENTRYPOINT: testerbot_main.py
-      LOG_FILE_NAME: testerbot.log
-    volumes:
-      - ./:/data
-    networks:
-      - traefik
-    restart: "no"
-    profiles: ["testerbot"]
-
   adbot:
     image: semorgana/powerbot:latest
     env_file:

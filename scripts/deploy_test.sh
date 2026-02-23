@@ -109,6 +109,9 @@ fi
 echo "Sync docker-compose.yml to ${TEST_DIR}..."
 install -m 0644 "${REPO_DIR}/docker-compose.yml" "${TEST_DIR}/docker-compose.yml"
 sed -i -E 's/18081:8081/18082:8081/g' "${TEST_DIR}/docker-compose.yml"
+if [[ -f "${REPO_DIR}/docker-compose.testerbot.yml" ]]; then
+  install -m 0644 "${REPO_DIR}/docker-compose.testerbot.yml" "${TEST_DIR}/docker-compose.testerbot.yml"
+fi
 
 echo "Sync .env keys to ${TEST_DIR}..."
 if [[ -f "${REPO_DIR}/.env.example" ]]; then
@@ -214,7 +217,11 @@ fi
 # Automated testerbot E2E regression suite (runs on dedicated runtime and exits with result).
 if should_enable_testerbot "${TEST_DIR}/.env"; then
   echo "Running testerbot regression suite in test environment..."
-  docker compose --profile testerbot run --rm testerbot
+  if [[ ! -f "${TEST_DIR}/docker-compose.testerbot.yml" ]]; then
+    echo "ERROR: docker-compose.testerbot.yml is missing in ${TEST_DIR}"
+    exit 1
+  fi
+  docker compose -f docker-compose.yml -f docker-compose.testerbot.yml --profile testerbot run --rm testerbot
 else
   echo "Testerbot disabled (TESTERBOT_ENABLED!=1)."
 fi
@@ -230,6 +237,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_inline_contract.py"
 # Automated smoke: adbot listener/pipeline integration via mock stubs.
 echo "Running adbot pipeline integration smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
+
+# Automated smoke: testerbot service must be test-only compose override.
+echo "Running testerbot compose isolation smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_compose_isolation.py"
 
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
