@@ -292,43 +292,78 @@ async def run(ctx) -> ScenarioResult:
     async def ensure_main_menu(message):
         current = message
         current_text = extract_text(current)
+        last_nav_error: Exception | None = None
+
+        async def recover_via_cancel(*, ctx_name: str):
+            sent = await ctx.client.send_message(target, "/cancel")
+            sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
+            return await wait_bot_message(
+                predicate=lambda _m, t: (
+                    "Оберіть дію:" in t
+                    or _is_owner_card_text(t)
+                    or "Оберіть заклад" in t
+                    or "Обери тариф для" in t
+                    or "Плани" in t
+                ),
+                ctx_name=ctx_name,
+                min_activity_utc=sent_utc,
+            )
+
         for _ in range(6):
             if "Оберіть дію:" in current_text:
                 return current, current_text
             if _has_button(current, "Меню"):
-                current, current_text = await click_and_wait(
-                    current,
-                    "Меню",
-                    predicate=lambda _m, t: "Оберіть дію:" in t,
-                    ctx_name="business ensure main menu via menu",
-                )
+                try:
+                    current, current_text = await click_and_wait(
+                        current,
+                        "Меню",
+                        predicate=lambda _m, t: "Оберіть дію:" in t,
+                        ctx_name="business ensure main menu via menu",
+                    )
+                except AssertionError as exc:
+                    last_nav_error = exc
+                    current, current_text = await recover_via_cancel(
+                        ctx_name="business ensure main menu recover /cancel after menu failure"
+                    )
                 continue
             if _has_button(current, "Назад"):
-                current, current_text = await click_and_wait(
-                    current,
-                    "Назад",
-                    predicate=lambda _m, t: (
-                        "Оберіть дію:" in t
-                        or "Оберіть заклад" in t
-                        or "Обери тариф для" in t
-                        or "Плани" in t
-                    ),
-                    ctx_name="business ensure main menu via back",
-                )
+                try:
+                    current, current_text = await click_and_wait(
+                        current,
+                        "Назад",
+                        predicate=lambda _m, t: (
+                            "Оберіть дію:" in t
+                            or "Оберіть заклад" in t
+                            or "Обери тариф для" in t
+                            or "Плани" in t
+                        ),
+                        ctx_name="business ensure main menu via back",
+                    )
+                except AssertionError as exc:
+                    last_nav_error = exc
+                    current, current_text = await recover_via_cancel(
+                        ctx_name="business ensure main menu recover /cancel after back failure"
+                    )
                 continue
             if _has_button(current, "Скасувати"):
-                current, current_text = await click_and_wait(
-                    current,
-                    "Скасувати",
-                    predicate=lambda _m, t: (
-                        "Оберіть дію:" in t
-                        or _is_owner_card_text(t)
-                        or "Оберіть заклад" in t
-                        or "Обери тариф для" in t
-                        or "Плани" in t
-                    ),
-                    ctx_name="business ensure main menu via cancel",
-                )
+                try:
+                    current, current_text = await click_and_wait(
+                        current,
+                        "Скасувати",
+                        predicate=lambda _m, t: (
+                            "Оберіть дію:" in t
+                            or _is_owner_card_text(t)
+                            or "Оберіть заклад" in t
+                            or "Обери тариф для" in t
+                            or "Плани" in t
+                        ),
+                        ctx_name="business ensure main menu via cancel button",
+                    )
+                except AssertionError as exc:
+                    last_nav_error = exc
+                    current, current_text = await recover_via_cancel(
+                        ctx_name="business ensure main menu recover /cancel after cancel-button failure"
+                    )
                 continue
             # Input-only FSM prompt (no inline controls) can trap the scenario.
             # Use /cancel to reset state without mutating business data.
@@ -340,21 +375,19 @@ async def run(ctx) -> ScenarioResult:
                     or "Введіть" in current_text
                 )
             ):
-                sent = await ctx.client.send_message(target, "/cancel")
-                sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
-                current, current_text = await wait_bot_message(
-                    predicate=lambda _m, t: (
-                        "Оберіть дію:" in t
-                        or _is_owner_card_text(t)
-                        or "Оберіть заклад" in t
-                        or "Обери тариф для" in t
-                        or "Плани" in t
-                    ),
-                    ctx_name="business ensure main menu via /cancel",
-                    min_activity_utc=sent_utc,
+                current, current_text = await recover_via_cancel(
+                    ctx_name="business ensure main menu via /cancel input-only"
+                )
+                continue
+            if last_nav_error is not None:
+                current, current_text = await recover_via_cancel(
+                    ctx_name="business ensure main menu via /cancel nav fallback"
                 )
                 continue
             break
+        if "Оберіть дію:" not in current_text:
+            latest, latest_text = await latest_bot_message("business ensure main menu final refresh")
+            current, current_text = latest, latest_text
         assert_contains(current_text, ("Оберіть дію:",), ctx="business ensure main menu")
         return current, current_text
 
