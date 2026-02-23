@@ -280,6 +280,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_source_filter_logging_policy.py"
 echo "Running adbot source-filter runtime smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_source_filter_runtime.py"
 
+# Automated smoke: adbot listener exception path must emit decision reason.
+echo "Running adbot listener-exception runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_listener_exception_runtime.py"
+
 # Optional real Telegram E2E for adbot on test groups.
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   echo "Running adbot E2E test-groups suite..."
