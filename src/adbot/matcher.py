@@ -12,13 +12,17 @@ def normalize(text: str) -> str:
     return (text or "").strip().lower()
 
 
-def _match_signals(text_norm: str, intent: Intent) -> int:
+def _match_signals(text_norm: str, intent: Intent) -> tuple[int, int]:
     score = 0
     for token in intent.keywords:
         # partial substring match allows flexible Ukrainian variants.
         if token in text_norm:
             score += 1
-    return score
+    strong_hits = 0
+    for token in intent.strong_keywords:
+        if token in text_norm:
+            strong_hits += 1
+    return score, strong_hits
 
 
 @dataclass(frozen=True)
@@ -58,15 +62,31 @@ def analyze_intent_match(
         return MatchDiagnostics(intent=None, reason="no_tokens", text_len=text_len, token_count=0)
 
     best_candidate: tuple[int, int, Intent] | None = None
+    best_missing_strong: tuple[int, int, Intent] | None = None
     for intent in INTENTS:
-        score = _match_signals(norm, intent)
+        score, strong_hits = _match_signals(norm, intent)
         if score < intent.required_signals:
             continue
         confidence = _confidence(score, token_count)
+        if intent.strong_keywords and strong_hits <= 0:
+            if best_missing_strong is None or confidence > best_missing_strong[0]:
+                best_missing_strong = (confidence, score, intent)
+            continue
         if best_candidate is None or confidence > best_candidate[0]:
             best_candidate = (confidence, score, intent)
 
     if best_candidate is None:
+        if best_missing_strong is not None:
+            missing_confidence, missing_signals, missing_intent = best_missing_strong
+            return MatchDiagnostics(
+                intent=None,
+                reason="missing_strong_signal",
+                text_len=text_len,
+                token_count=token_count,
+                best_intent=missing_intent.code,
+                best_confidence=missing_confidence,
+                best_signals=missing_signals,
+            )
         return MatchDiagnostics(
             intent=None,
             reason="no_signal_candidates",

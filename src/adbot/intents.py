@@ -24,6 +24,7 @@ class Intent:
     code: str
     title: str
     keywords: tuple[str, ...]
+    strong_keywords: tuple[str, ...]
     inline_query: str
     fallback_reply: str
     required_signals: int = 2
@@ -41,6 +42,7 @@ INTENTS: tuple[Intent, ...] = (
             "зникло",
             "вимк",
         ),
+        strong_keywords=("електрик", "світло", "зникло", "вимк"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_ELECTRICIAN],
         fallback_reply="📞 Номер електрика: 067-576-22-42",
         required_signals=2,
@@ -49,6 +51,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_PLUMBER,
         title="Сантехнік",
         keywords=("сантехн", "номер", "вода", "теч", "злив", "підтеч", "тече", "кран", "перевір", "душ"),
+        strong_keywords=("сантехн", "вода", "теч", "злив", "підтеч", "тече", "кран", "душ"),
         # require two signals: common phrasing often includes "номер" + "сантехнік/вода"
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_PLUMBER],
         fallback_reply="🛠 Зараз сантехніка в чаті не видно, зверніться в оголошення в адмін-чаті.",
@@ -58,6 +61,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_SECURITY,
         title="Охорона",
         keywords=("охорона", "охорон", "номер", "вишка", "сторож", "патруль", "цілодобово"),
+        strong_keywords=("охорона", "охорон", "вишка", "сторож", "патруль"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_SECURITY],
         fallback_reply="🛡️ Охорона доступна цілодобово.",
         required_signals=2,
@@ -66,6 +70,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_PARKING,
         title="Паркінг",
         keywords=("паркінг", "паркінгу", "паркоміс", "машин", "павільйон", "номер"),
+        strong_keywords=("паркінг", "паркінгу", "паркоміс", "машин"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_PARKING],
         fallback_reply="🅿️ Для питань паркінгу відкрийте розділ «🚗 Оформлення...».",
         required_signals=2,
@@ -74,6 +79,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_CAR_PASS,
         title="Перепустка",
         keywords=("перепуст", "пропуск", "пропуска", "прохід", "вхід", "номер", "член", "авто", "оформ"),
+        strong_keywords=("перепуст", "пропуск", "пропуска", "оформ"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_CAR_PASS],
         fallback_reply="🚗 Оформлення перепустки авто — через резидент-бота.",
         required_signals=2,
@@ -82,6 +88,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_ELEVATOR,
         title="Ліфти",
         keywords=("ліфт", "ліфти", "диспетчер", "номер", "застряг", "кабіна"),
+        strong_keywords=("ліфт", "ліфти", "диспетчер", "застряг", "кабіна"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_ELEVATOR],
         fallback_reply="🛗 Для ліфтів зверніться до диспетчера ліфтів (цілодобово).",
         required_signals=2,
@@ -90,6 +97,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_ACCOUNTING,
         title="Бухгалтерія",
         keywords=("бухгалтер", "бухгалтерія", "квитанц", "нарахув", "комунал", "оплат"),
+        strong_keywords=("бухгалтер", "бухгалтерія", "квитанц", "нарахув", "комунал", "оплат"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_ACCOUNTING],
         fallback_reply="🧾 Зверніться в бухгалтерію, контакти є в сервісному меню бота.",
         required_signals=2,
@@ -98,6 +106,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_LIGHT_STATUS,
         title="Світло",
         keywords=("світло", "світла", "чи", "вимк", "відсутн", "зникло", "поточн"),
+        strong_keywords=("світло", "світла", "вимк", "відсутн", "зникло", "поточн"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_LIGHT_STATUS],
         fallback_reply="💡 Щоб подивитись точний статус, відкрийте резидент-бота.",
         required_signals=2,

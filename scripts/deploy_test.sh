@@ -248,6 +248,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_matcher.py"
 echo "Running adbot matcher diagnostics smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_matcher_diagnostics.py"
 
+# Automated smoke: adbot strong-signal anti-false-positive guard.
+echo "Running adbot strong-signal guard smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_strong_signal_guard.py"
+
 # Automated smoke: adbot config contract (env requirements + allowlist rules).
 echo "Running adbot config contract smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_config_contract.py"
