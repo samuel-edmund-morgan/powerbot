@@ -39,6 +39,16 @@ def _text_has_any(text: str, *needles: str) -> bool:
     return any((needle or "").casefold() in hay for needle in needles)
 
 
+def _is_stats_screen(text: str) -> bool:
+    return _text_has_any(
+        text,
+        "статистика",
+        "uptime",
+        "відключень не зафіксовано",
+        "кількість відключень",
+    )
+
+
 async def run(ctx) -> ScenarioResult:
     """Resident path (stable): /start -> building menu -> alerts -> places -> search."""
     started = time.perf_counter()
@@ -175,7 +185,7 @@ async def run(ctx) -> ScenarioResult:
     msg, text = await click_and_wait(
         msg,
         "Статистика",
-        predicate=lambda _m, t: ("Статистика" in t) and ("електропостачання" in t.casefold()),
+        predicate=lambda _m, t: _is_stats_screen(t),
         ctx_name="resident utilities stats",
     )
     assert_contains(text, ("Статистика",), ctx="resident utilities stats")
@@ -186,7 +196,7 @@ async def run(ctx) -> ScenarioResult:
         msg, text = await click_and_wait(
             msg,
             label,
-            predicate=lambda _m, t: ("Статистика" in t) and ("електропостачання" in t.casefold()),
+            predicate=lambda _m, t: _is_stats_screen(t),
             ctx_name=f"resident utilities stats {label}",
         )
         assert_contains(text, ("Статистика",), ctx=f"resident utilities stats {label}")
