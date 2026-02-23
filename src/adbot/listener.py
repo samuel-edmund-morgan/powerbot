@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from adbot.audit import build_audit_payload, log_match
+from adbot.audit import build_audit_payload, build_decision_payload, log_decision, log_match
 from adbot.cooldown import CooldownGuard
 from adbot.matcher import match_intent
 from adbot.pipeline import ResponsePipeline
@@ -37,13 +37,36 @@ class AdbotListener:
         message_obj = event.message if hasattr(event, "message") else event
         text = (getattr(message_obj, "text", "") or "").strip()
         if not text:
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=getattr(message_obj, "sender_id", None),
+                    reason="empty_text",
+                )
+            )
             return False
 
         # Skip bot/system messages and short noise.
         if bool(getattr(message_obj, "out", False)):
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=getattr(message_obj, "sender_id", None),
+                    reason="outgoing_or_system",
+                    message_text=text,
+                )
+            )
             return False
         sender_id = getattr(message_obj, "sender_id", 0) or 0
         if not sender_id:
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=None,
+                    reason="missing_sender_id",
+                    message_text=text,
+                )
+            )
             return False
 
         intent = match_intent(
@@ -53,10 +76,26 @@ class AdbotListener:
             min_confidence=self._matcher_min_confidence,
         )
         if intent is None:
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=int(sender_id),
+                    reason="no_intent_match",
+                    message_text=text,
+                )
+            )
             return False
 
         if not self._cooldown.allow(source_chat_id, intent.code, text):
-            logger.info("cooldown skip for chat=%s intent=%s", source_chat_id, intent.code)
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=int(sender_id),
+                    reason="cooldown_skip",
+                    message_text=text,
+                    intent_code=intent.code,
+                )
+            )
             return False
 
         response_text = await self._pipeline.answer(intent.inline_query, intent.fallback_reply)
@@ -79,5 +118,23 @@ class AdbotListener:
             await event.respond(response_text, reply_to=message_obj.id)
         except Exception:
             logger.exception("failed to reply in adbot")
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=int(sender_id),
+                    reason="reply_error",
+                    message_text=text,
+                    intent_code=intent.code,
+                )
+            )
             return False
+        log_decision(
+            build_decision_payload(
+                chat_id=source_chat_id,
+                user_id=int(sender_id),
+                reason="replied",
+                message_text=text,
+                intent_code=intent.code,
+            )
+        )
         return True

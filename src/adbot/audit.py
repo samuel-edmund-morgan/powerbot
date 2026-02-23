@@ -19,6 +19,33 @@ def build_audit_payload(chat_id: int, user_id: int, intent_code: str, message_te
     }
 
 
+def build_decision_payload(
+    *,
+    chat_id: int,
+    user_id: int | None,
+    reason: str,
+    message_text: str | None = None,
+    intent_code: str | None = None,
+) -> dict:
+    payload: dict = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "chat_id": int(chat_id),
+        "reason": str(reason or "").strip() or "unknown",
+    }
+    if user_id is not None:
+        payload["user_id"] = int(user_id)
+    if intent_code:
+        payload["intent"] = str(intent_code).strip()
+    if message_text:
+        payload["message"] = str(message_text).strip()[:200]
+    return payload
+
+
+def log_decision(payload: dict) -> None:
+    """Write a structured adbot decision log entry."""
+    logger.info("adbot decision: %s", json.dumps(payload, ensure_ascii=False))
+
+
 async def log_match(
     payload: dict,
     *,

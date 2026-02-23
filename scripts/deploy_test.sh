@@ -260,6 +260,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_e2e_contract.py"
 echo "Running adbot pipeline integration smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
 
+# Automated smoke: adbot decision logging contract (reasoned match/no-match logs).
+echo "Running adbot decision logging smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_decision_logging.py"
+
 # Optional real Telegram E2E for adbot on test groups.
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   echo "Running adbot E2E test-groups suite..."
