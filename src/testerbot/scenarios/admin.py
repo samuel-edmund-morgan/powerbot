@@ -224,6 +224,43 @@ async def run(ctx) -> ScenarioResult:
                 continue
         raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
 
+    async def exercise_read_only_navigation(
+        message,
+        *,
+        expect_tokens: tuple[str, ...],
+        ctx_name: str,
+    ):
+        current = message
+        text = extract_text(current)
+        if _has_button(current, "Оновити"):
+            current, text = await click_and_wait(
+                current,
+                "Оновити",
+                predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                ctx_name=f"{ctx_name} refresh",
+            )
+            assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} refresh")
+
+        if _has_button(current, "➡️"):
+            current, text = await click_and_wait(
+                current,
+                "➡️",
+                predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                ctx_name=f"{ctx_name} next page",
+            )
+            assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} next page")
+
+            if _has_button(current, "⬅️"):
+                current, text = await click_and_wait(
+                    current,
+                    "⬅️",
+                    predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                    ctx_name=f"{ctx_name} prev page",
+                )
+                assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} prev page")
+
+        return current, text
+
     async def ensure_main_menu(message):
         current = message
         for _ in range(6):
@@ -325,12 +362,20 @@ async def run(ctx) -> ScenarioResult:
             ctx_name=ctx_name,
         )
         assert_contains_any(text, expect_tokens, ctx=ctx_name)
+
+        current, _ = await exercise_read_only_navigation(
+            current,
+            expect_tokens=expect_tokens,
+            ctx_name=ctx_name,
+        )
+
         if button == "Підписки" and _has_button(current, "Експорт (файл)"):
             current = await click_no_wait(
                 current,
                 "Експорт (файл)",
                 ctx_name=f"{ctx_name} export",
             )
+            current, _ = await latest_bot_message(f"{ctx_name} export latest")
         current, _ = await ensure_main_menu(current)
         return current, text
 
@@ -379,6 +424,19 @@ async def run(ctx) -> ScenarioResult:
             ctx_name=f"admin {section}",
         )
         assert_contains_any(text, expect, ctx=f"admin {section}")
+        msg, text = await exercise_read_only_navigation(
+            msg,
+            expect_tokens=expect,
+            ctx_name=f"admin {section}",
+        )
+        if section == "Черга задач" and _has_button(msg, "Експорт (файл)"):
+            msg = await click_no_wait(
+                msg,
+                "Експорт (файл)",
+                ctx_name="admin jobs export",
+            )
+            msg, text = await latest_bot_message("admin jobs export latest")
+            assert_contains_any(text, expect, ctx="admin jobs export latest")
         msg, text = await ensure_main_menu(msg)
         assert_contains(text, ("Оберіть дію",), ctx=f"admin {section} back")
 
