@@ -371,6 +371,10 @@ python3 "${REPO_DIR}/scripts/smoke_testerbot_compose_isolation.py"
 echo "Running testerbot idempotence policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_idempotence_policy.py"
 
+# Automated smoke: testerbot callback-coverage strict gate must stay ON by default.
+echo "Running testerbot callback-coverage strict policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_strict_policy.py"
+
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sections.py"

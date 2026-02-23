@@ -266,7 +266,7 @@ async def main() -> int:
 
             # Callback coverage telemetry (read-only subset for full-click roadmap).
             try:
-                strict = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "0")).strip() == "1"
+                strict = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "1")).strip() == "1"
                 repo_root = Path(__file__).resolve().parents[1]
                 inventory = filter_read_only_inventory(parse_callback_inventory(repo_root))
                 coverage_lines: list[str] = []
