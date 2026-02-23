@@ -16,6 +16,39 @@ from adbot_main_config import AdbotConfig, build_config
 logger = logging.getLogger(__name__)
 
 
+async def _process_new_message_event(
+    *,
+    event,
+    listener: AdbotListener,
+    source_chat_ids: set[int] | None,
+    enabled: bool,
+) -> bool:
+    """Process one Telegram event and return True if delegated to listener."""
+    if source_chat_ids and event.chat_id not in source_chat_ids:
+        message_obj = event.message if hasattr(event, "message") else None
+        text = (getattr(message_obj, "text", "") or "").strip()
+        sender_id = getattr(message_obj, "sender_id", None)
+        try:
+            log_decision(
+                build_decision_payload(
+                    chat_id=int(event.chat_id),
+                    user_id=int(sender_id) if sender_id else None,
+                    reason="source_chat_not_allowed",
+                    message_text=text,
+                )
+            )
+        except Exception:
+            logger.exception("failed to log source filter decision")
+        return False
+
+    # Test mode can optionally disable source filtering for QA.
+    if not enabled:
+        return False
+
+    await listener.process(event, source_chat_id=event.chat_id)
+    return True
+
+
 async def _run(config: AdbotConfig) -> None:
     try:
         from telethon import TelegramClient  # type: ignore
@@ -53,29 +86,13 @@ async def _run(config: AdbotConfig) -> None:
 
     @client.on(events.NewMessage)
     async def on_new_message(event):
-        if source_chat_ids and event.chat_id not in source_chat_ids:
-            message_obj = event.message if hasattr(event, "message") else None
-            text = (getattr(message_obj, "text", "") or "").strip()
-            sender_id = getattr(message_obj, "sender_id", None)
-            try:
-                log_decision(
-                    build_decision_payload(
-                        chat_id=int(event.chat_id),
-                        user_id=int(sender_id) if sender_id else None,
-                        reason="source_chat_not_allowed",
-                        message_text=text,
-                    )
-                )
-            except Exception:
-                logger.exception("failed to log source filter decision")
-            return
-
-        # Test mode can optionally disable source filtering for QA.
-        if not config.enabled:
-            return
-
         try:
-            await listener.process(event, source_chat_id=event.chat_id)
+            await _process_new_message_event(
+                event=event,
+                listener=listener,
+                source_chat_ids=source_chat_ids,
+                enabled=config.enabled,
+            )
         except Exception:
             logger.exception("adbot listener error")
 
