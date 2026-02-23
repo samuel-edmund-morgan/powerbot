@@ -96,11 +96,28 @@ def main() -> None:
         else:
             raise AssertionError("expected ValueError for non-test mode without source chat ids")
 
+    # Non-test mode with missing internal audit chat must fail.
+    with _patched_env(**{**_base_env(), "ADBOT_TEST_MODE": "0", "ADBOT_INTERNAL_CHAT_ID": ""}):
+        try:
+            build_config()
+        except ValueError as exc:
+            _assert("ADBOT_INTERNAL_CHAT_ID" in str(exc), f"unexpected error: {exc}")
+        else:
+            raise AssertionError("expected ValueError for non-test mode without internal chat id")
+
     # Test mode with empty allowlist is allowed.
-    with _patched_env(**{**_base_env(), "ADBOT_TEST_MODE": "1", "ADBOT_SOURCE_CHAT_IDS": ""}):
+    with _patched_env(
+        **{
+            **_base_env(),
+            "ADBOT_TEST_MODE": "1",
+            "ADBOT_SOURCE_CHAT_IDS": "",
+            "ADBOT_INTERNAL_CHAT_ID": "",
+        }
+    ):
         cfg = build_config()
         _assert(cfg.test_mode is True, "test_mode should be True")
         _assert(cfg.source_chat_ids == (), f"source ids should be empty in test mode: {cfg.source_chat_ids}")
+        _assert(cfg.internal_chat_id is None, "internal chat id may be empty in test mode")
 
     # Missing required vars must fail.
     for missing_key in (

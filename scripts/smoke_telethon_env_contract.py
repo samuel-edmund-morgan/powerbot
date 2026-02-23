@@ -80,8 +80,10 @@ def main() -> None:
         _require(errors, env, "TELETHON_API_ID", ctx)
         _require(errors, env, "TELETHON_API_HASH", ctx)
         _require_non_placeholder(errors, env, "ADBOT_STRING_SESSION", ctx)
+        _require_non_placeholder(errors, env, "ADBOT_TARGET_POWERBOT_USERNAME", ctx)
         if not _is_true(env.get("ADBOT_TEST_MODE")):
-            _require(errors, env, "ADBOT_SOURCE_CHAT_IDS", ctx)
+            _require_non_placeholder(errors, env, "ADBOT_SOURCE_CHAT_IDS", ctx)
+            _require_non_placeholder(errors, env, "ADBOT_INTERNAL_CHAT_ID", ctx)
 
     if _is_true(env.get("ADBOT_E2E_ENABLED")):
         ctx = "adbot_e2e"
@@ -101,4 +103,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

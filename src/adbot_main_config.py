@@ -74,6 +74,8 @@ def build_config() -> AdbotConfig:
             internal_chat_id = int(internal_raw)
         except ValueError:
             internal_chat_id = None
+    if internal_chat_id is None and not test_mode:
+        raise ValueError("ADBOT_INTERNAL_CHAT_ID is required (non-test mode)")
 
     return AdbotConfig(
         enabled=enabled,
