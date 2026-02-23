@@ -900,6 +900,11 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
             action="logo_open",
             days=int(days),
         )
+        gallery_opens = await cabinet_service.repository.get_place_clicks_sum(
+            place_id,
+            action="gallery_open",
+            days=int(days),
+        )
         partner_photo_1_opens = await cabinet_service.repository.get_place_clicks_sum(
             place_id,
             action="partner_photo_1",
@@ -936,6 +941,7 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         + int(menu_opens)
         + int(order_opens)
         + int(logo_opens)
+        + int(gallery_opens)
         + int(partner_photo_1_opens)
         + int(partner_photo_2_opens)
         + int(partner_photo_3_opens)
@@ -953,6 +959,7 @@ async def build_business_card_text(item: dict, *, days: int = 30) -> str:
         f"• Відкриття меню/прайсу: <b>{int(menu_opens)}</b>\n"
         f"• Відкриття замовлення/запису: <b>{int(order_opens)}</b>\n"
         f"• Відкриття логотипу/фото: <b>{int(logo_opens)}</b>\n"
+        f"• Відкриття галереї: <b>{int(gallery_opens)}</b>\n"
         f"• Відкриття фото 1 (Partner): <b>{int(partner_photo_1_opens)}</b>\n"
         f"• Відкриття фото 2 (Partner): <b>{int(partner_photo_2_opens)}</b>\n"
         f"• Відкриття фото 3 (Partner): <b>{int(partner_photo_3_opens)}</b>\n"
