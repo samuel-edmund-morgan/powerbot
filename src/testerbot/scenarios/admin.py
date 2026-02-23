@@ -273,6 +273,37 @@ async def run(ctx) -> ScenarioResult:
                 return current, current_text
         raise AssertionError("admin ensure business menu: unable to open Бізнес")
 
+    async def open_business_section_from_main(
+        message,
+        *,
+        button: str,
+        expect_tokens: tuple[str, ...],
+        ctx_name: str,
+    ):
+        current, _ = await ensure_main_menu(message)
+        if not _has_button(current, "Бізнес"):
+            return current, ""
+
+        current, _ = await click_and_wait(
+            current,
+            "Бізнес",
+            predicate=lambda m, t: "Бізнес" in t and (_has_button(m, "Модерація") or _has_button(m, "Коди прив'язки")),
+            ctx_name=f"{ctx_name} open business",
+        )
+        if not _has_button(current, button):
+            current, _ = await ensure_main_menu(current)
+            return current, ""
+
+        current, text = await click_and_wait(
+            current,
+            button,
+            predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+            ctx_name=ctx_name,
+        )
+        assert_contains_any(text, expect_tokens, ctx=ctx_name)
+        current, _ = await ensure_main_menu(current)
+        return current, text
+
     sent_start = await ctx.client.send_message(target, "/start")
     sent_start_utc = _to_utc(getattr(sent_start, "date", None)) or scenario_started_utc
     try:
@@ -343,27 +374,34 @@ async def run(ctx) -> ScenarioResult:
     if _has_button(msg, "Бізнес"):
         msg, text = await ensure_business_menu(msg)
         assert_contains(text, ("Бізнес",), ctx="admin business menu")
+        msg, text = await ensure_main_menu(msg)
+        assert_contains(text, ("Оберіть дію",), ctx="admin business menu back to main")
 
         for button, expect_tokens in (
             ("Модерація", ("Модерація", "Черга модерації")),
             ("Правки закладів", ("Правки закладів", "Черга порожня")),
             ("Підтримка Partner", ("Підтримка Partner", "Черга порожня")),
             ("Підписки", ("Підписки",)),
+            ("Платежі", ("Платежі",)),
+            ("Аудит", ("Аудит",)),
         ):
-            msg, _ = await ensure_business_menu(msg)
-            if not _has_button(msg, button):
-                continue
-            msg, text = await click_and_wait(
+            msg, _ = await open_business_section_from_main(
                 msg,
-                button,
-                predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                button=button,
+                expect_tokens=expect_tokens,
                 ctx_name=f"admin business {button}",
             )
-            assert_contains_any(text, expect_tokens, ctx=f"admin business {button}")
 
         # Claim tokens read-only deep flow:
         # menu -> list places -> first service -> places list -> back categories -> back tokens menu
-        msg, _ = await ensure_business_menu(msg)
+        msg, _ = await ensure_main_menu(msg)
+        if _has_button(msg, "Бізнес"):
+            msg, _ = await click_and_wait(
+                msg,
+                "Бізнес",
+                predicate=lambda m, t: "Бізнес" in t and (_has_button(m, "Коди прив'язки") or _has_button(m, "Модерація")),
+                ctx_name="admin business tokens open business menu",
+            )
         if _has_button(msg, "Коди прив'язки"):
             msg, text = await click_and_wait(
                 msg,
