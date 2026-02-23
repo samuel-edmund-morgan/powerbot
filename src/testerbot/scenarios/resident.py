@@ -55,7 +55,11 @@ async def run(ctx) -> ScenarioResult:
 
         msg = await click_button_and_wait(conv, msg, "Обрати будинок", ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Оберіть ваш будинок",), ctx="resident buildings")
+        assert_contains_any(
+            text,
+            ("Оберіть ваш будинок", "Оберіть свій будинок"),
+            ctx="resident buildings",
+        )
 
         msg = await click_button_and_wait(conv, msg, ctx.cfg.building_label, ctx.cfg.timeout_sec)
         text = extract_text(msg)

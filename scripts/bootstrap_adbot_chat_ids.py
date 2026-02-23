@@ -167,7 +167,14 @@ def main() -> None:
             updates.append("ADBOT_E2E_INTERNAL_CHAT_ID=<auto>")
 
     if updates:
-        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except PermissionError:
+            print(
+                "Adbot chat-id bootstrap: resolved values but env file is read-only; "
+                "skipping write."
+            )
+            return
         print("Updated adbot chat ids:")
         for item in updates:
             print(f"- {item}")
