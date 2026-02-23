@@ -315,6 +315,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_listener_exception_runtime.py"
 echo "Running adbot outgoing E2E guard smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_outgoing_e2e_guard.py"
 
+# Automated smoke: adbot self-outgoing poll fallback policy.
+echo "Running adbot self-outgoing poll policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_self_outgoing_poll_policy.py"
+
 # Optional real Telegram E2E for adbot on test groups.
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   echo "Running adbot E2E test-groups suite..."
@@ -342,25 +346,19 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
     exit 1
   fi
 
-  if [[ "${ADBOT_E2E_DRIVER_SESSION_VAL}" == "${ADBOT_STRING_SESSION_VAL}" ]]; then
-    echo "WARN: ADBOT_E2E_DRIVER_STRING_SESSION equals ADBOT_STRING_SESSION."
-    echo "WARN: Skipping real adbot E2E test-groups run (Telegram does not deliver self-sent messages to another session reliably)."
-    echo "WARN: Provide a distinct driver session to enable full adbot E2E."
-  else
-    docker compose exec -T \
-      -e TELETHON_API_ID="${TELETHON_API_ID_VAL}" \
-      -e TELETHON_API_HASH="${TELETHON_API_HASH_VAL}" \
-      -e ADBOT_E2E_DRIVER_STRING_SESSION="${ADBOT_E2E_DRIVER_SESSION_VAL}" \
-      -e ADBOT_E2E_ADBOT_STRING_SESSION="${ADBOT_STRING_SESSION_VAL}" \
-      -e ADBOT_E2E_SOURCE_CHAT_ID="${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" \
-      -e ADBOT_E2E_INTERNAL_CHAT_ID="${ADBOT_E2E_INTERNAL_CHAT_ID_VAL}" \
-      -e ADBOT_E2E_TIMEOUT_SEC="${ADBOT_E2E_TIMEOUT_SEC_VAL:-45}" \
-      -e ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
-      -e ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
-      -e ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
-      -e ADBOT_E2E_PROMPT_PREFIX="${ADBOT_E2E_PROMPT_PREFIX_VAL:-[E2E] }" \
-      adbot python - < "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
-  fi
+  docker compose exec -T \
+    -e TELETHON_API_ID="${TELETHON_API_ID_VAL}" \
+    -e TELETHON_API_HASH="${TELETHON_API_HASH_VAL}" \
+    -e ADBOT_E2E_DRIVER_STRING_SESSION="${ADBOT_E2E_DRIVER_SESSION_VAL}" \
+    -e ADBOT_E2E_ADBOT_STRING_SESSION="${ADBOT_STRING_SESSION_VAL}" \
+    -e ADBOT_E2E_SOURCE_CHAT_ID="${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" \
+    -e ADBOT_E2E_INTERNAL_CHAT_ID="${ADBOT_E2E_INTERNAL_CHAT_ID_VAL}" \
+    -e ADBOT_E2E_TIMEOUT_SEC="${ADBOT_E2E_TIMEOUT_SEC_VAL:-45}" \
+    -e ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
+    -e ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
+    -e ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
+    -e ADBOT_E2E_PROMPT_PREFIX="${ADBOT_E2E_PROMPT_PREFIX_VAL:-[E2E] }" \
+    adbot python - < "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
 else
   echo "Adbot E2E test-groups disabled (ADBOT_E2E_ENABLED!=1)."
 fi

@@ -83,6 +83,7 @@ def main() -> None:
         _assert(cfg.target_powerbot_username == "TestNaButlerBot", "unexpected target bot username")
         _assert(cfg.allow_self_outgoing_e2e is False, "self-outgoing e2e must be disabled by default")
         _assert(cfg.self_outgoing_prefix == "[E2E]", "unexpected default self-outgoing prefix")
+        _assert(abs(cfg.self_outgoing_poll_sec - 1.5) < 1e-9, "unexpected default self-outgoing poll interval")
 
     # Username should be sanitized from leading @.
     with _patched_env(**{**_base_env(), "ADBOT_TARGET_POWERBOT_USERNAME": "@TestNaButlerBot"}):

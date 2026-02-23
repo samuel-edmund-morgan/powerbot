@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 
 from adbot.cooldown import CooldownGuard
 from adbot.listener import AdbotListener
@@ -14,6 +15,18 @@ from adbot.audit import build_decision_payload, configure_decision_logging, log_
 from adbot_main_config import AdbotConfig, build_config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _PolledMessageEvent:
+    """Minimal event adapter for polled Telethon messages."""
+
+    client: object
+    chat_id: int
+    message: object
+
+    async def respond(self, text: str, reply_to: int | None = None):
+        await self.client.send_message(self.chat_id, text, reply_to=reply_to)
 
 
 async def _process_new_message_event(
@@ -97,6 +110,85 @@ async def _safe_process_new_message_event(
         return False
 
 
+async def _run_self_outgoing_poll_loop(
+    *,
+    client,
+    listener: AdbotListener,
+    source_chat_ids: set[int],
+    enabled: bool,
+    self_user_id: int,
+    prefix: str,
+    poll_sec: float = 1.5,
+) -> None:
+    """Fallback polling loop for same-session E2E messages.
+
+    Telegram may not deliver outgoing messages from another session as NewMessage
+    updates to this session. In test-only self-outgoing E2E mode we poll source
+    chats and process only prefixed outgoing self-messages.
+    """
+    if not source_chat_ids:
+        return
+    poll_interval = max(float(poll_sec), 0.5)
+    last_seen: dict[int, int] = {}
+
+    for chat_id in source_chat_ids:
+        try:
+            latest = await client.get_messages(chat_id, limit=1)
+        except Exception:
+            logger.exception("adbot poll baseline failed for chat_id=%s", chat_id)
+            last_seen[chat_id] = 0
+            continue
+        if latest:
+            last_seen[chat_id] = int(getattr(latest[0], "id", 0) or 0)
+        else:
+            last_seen[chat_id] = 0
+
+    logger.info(
+        "adbot self-outgoing poll started. chats=%s prefix=%s interval=%.2fs",
+        sorted(source_chat_ids),
+        prefix,
+        poll_interval,
+    )
+
+    while True:
+        for chat_id in source_chat_ids:
+            try:
+                batch = await client.get_messages(chat_id, limit=30)
+            except Exception:
+                logger.exception("adbot poll read failed for chat_id=%s", chat_id)
+                continue
+            cursor = int(last_seen.get(chat_id, 0) or 0)
+            for message in reversed(batch):
+                message_id = int(getattr(message, "id", 0) or 0)
+                if message_id <= cursor:
+                    continue
+                cursor = max(cursor, message_id)
+                if not bool(getattr(message, "out", False)):
+                    continue
+                sender_id = int(getattr(message, "sender_id", 0) or 0)
+                if sender_id != self_user_id:
+                    continue
+                text = (
+                    str(getattr(message, "text", "") or getattr(message, "raw_text", "") or "")
+                    .strip()
+                )
+                if not text.startswith(prefix):
+                    continue
+                polled_event = _PolledMessageEvent(
+                    client=client,
+                    chat_id=int(chat_id),
+                    message=message,
+                )
+                await _safe_process_new_message_event(
+                    event=polled_event,
+                    listener=listener,
+                    source_chat_ids=source_chat_ids,
+                    enabled=enabled,
+                )
+            last_seen[chat_id] = cursor
+        await asyncio.sleep(poll_interval)
+
+
 async def _run(config: AdbotConfig) -> None:
     try:
         from telethon import TelegramClient  # type: ignore
@@ -146,6 +238,21 @@ async def _run(config: AdbotConfig) -> None:
             enabled=config.enabled,
         )
 
+    poll_task: asyncio.Task | None = None
+    if config.allow_self_outgoing_e2e and source_chat_ids and self_user_id:
+        poll_task = asyncio.create_task(
+            _run_self_outgoing_poll_loop(
+                client=client,
+                listener=listener,
+                source_chat_ids=source_chat_ids,
+                enabled=config.enabled,
+                self_user_id=int(self_user_id),
+                prefix=config.self_outgoing_prefix,
+                poll_sec=config.self_outgoing_poll_sec,
+            ),
+            name="adbot-self-outgoing-poll",
+        )
+
     logger.info(
         "adbot started. source_chats=%s self_user_id=%s allow_self_outgoing_e2e=%s",
         sorted(source_chat_ids) if source_chat_ids is not None else "<all>",
@@ -155,6 +262,14 @@ async def _run(config: AdbotConfig) -> None:
     try:
         await client.run_until_disconnected()
     finally:
+        if poll_task is not None:
+            poll_task.cancel()
+            try:
+                await poll_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("failed to stop adbot self-outgoing poll task")
         await client.disconnect()
 
 

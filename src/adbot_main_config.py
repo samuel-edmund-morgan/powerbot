@@ -47,6 +47,7 @@ class AdbotConfig:
     pipeline_timeout_ms: int
     allow_self_outgoing_e2e: bool
     self_outgoing_prefix: str
+    self_outgoing_poll_sec: float
 
 
 def build_config() -> AdbotConfig:
@@ -84,6 +85,11 @@ def build_config() -> AdbotConfig:
         default=False,
     )
     self_outgoing_prefix = os.getenv("ADBOT_SELF_OUTGOING_PREFIX", "[E2E]").strip() or "[E2E]"
+    poll_raw = str(os.getenv("ADBOT_SELF_OUTGOING_POLL_SEC", "1.5")).strip()
+    try:
+        self_outgoing_poll_sec = float(poll_raw)
+    except ValueError:
+        self_outgoing_poll_sec = 1.5
 
     return AdbotConfig(
         enabled=enabled,
@@ -101,4 +107,5 @@ def build_config() -> AdbotConfig:
         pipeline_timeout_ms=int(os.getenv("ADBOT_PIPELINE_TIMEOUT_MS", "5000")),
         allow_self_outgoing_e2e=allow_self_outgoing_e2e,
         self_outgoing_prefix=self_outgoing_prefix,
+        self_outgoing_poll_sec=max(self_outgoing_poll_sec, 0.5),
     )
