@@ -47,17 +47,26 @@ class TesterContext:
 
 async def _wait_for_bot_update(conv, timeout_sec: int):
     import asyncio as _asyncio
-    edit_task = _asyncio.create_task(conv.get_edit(timeout=timeout_sec))
-    resp_task = _asyncio.create_task(conv.get_response(timeout=timeout_sec))
-    done, pending = await _asyncio.wait(
-        {edit_task, resp_task},
-        return_when=_asyncio.FIRST_COMPLETED,
-    )
-    for task in pending:
-        task.cancel()
-    for task in done:
-        return task.result()
-    raise RuntimeError("No bot update received")
+
+    loop = _asyncio.get_running_loop()
+    deadline = loop.time() + max(timeout_sec, 1)
+    last_error: Exception | None = None
+    while loop.time() < deadline:
+        remaining = max(0.1, deadline - loop.time())
+        window = min(2.0, remaining)
+        try:
+            return await conv.get_edit(timeout=window)
+        except Exception as exc:  # pragma: no cover - runtime dependent
+            last_error = exc
+        remaining = max(0.1, deadline - loop.time())
+        window = min(2.0, remaining)
+        try:
+            return await conv.get_response(timeout=window)
+        except Exception as exc:  # pragma: no cover - runtime dependent
+            last_error = exc
+    if last_error is not None:
+        raise TimeoutError("No bot update received within timeout") from last_error
+    raise TimeoutError("No bot update received within timeout")
 
 
 async def _run_scenarios(ctx: TesterContext) -> list[ScenarioReport]:
