@@ -134,6 +134,17 @@ fi
 echo "Bootstrapping Telethon targets from bot tokens (if needed)..."
 python3 "${REPO_DIR}/scripts/bootstrap_telethon_targets.py" --env-file "${TEST_DIR}/.env"
 
+# Bootstrap adbot source/internal chat IDs from Telethon dialogs by configured chat titles.
+echo "Bootstrapping adbot chat IDs from Telethon dialogs (if needed)..."
+if [[ -f "${REPO_DIR}/scripts/bootstrap_adbot_chat_ids.py" ]]; then
+  docker run --rm \
+    --env-file "${TEST_DIR}/.env" \
+    -v "${REPO_DIR}/scripts/bootstrap_adbot_chat_ids.py:/tmp/bootstrap_adbot_chat_ids.py:ro" \
+    -v "${TEST_DIR}/.env:/tmp/powerbot-test.env" \
+    --entrypoint python "${DOCKERHUB_USER}/powerbot:${VERSION}" \
+    /tmp/bootstrap_adbot_chat_ids.py --env-file /tmp/powerbot-test.env || true
+fi
+
 # Preflight: validate Telethon env contract before stack/bootstrap.
 # Helps fail fast when testerbot/adbot E2E are enabled with placeholder values.
 echo "Running Telethon env preflight..."
@@ -259,6 +270,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_strong_signal_guard.py"
 # Automated smoke: adbot config contract (env requirements + allowlist rules).
 echo "Running adbot config contract smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_config_contract.py"
+
+# Automated smoke: adbot chat-id bootstrap wiring contract.
+echo "Running adbot chat-bootstrap policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_chat_bootstrap_policy.py"
 
 # Automated smoke: adbot cooldown contract (per chat+intent + dedupe behavior).
 echo "Running adbot cooldown contract smoke test..."
