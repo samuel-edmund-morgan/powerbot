@@ -37,8 +37,21 @@ def extract_message_callbacks(message) -> set[str]:
 
 
 _EQ_RE = re.compile(r'F\.data\s*==\s*"([^"]+)"')
+_EQ_CONST_RE = re.compile(r"F\.data\s*==\s*([A-Z][A-Z0-9_]+)")
 _SW_RE = re.compile(r'F\.data\.startswith\("([^"]+)"\)')
+_SW_CONST_RE = re.compile(r"F\.data\.startswith\(([A-Z][A-Z0-9_]+)\)")
 _RG_RE = re.compile(r'F\.data\.regexp\(r"([^"]+)"\)')
+_RG_CONST_RE = re.compile(r"F\.data\.regexp\(([A-Z][A-Z0-9_]+)\)")
+_CONST_RE = re.compile(r"""^([A-Z][A-Z0-9_]+)\s*=\s*(['"])(.*?)\2\s*$""", re.MULTILINE)
+
+
+def _parse_constants(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for name, _quote, value in _CONST_RE.findall(text):
+        cleaned = str(value or "").strip()
+        if cleaned:
+            values[name] = cleaned
+    return values
 
 
 _READ_ONLY_EXCLUDE_EQ: dict[str, set[str]] = {
@@ -128,6 +141,48 @@ _READ_ONLY_EXCLUDE_RG: dict[str, set[str]] = {
 }
 
 
+_READ_ONLY_INCLUDE_EQ: dict[str, set[str]] = {
+    "admin": {
+        "admin_refresh",
+        "admin_subs",
+        "admin_sensors",
+        "admin_jobs",
+        "admin_jobs_export",
+        "admin_cancel",
+        "admin_business",
+        "abiz_mod",
+        "abiz_reports",
+        "abiz_support",
+        "abiz_tok_menu",
+        "abiz_subs",
+        "abiz_subs_export",
+        "abiz_payments",
+        "abiz_payments_export",
+        "abiz_audit",
+    },
+    "business": {
+        "bmenu:add",
+        "bmenu:attach",
+        "bmenu:cancel",
+        "bmenu:home",
+        "bmenu:mine",
+        "bmenu:plans",
+    },
+}
+
+
+_READ_ONLY_INCLUDE_SW: dict[str, set[str]] = {
+    "admin": {
+        "admin_jobs_page|",
+        "admin_sensors_page|",
+        "admin_sensor|",
+    },
+    "business": {
+        "bp_menu:",
+    },
+}
+
+
 def parse_callback_inventory(repo_root: Path) -> dict[str, dict[str, set[str]]]:
     """Extract callback matcher patterns from resident/admin/business handlers."""
     mapping = {
@@ -138,10 +193,28 @@ def parse_callback_inventory(repo_root: Path) -> dict[str, dict[str, set[str]]]:
     out: dict[str, dict[str, set[str]]] = {}
     for key, path in mapping.items():
         text = path.read_text(encoding="utf-8")
+        constants = _parse_constants(text)
+        eq = set(_EQ_RE.findall(text))
+        sw = set(_SW_RE.findall(text))
+        rg = set(_RG_RE.findall(text))
+
+        for name in _EQ_CONST_RE.findall(text):
+            value = constants.get(name)
+            if value:
+                eq.add(value)
+        for name in _SW_CONST_RE.findall(text):
+            value = constants.get(name)
+            if value:
+                sw.add(value)
+        for name in _RG_CONST_RE.findall(text):
+            value = constants.get(name)
+            if value:
+                rg.add(value)
+
         out[key] = {
-            "eq": set(_EQ_RE.findall(text)),
-            "startswith": set(_SW_RE.findall(text)),
-            "regexp": set(_RG_RE.findall(text)),
+            "eq": eq,
+            "startswith": sw,
+            "regexp": rg,
         }
     return out
 
@@ -159,6 +232,13 @@ def filter_read_only_inventory(
         eq -= _READ_ONLY_EXCLUDE_EQ.get(bot_name, set())
         sw -= _READ_ONLY_EXCLUDE_SW.get(bot_name, set())
         rg -= _READ_ONLY_EXCLUDE_RG.get(bot_name, set())
+
+        include_eq = _READ_ONLY_INCLUDE_EQ.get(bot_name)
+        include_sw = _READ_ONLY_INCLUDE_SW.get(bot_name)
+        if include_eq is not None:
+            eq &= include_eq
+        if include_sw is not None:
+            sw &= include_sw
 
         filtered[bot_name] = {"eq": eq, "startswith": sw, "regexp": rg}
     return filtered
