@@ -9,6 +9,7 @@ Goals:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -32,9 +33,42 @@ def _find_forbidden_tokens(text: str, forbidden: tuple[str, ...]) -> list[str]:
 
 
 def _extract_send_message_literals(text: str) -> list[str]:
-    # Simple static extraction of send_message("<literal>") calls.
-    pattern = re.compile(r"send_message\(\s*([\"'])(.*?)\1", re.DOTALL)
-    return [m.group(2) for m in pattern.finditer(text)]
+    literals: list[str] = []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return literals
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        func = node.func
+        func_name = None
+        if isinstance(func, ast.Attribute):
+            func_name = func.attr
+        elif isinstance(func, ast.Name):
+            func_name = func.id
+        if func_name != "send_message":
+            continue
+
+        value = None
+        # send_message(entity, "msg", ...)
+        if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+            value = node.args[1].value
+        # send_message("msg", ...)
+        elif len(node.args) >= 1 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            value = node.args[0].value
+        else:
+            for kw in node.keywords:
+                if kw.arg == "message" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    value = kw.value.value
+                    break
+
+        if value is not None:
+            literals.append(value)
+
+    return literals
 
 
 def main() -> None:
