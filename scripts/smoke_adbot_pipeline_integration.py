@@ -174,6 +174,21 @@ async def _run() -> None:
     _assert(any(call[1] == "диспетчер ліфтів" for call in fake_inline.calls), f"missing elevator inline call: {fake_inline.calls}")
     _assert(len(evt_elev.responses) == 1, "elevator flow should send one response")
 
+    # Critical flow from AGENTS backlog: pass/parking phrasing.
+    evt_pass = _FakeEvent(
+        text="Де оформити перепустку в паркінг?",
+        chat_id=-100127,
+        msg_id=901,
+        forwarder=forwarder,
+    )
+    handled_pass = await listener.process(evt_pass, source_chat_id=evt_pass.chat_id)
+    _assert(handled_pass is True, "car-pass intent should be handled for parking phrasing")
+    _assert(
+        any(str(call[1]).startswith("перепустка") for call in fake_inline.calls),
+        f"missing car-pass inline call: {fake_inline.calls}",
+    )
+    _assert(len(evt_pass.responses) == 1, "car-pass flow should send one response")
+
 
 def main() -> None:
     asyncio.run(_run())

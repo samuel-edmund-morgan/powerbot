@@ -65,7 +65,7 @@ INTENTS: tuple[Intent, ...] = (
     Intent(
         code=INTENT_PARKING,
         title="Паркінг",
-        keywords=("паркінг", "паркінгу", "машин", "павільйон", "номер"),
+        keywords=("паркінг", "паркінгу", "паркоміс", "машин", "павільйон", "номер"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_PARKING],
         fallback_reply="🅿️ Для питань паркінгу відкрийте розділ «🚗 Оформлення...».",
         required_signals=2,
@@ -73,7 +73,7 @@ INTENTS: tuple[Intent, ...] = (
     Intent(
         code=INTENT_CAR_PASS,
         title="Перепустка",
-        keywords=("перепуст", "пропуск", "пропуска", "прохід", "вхід", "номер", "член", "авто"),
+        keywords=("перепуст", "пропуск", "пропуска", "прохід", "вхід", "номер", "член", "авто", "оформ"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_CAR_PASS],
         fallback_reply="🚗 Оформлення перепустки авто — через резидент-бота.",
         required_signals=2,
