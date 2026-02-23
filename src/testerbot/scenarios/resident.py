@@ -34,6 +34,11 @@ def _has_button(message, needle: str) -> bool:
         return False
 
 
+def _text_has_any(text: str, *needles: str) -> bool:
+    hay = (text or "").casefold()
+    return any((needle or "").casefold() in hay for needle in needles)
+
+
 async def run(ctx) -> ScenarioResult:
     """Resident path (stable): /start -> building menu -> alerts -> places -> search."""
     started = time.perf_counter()
@@ -114,7 +119,7 @@ async def run(ctx) -> ScenarioResult:
     msg, text = await click_and_wait(
         msg,
         "Світло/опалення/вода",
-        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        predicate=lambda m, t: _text_has_any(t, "оберіть розділ", "що перевірити") or _has_button(m, "Статистика"),
         ctx_name="resident utilities menu",
     )
     assert_contains_any(
@@ -126,7 +131,7 @@ async def run(ctx) -> ScenarioResult:
     msg, text = await click_and_wait(
         msg,
         "Світло",
-        predicate=lambda _m, t: ("Стан електропостачання" in t) or ("Світла" in t),
+        predicate=lambda _m, t: _text_has_any(t, "стан електропостачання", "світла", "світло є"),
         ctx_name="resident utilities status",
     )
     assert_contains_any(text, ("Стан електропостачання", "Світла"), ctx="resident utilities status")
@@ -134,7 +139,7 @@ async def run(ctx) -> ScenarioResult:
     msg, text = await click_and_wait(
         msg,
         "Назад",
-        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        predicate=lambda m, t: _text_has_any(t, "оберіть розділ", "що перевірити") or _has_button(m, "Статистика"),
         ctx_name="resident utilities back from status",
     )
     assert_contains_any(text, ("Оберіть", "Світло", "Статистика"), ctx="resident utilities back from status")
@@ -142,28 +147,28 @@ async def run(ctx) -> ScenarioResult:
     msg, text = await click_and_wait(
         msg,
         "Опалення",
-        predicate=lambda _m, t: ("Стан опалення" in t) or ("Опалення" in t),
+        predicate=lambda _m, t: _text_has_any(t, "стан опалення", "опалення"),
         ctx_name="resident utilities heating",
     )
     assert_contains_any(text, ("Стан опалення", "Опалення"), ctx="resident utilities heating")
     msg, text = await click_and_wait(
         msg,
         "Назад",
-        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        predicate=lambda m, t: _text_has_any(t, "оберіть розділ", "що перевірити") or _has_button(m, "Статистика"),
         ctx_name="resident utilities back from heating",
     )
 
     msg, text = await click_and_wait(
         msg,
         "Вода",
-        predicate=lambda _m, t: ("Стан водопостачання" in t) or ("Вода" in t),
+        predicate=lambda _m, t: _text_has_any(t, "стан води", "стан водопостачання", "вода", "води"),
         ctx_name="resident utilities water",
     )
-    assert_contains_any(text, ("Стан водопостачання", "Вода"), ctx="resident utilities water")
+    assert_contains_any(text, ("Стан водопостачання", "Стан води", "вода"), ctx="resident utilities water")
     msg, text = await click_and_wait(
         msg,
         "Назад",
-        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        predicate=lambda m, t: _text_has_any(t, "оберіть розділ", "що перевірити") or _has_button(m, "Статистика"),
         ctx_name="resident utilities back from water",
     )
 
