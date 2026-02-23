@@ -156,9 +156,6 @@ _READ_ONLY_INCLUDE_EQ: dict[str, set[str]] = {
         "abiz_tok_menu",
         "abiz_subs",
         "abiz_subs_export",
-        "abiz_payments",
-        "abiz_payments_export",
-        "abiz_audit",
     },
     "business": {
         "bmenu:add",
