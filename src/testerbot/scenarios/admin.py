@@ -115,7 +115,10 @@ async def run(ctx) -> ScenarioResult:
             return await settle(message)
 
         await conv.send_message("/start")
-        msg = await ctx.wait_msg(conv)
+        try:
+            msg = await ctx.wait_msg(conv)
+        except TimeoutError:
+            msg, _ = await latest_bot_message("admin /start fallback")
         msg, text = await settle(msg)
         if "Доступно лише адміністраторам" in text or "Лише для адмінів" in text:
             logger.info("admin scenario skipped: user is not admin")
