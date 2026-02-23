@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import logging
 import time
 
-from testerbot.assertions import assert_contains
+from testerbot.assertions import assert_contains, assert_contains_any
 from testerbot.scenarios.common import click_button_and_wait, extract_text
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,28 @@ class ScenarioResult:
     status: str
     duration_ms: int
     message: str
+
+
+def _has_button(message, needle: str) -> bool:
+    needle_norm = needle.casefold()
+    buttons = getattr(message, "buttons", None) or []
+    for row in buttons:
+        for btn in row:
+            text = str(getattr(btn, "text", "")).strip()
+            if needle_norm in text.casefold():
+                return True
+    return False
+
+
+async def _open_business_subsection(conv, message, section_button: str, expect_tokens: tuple[str, ...], timeout_sec: int):
+    msg = await click_button_and_wait(conv, message, section_button, timeout_sec)
+    text = extract_text(msg)
+    assert_contains_any(text, expect_tokens, ctx=f"admin business {section_button}")
+    if _has_button(msg, "Бізнес"):
+        msg = await click_button_and_wait(conv, msg, "Бізнес", timeout_sec)
+        text = extract_text(msg)
+        assert_contains(text, ("Бізнес",), ctx=f"admin back from {section_button}")
+    return msg
 
 
 async def run(ctx) -> ScenarioResult:
@@ -64,6 +86,36 @@ async def run(ctx) -> ScenarioResult:
         msg = await click_button_and_wait(conv, msg, "Бізнес", ctx.cfg.timeout_sec)
         text = extract_text(msg)
         assert_contains(text, ("Бізнес", "Оберіть дію"), ctx="admin business menu")
+
+        # Read-only pass through core business admin subsections.
+        msg = await _open_business_subsection(
+            conv,
+            msg,
+            "Модерація",
+            ("Модерація", "Черга модерації"),
+            ctx.cfg.timeout_sec,
+        )
+        msg = await _open_business_subsection(
+            conv,
+            msg,
+            "Правки закладів",
+            ("Правки закладів", "Черга порожня"),
+            ctx.cfg.timeout_sec,
+        )
+        msg = await _open_business_subsection(
+            conv,
+            msg,
+            "Підтримка Partner",
+            ("Підтримка Partner", "Черга порожня"),
+            ctx.cfg.timeout_sec,
+        )
+        msg = await _open_business_subsection(
+            conv,
+            msg,
+            "Коди прив'язки",
+            ("Коди прив'язки", "Оберіть дію"),
+            ctx.cfg.timeout_sec,
+        )
 
         msg = await click_button_and_wait(conv, msg, "Підписки", ctx.cfg.timeout_sec)
         text = extract_text(msg)
