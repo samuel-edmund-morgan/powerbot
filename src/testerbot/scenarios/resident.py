@@ -140,6 +140,14 @@ async def run(ctx) -> ScenarioResult:
                 return msg, text
         raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
 
+    async def recover_main_menu(*, ctx_name: str):
+        await ctx.client.send_message(target, "/start")
+        msg, text = await wait_bot_message(
+            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Пошук закладу"),
+            ctx_name=ctx_name,
+        )
+        return msg, text
+
     await ctx.client.send_message(target, "/start")
     msg, text = await wait_bot_message(
         predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Обрати будинок"),
@@ -391,29 +399,35 @@ async def run(ctx) -> ScenarioResult:
                     predicate=lambda _m, t: ("Укриття" in t) or ("Оберіть укриття" in t),
                     ctx_name="resident shelters detail back",
                 )
-            except AssertionError:
+            except Exception:
                 pass
 
-    try:
-        msg, _ = await click_and_wait(
-            msg,
-            "Меню",
-            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
-            ctx_name="resident alerts back to menu",
-        )
-    except AssertionError:
-        msg, _ = await click_and_wait(
-            msg,
-            "Назад",
-            predicate=lambda m, t: ("Тривоги та укриття" in t) and (_has_button(m, "Меню") or _has_button(m, "Назад")),
-            ctx_name="resident alerts back step",
-        )
-        msg, _ = await click_and_wait(
-            msg,
-            "Меню",
-            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
-            ctx_name="resident alerts back to menu",
-        )
+    if not _has_button(msg, "Меню") and _has_button(msg, "Назад"):
+        try:
+            msg, _ = await click_and_wait(
+                msg,
+                "Назад",
+                predicate=lambda m, t: ("Тривоги та укриття" in t) and (_has_button(m, "Меню") or _has_button(m, "Назад")),
+                ctx_name="resident alerts back step",
+            )
+        except Exception:
+            msg, _ = await recover_main_menu(ctx_name="resident recover after shelters")
+
+    if _has_button(msg, "Меню"):
+        try:
+            msg, _ = await click_and_wait(
+                msg,
+                "Меню",
+                predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
+                ctx_name="resident alerts back to menu",
+            )
+        except Exception:
+            msg, _ = await recover_main_menu(ctx_name="resident recover alerts menu")
+    else:
+        msg, _ = await recover_main_menu(ctx_name="resident recover missing alerts menu")
+
+    if not (("Головне меню" in extract_text(msg)) and _has_button(msg, "Заклади в ЖК")):
+        msg, _ = await recover_main_menu(ctx_name="resident force main menu")
 
     # Places flow (read-only).
     msg, text = await click_and_wait(
