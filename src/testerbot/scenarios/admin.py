@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import asyncio
 import logging
+import sqlite3
 import time
 
 from telethon.errors.rpcerrorlist import MessageIdInvalidError
 
 from testerbot.assertions import assert_contains, assert_contains_any
+from testerbot.callbacks import extract_callback_data
 from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,33 @@ async def run(ctx) -> ScenarioResult:
     target = ctx.cfg.targets.adminbot
     bot_id = await ctx.client.get_peer_id(target)
     scenario_started_utc = datetime.now(timezone.utc)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _load_places_with_active_claim_token() -> set[int]:
+        db_path = str(getattr(ctx.cfg, "db_path", "") or "").strip()
+        if not db_path:
+            return set()
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+            rows = conn.execute(
+                """
+                SELECT DISTINCT place_id
+                FROM business_claim_tokens
+                WHERE status = 'active' AND expires_at > ?
+                ORDER BY place_id
+                """,
+                (now_iso,),
+            ).fetchall()
+            return {int(row[0]) for row in rows if row and int(row[0]) > 0}
+        except Exception as exc:
+            logger.warning("admin scenario: failed to load active claim-token places: %s", exc)
+            return set()
+        finally:
+            if conn is not None:
+                conn.close()
+
+    active_claim_token_place_ids = _load_places_with_active_claim_token()
 
     async def latest_bot_message(ctx_name: str, *, require_buttons: bool = False):
         msgs = await ctx.client.get_messages(target, limit=12)
@@ -255,6 +284,87 @@ async def run(ctx) -> ScenarioResult:
             else:
                 raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
         raise AssertionError(f"{ctx_name}: unable to click non-navigation button")
+
+    def _find_button_by_callback_prefix(
+        message,
+        prefix: str,
+        *,
+        place_id_allowlist: set[int] | None = None,
+    ) -> tuple[int, int, str] | None:
+        buttons = getattr(message, "buttons", None) or []
+        for row_idx, row in enumerate(buttons):
+            for col_idx, btn in enumerate(row):
+                callback_data = extract_callback_data(btn) or ""
+                if not callback_data.startswith(prefix):
+                    continue
+                if place_id_allowlist is not None:
+                    parts = callback_data.split("|")
+                    if len(parts) < 2:
+                        continue
+                    try:
+                        place_id = int(parts[1])
+                    except Exception:
+                        continue
+                    if place_id not in place_id_allowlist:
+                        continue
+                return row_idx, col_idx, callback_data
+        return None
+
+    async def click_callback_prefix_and_wait(
+        message,
+        callback_prefix: str,
+        *,
+        predicate,
+        ctx_name: str,
+        place_id_allowlist: set[int] | None = None,
+    ):
+        current = message
+        for _ in range(4):
+            match = _find_button_by_callback_prefix(
+                current,
+                callback_prefix,
+                place_id_allowlist=place_id_allowlist,
+            )
+            if match is None:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t, p=callback_prefix, allow=place_id_allowlist: (
+                        _find_button_by_callback_prefix(m, p, place_id_allowlist=allow) is not None
+                    ),
+                    ctx_name=f"{ctx_name} (refresh callback buttons)",
+                )
+                continue
+
+            i, j, callback_data = match
+            prev_snapshot = (
+                getattr(current, "id", None),
+                extract_text(current),
+                _to_utc(getattr(current, "edit_date", None)),
+            )
+            try:
+                ctx.record_clicked_callback("admin", callback_data)
+                await current.click(i, j)
+            except MessageIdInvalidError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t, p=callback_prefix, allow=place_id_allowlist: (
+                        _find_button_by_callback_prefix(m, p, place_id_allowlist=allow) is not None
+                    ),
+                    ctx_name=f"{ctx_name} (refresh stale message)",
+                )
+                continue
+
+            try:
+                msg, text = await wait_bot_message(
+                    predicate=predicate,
+                    ctx_name=ctx_name,
+                    previous_snapshot=prev_snapshot,
+                )
+                ctx.record_seen_callbacks("admin", collect_message_callbacks(msg))
+                return msg, text
+            except AssertionError:
+                current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                continue
+
+        raise AssertionError(f"{ctx_name}: unable to click callback prefix `{callback_prefix}`")
 
     def assert_not_dead_end(current_msg, *, ctx_name: str) -> None:
         if _has_recovery_controls(current_msg):
@@ -574,6 +684,7 @@ async def run(ctx) -> ScenarioResult:
                 predicate=lambda _m, t: "Коди прив'язки" in t,
                 ctx_name="admin business tokens menu open",
             )
+            assert_not_dead_end(msg, ctx_name="admin business tokens menu open")
             if _has_button(msg, "Список закладів"):
                 msg, text = await click_and_wait(
                     msg,
@@ -581,12 +692,45 @@ async def run(ctx) -> ScenarioResult:
                     predicate=lambda _m, t: ("Список закладів" in t) and ("категор" in t.casefold()),
                     ctx_name="admin business tokens services open",
                 )
+                assert_not_dead_end(msg, ctx_name="admin business tokens services open")
+                msg, text = await exercise_read_only_navigation(
+                    msg,
+                    expect_tokens=("Список закладів",),
+                    ctx_name="admin business tokens services nav",
+                )
                 if _has_button(msg, "Категорії") or _has_button(msg, "Коди прив'язки") or _has_button(msg, "Бізнес"):
                     msg, text = await click_first_non_nav_button(
                         msg,
                         predicate=lambda _m, t: "Список закладів" in t and ("заклад" in t.casefold()),
                         ctx_name="admin business tokens service pick",
                     )
+                    assert_not_dead_end(msg, ctx_name="admin business tokens places open")
+                    msg, text = await exercise_read_only_navigation(
+                        msg,
+                        expect_tokens=("Список закладів",),
+                        ctx_name="admin business tokens places nav",
+                    )
+                    if active_claim_token_place_ids:
+                        try:
+                            msg, text = await click_callback_prefix_and_wait(
+                                msg,
+                                "abiz_tokv_o|",
+                                predicate=lambda _m, t: ("Код прив'язки" in t) and ("Token:" in t),
+                                ctx_name="admin business tokens place open",
+                                place_id_allowlist=active_claim_token_place_ids,
+                            )
+                            assert_contains(text, ("Код прив'язки", "Token:"), ctx="admin business tokens place open")
+                            assert_not_dead_end(msg, ctx_name="admin business tokens place open")
+                            if _has_button(msg, "Заклади"):
+                                msg, text = await click_and_wait(
+                                    msg,
+                                    "Заклади",
+                                    predicate=lambda _m, t: ("Список закладів" in t) and ("заклад" in t.casefold()),
+                                    ctx_name="admin business tokens place back to places",
+                                )
+                                assert_not_dead_end(msg, ctx_name="admin business tokens place back to places")
+                        except AssertionError as exc:
+                            logger.info("admin tokens place-open read-only path skipped: %s", exc)
                     if _has_button(msg, "Категорії"):
                         msg, text = await click_and_wait(
                             msg,
