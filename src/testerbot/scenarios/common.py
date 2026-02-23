@@ -15,17 +15,27 @@ logger = logging.getLogger(__name__)
 
 
 async def wait_for_bot_response(conv, timeout_sec: int):
-    edit_task = asyncio.create_task(conv.get_edit(timeout=timeout_sec))
-    resp_task = asyncio.create_task(conv.get_response(timeout=timeout_sec))
-    done, pending = await asyncio.wait(
-        {edit_task, resp_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for task in pending:
-        task.cancel()
-    for task in done:
-        return task.result()
-    raise RuntimeError("No bot response")
+    # Conversation futures are sensitive to concurrent cancellation races.
+    # Poll edit/response sequentially in short windows until timeout budget.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(timeout_sec, 1)
+    last_error: Exception | None = None
+    while loop.time() < deadline:
+        remaining = max(0.1, deadline - loop.time())
+        window = min(2.0, remaining)
+        try:
+            return await conv.get_edit(timeout=window)
+        except Exception as exc:  # pragma: no cover - runtime-dependent
+            last_error = exc
+        remaining = max(0.1, deadline - loop.time())
+        window = min(2.0, remaining)
+        try:
+            return await conv.get_response(timeout=window)
+        except Exception as exc:  # pragma: no cover - runtime-dependent
+            last_error = exc
+    if last_error is not None:
+        raise TimeoutError("No bot response within timeout") from last_error
+    raise TimeoutError("No bot response within timeout")
 
 
 def find_button(message, needle: str) -> tuple[int, int]:
