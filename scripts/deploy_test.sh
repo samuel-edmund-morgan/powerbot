@@ -130,6 +130,10 @@ if [[ -f "${REPO_DIR}/.env.example" ]]; then
   done < "${REPO_DIR}/.env.example"
 fi
 
+# Bootstrap Telethon target usernames/IDs from bot tokens where placeholders are still present.
+echo "Bootstrapping Telethon targets from bot tokens (if needed)..."
+python3 "${REPO_DIR}/scripts/bootstrap_telethon_targets.py" --env-file "${TEST_DIR}/.env"
+
 # Preflight: validate Telethon env contract before stack/bootstrap.
 # Helps fail fast when testerbot/adbot E2E are enabled with placeholder values.
 echo "Running Telethon env preflight..."
