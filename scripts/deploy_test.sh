@@ -342,19 +342,25 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
     exit 1
   fi
 
-  docker compose exec -T \
-    -e TELETHON_API_ID="${TELETHON_API_ID_VAL}" \
-    -e TELETHON_API_HASH="${TELETHON_API_HASH_VAL}" \
-    -e ADBOT_E2E_DRIVER_STRING_SESSION="${ADBOT_E2E_DRIVER_SESSION_VAL}" \
-    -e ADBOT_E2E_ADBOT_STRING_SESSION="${ADBOT_STRING_SESSION_VAL}" \
-    -e ADBOT_E2E_SOURCE_CHAT_ID="${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" \
-    -e ADBOT_E2E_INTERNAL_CHAT_ID="${ADBOT_E2E_INTERNAL_CHAT_ID_VAL}" \
-    -e ADBOT_E2E_TIMEOUT_SEC="${ADBOT_E2E_TIMEOUT_SEC_VAL:-45}" \
-    -e ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
-    -e ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
-    -e ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
-    -e ADBOT_E2E_PROMPT_PREFIX="${ADBOT_E2E_PROMPT_PREFIX_VAL:-[E2E] }" \
-    adbot python - < "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
+  if [[ "${ADBOT_E2E_DRIVER_SESSION_VAL}" == "${ADBOT_STRING_SESSION_VAL}" ]]; then
+    echo "WARN: ADBOT_E2E_DRIVER_STRING_SESSION equals ADBOT_STRING_SESSION."
+    echo "WARN: Skipping real adbot E2E test-groups run (Telegram does not deliver self-sent messages to another session reliably)."
+    echo "WARN: Provide a distinct driver session to enable full adbot E2E."
+  else
+    docker compose exec -T \
+      -e TELETHON_API_ID="${TELETHON_API_ID_VAL}" \
+      -e TELETHON_API_HASH="${TELETHON_API_HASH_VAL}" \
+      -e ADBOT_E2E_DRIVER_STRING_SESSION="${ADBOT_E2E_DRIVER_SESSION_VAL}" \
+      -e ADBOT_E2E_ADBOT_STRING_SESSION="${ADBOT_STRING_SESSION_VAL}" \
+      -e ADBOT_E2E_SOURCE_CHAT_ID="${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" \
+      -e ADBOT_E2E_INTERNAL_CHAT_ID="${ADBOT_E2E_INTERNAL_CHAT_ID_VAL}" \
+      -e ADBOT_E2E_TIMEOUT_SEC="${ADBOT_E2E_TIMEOUT_SEC_VAL:-45}" \
+      -e ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
+      -e ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
+      -e ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
+      -e ADBOT_E2E_PROMPT_PREFIX="${ADBOT_E2E_PROMPT_PREFIX_VAL:-[E2E] }" \
+      adbot python - < "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
+  fi
 else
   echo "Adbot E2E test-groups disabled (ADBOT_E2E_ENABLED!=1)."
 fi
