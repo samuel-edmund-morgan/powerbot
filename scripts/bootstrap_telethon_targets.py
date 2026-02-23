@@ -98,12 +98,17 @@ def main() -> None:
 
     discovered: dict[str, tuple[str, int]] = {}
     token_to_role = (
+        ("BOT_TOKEN", "powerbot"),
+        # Legacy alias kept for compatibility with older env templates.
         ("BOT_API_KEY", "powerbot"),
         ("ADMIN_BOT_API_KEY", "adminbot"),
         ("BUSINESS_BOT_API_KEY", "businessbot"),
     )
     for token_key, role in token_to_role:
         token = env.get(token_key, "")
+        if role in discovered:
+            # Keep the first successful discovery for each role.
+            continue
         if not token:
             continue
         try:
@@ -155,4 +160,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
