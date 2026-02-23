@@ -280,6 +280,22 @@ async def run(ctx) -> ScenarioResult:
         assert_contains_any(text, ("Статус доступу", "Тариф", "Активно до"), ctx=f"{ctx_name} owner card")
         return current, text
 
+    async def ensure_owner_card_with_action(message, *, needle: str, ctx_name: str):
+        current, text = await open_first_owner_card(message, ctx_name=ctx_name)
+        if _has_button(current, needle):
+            return current, text
+        # Retry on transient UI/state drift (edited owner-card without full action rows yet).
+        current, text = await wait_bot_message(
+            predicate=lambda m, t: _is_owner_card_text(t) and _has_button(m, needle),
+            ctx_name=f"{ctx_name} wait action `{needle}`",
+            previous_snapshot=(
+                getattr(current, "id", None),
+                extract_text(current),
+                _to_utc(getattr(current, "edit_date", None)),
+            ),
+        )
+        return current, text
+
     async def exercise_owner_card_actions(message):
         current = message
         actions: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -293,7 +309,18 @@ async def run(ctx) -> ScenarioResult:
             ("Запропонувати правку", ("Запропонувати правку", "Що хочеш змінити", "Скасовано", "Плани")),
         )
         for needle, expect in actions:
-            if not _has_button(current, needle):
+            try:
+                current, _ = await ensure_owner_card_with_action(
+                    current,
+                    needle=needle,
+                    ctx_name=f"business owner action {needle}",
+                )
+            except AssertionError as exc:
+                logger.warning(
+                    "business owner action `%s` skipped: unable to prepare owner-card state: %s",
+                    needle,
+                    exc,
+                )
                 continue
             try:
                 current, text = await click_and_wait(
@@ -305,7 +332,11 @@ async def run(ctx) -> ScenarioResult:
                 assert_contains_any(text, expect, ctx=f"business owner action {needle}")
             except AssertionError as exc:
                 logger.warning("business owner action `%s` skipped due unstable UI state: %s", needle, exc)
-            current, _ = await open_first_owner_card(current, ctx_name=f"business owner action {needle}")
+            try:
+                current, _ = await open_first_owner_card(current, ctx_name=f"business owner action {needle} recover")
+            except AssertionError:
+                # Keep scenario moving; next iteration will re-open owner-card from main menu.
+                pass
         return current
 
     await ctx.client.send_message(ctx.cfg.targets.businessbot, "/start")
