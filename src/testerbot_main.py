@@ -289,15 +289,17 @@ async def main() -> int:
                     coverage_lines.append(
                         f"{bot_name}: seen={len(seen)} clicked={len(clicked)} inventory={total_rules} missing={missing_total}"
                     )
-                    if strict and missing_total > 0:
-                        coverage_failed = True
-                        logger.error(
-                            "callback coverage strict fail for %s: missing eq=%s startswith=%s regexp=%s",
+                    if missing_total > 0:
+                        logger.warning(
+                            "callback coverage missing for %s: eq=%s startswith=%s regexp=%s",
                             bot_name,
                             sorted(missing.get("eq", set())),
                             sorted(missing.get("startswith", set())),
                             sorted(missing.get("regexp", set())),
                         )
+                    if strict and missing_total > 0:
+                        coverage_failed = True
+                        logger.error("callback coverage strict fail for %s", bot_name)
                 logger.info("testerbot callback coverage (read-only): %s", " | ".join(coverage_lines))
                 if strict and coverage_failed:
                     scenario_results.append(

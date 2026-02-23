@@ -110,9 +110,18 @@ _READ_ONLY_EXCLUDE_SW: dict[str, set[str]] = {
         "be:",
         "bef:",
         "bmod_",
+        "bm:",
         "bp:",
         "bp_cancel:",
         "btok",
+    },
+}
+
+
+_READ_ONLY_EXCLUDE_RG: dict[str, set[str]] = {
+    "resident": {
+        # Gallery callbacks are data-dependent (shown only when media exists).
+        r"^pgm_\d+_\d+$",
     },
 }
 
@@ -147,6 +156,7 @@ def filter_read_only_inventory(
 
         eq -= _READ_ONLY_EXCLUDE_EQ.get(bot_name, set())
         sw -= _READ_ONLY_EXCLUDE_SW.get(bot_name, set())
+        rg -= _READ_ONLY_EXCLUDE_RG.get(bot_name, set())
 
         filtered[bot_name] = {"eq": eq, "startswith": sw, "regexp": rg}
     return filtered

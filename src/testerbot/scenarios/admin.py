@@ -204,6 +204,24 @@ async def run(ctx) -> ScenarioResult:
         msg, text = await ensure_main_menu(msg)
         assert_contains(text, ("Оберіть дію",), ctx=f"admin {section} back")
 
+    # Open broadcast composer and cancel (covers admin_cancel read-only callback).
+    if _has_button(msg, "Розсилка"):
+        msg, text = await click_and_wait(
+            msg,
+            "Розсилка",
+            predicate=lambda _m, t: ("Введіть текст" in t) or ("розсилк" in t.casefold()),
+            ctx_name="admin broadcast open",
+        )
+        assert_contains_any(text, ("Введіть текст", "розсилк"), ctx="admin broadcast open")
+        if _has_button(msg, "Скасувати"):
+            msg, text = await click_and_wait(
+                msg,
+                "Скасувати",
+                predicate=lambda _m, t: "Оберіть дію" in t,
+                ctx_name="admin broadcast cancel",
+            )
+            assert_contains(text, ("Оберіть дію",), ctx="admin broadcast cancel")
+
     # Business section and read-only subsections.
     if _has_button(msg, "Бізнес"):
         msg, text = await click_and_wait(

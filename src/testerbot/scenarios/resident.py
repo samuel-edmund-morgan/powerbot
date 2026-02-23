@@ -23,8 +23,18 @@ class ScenarioResult:
 
 
 def _is_nav_button(label: str) -> bool:
-    normalized = label.casefold()
-    return ("меню" in normalized) or ("назад" in normalized)
+    normalized = str(label or "").strip().casefold()
+    if not normalized:
+        return True
+    if ("меню" in normalized) or ("назад" in normalized):
+        return True
+    if normalized in {"⬅️", "➡️"}:
+        return True
+    if normalized.isdigit():
+        return True
+    if "/" in normalized and all(part.strip().isdigit() for part in normalized.split("/", 1)):
+        return True
+    return False
 
 
 def _has_button(message, needle: str) -> bool:
@@ -438,6 +448,58 @@ async def run(ctx) -> ScenarioResult:
     )
     assert_contains(text, ("Заклади в ЖК",), ctx="resident places menu")
     assert_contains_any(text, ("Оберіть категорію", "Поки що категорій немає"), ctx="resident places categories")
+
+    if "Поки що категорій немає" not in text:
+        # Open one category.
+        msg, text = await click_first_non_nav_button(
+            msg,
+            predicate=lambda _m, t: ("Оберіть заклад" in t) or ("Заклади в ЖК" in t),
+            ctx_name="resident places category open",
+        )
+        assert_contains_any(text, ("Оберіть заклад", "Заклади в ЖК"), ctx="resident places category open")
+
+        # Open one place card (if there are places in category).
+        if "Оберіть заклад" in text:
+            msg, text = await click_first_non_nav_button(
+                msg,
+                predicate=lambda m, t: (
+                    ("Адреса" in t) or ("Заклад" in t) or _has_button(m, "Запропонувати правку")
+                ),
+                ctx_name="resident places place open",
+            )
+            assert_contains_any(text, ("Адреса", "Заклад"), ctx="resident places place open")
+
+            # Cover report callback in read-only way (open -> cancel).
+            if _has_button(msg, "Запропонувати правку"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Запропонувати правку",
+                    predicate=lambda m, t: ("600" in t) or _has_button(m, "Скасувати"),
+                    ctx_name="resident places report open",
+                )
+                if _has_button(msg, "Скасувати"):
+                    msg, text = await click_and_wait(
+                        msg,
+                        "Скасувати",
+                        predicate=lambda _m, t: ("Адреса" in t) or ("Заклад" in t),
+                        ctx_name="resident places report cancel",
+                    )
+
+            if _has_button(msg, "Назад"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Назад",
+                    predicate=lambda _m, t: ("Оберіть заклад" in t) or ("Заклади в ЖК" in t),
+                    ctx_name="resident places place back",
+                )
+
+        if _has_button(msg, "Назад"):
+            msg, text = await click_and_wait(
+                msg,
+                "Назад",
+                predicate=lambda _m, t: "Заклади в ЖК" in t,
+                ctx_name="resident places category back",
+            )
 
     msg, _ = await click_and_wait(
         msg,
