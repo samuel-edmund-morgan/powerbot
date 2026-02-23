@@ -219,10 +219,10 @@ async def run(ctx) -> ScenarioResult:
         msg, text = await click_and_wait(
             msg,
             "Розсилка",
-            predicate=lambda _m, t: ("Введіть текст" in t) or ("розсилк" in t.casefold()),
+            predicate=lambda _m, t: ("Введіть текст" in t) or ("Надішліть текст" in t) or ("розсилк" in t.casefold()),
             ctx_name="admin broadcast open",
         )
-        assert_contains_any(text, ("Введіть текст", "розсилк"), ctx="admin broadcast open")
+        assert_contains_any(text, ("Введіть текст", "Надішліть текст", "розсилк"), ctx="admin broadcast open")
         if _has_button(msg, "Скасувати"):
             msg, text = await click_and_wait(
                 msg,

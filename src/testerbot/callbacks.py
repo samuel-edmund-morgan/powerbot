@@ -58,6 +58,8 @@ _READ_ONLY_EXCLUDE_EQ: dict[str, set[str]] = {
         "notif_toggle_offers_digest",
         "notif_toggle_schedule",
         "notif_toggle_sponsored",
+        # Quiet-hours help button is UI-copy/config dependent.
+        "quiet_info",
     },
     "admin": {
         # Explicit control-plane mutating actions.
