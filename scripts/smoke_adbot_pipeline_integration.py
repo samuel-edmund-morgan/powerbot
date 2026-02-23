@@ -139,6 +139,23 @@ async def _run() -> None:
     _assert(handled_dup is False, "expected cooldown to suppress duplicate message")
     _assert(len(evt_dup.responses) == 0, "duplicate should not produce response")
 
+    # Cooldown is per (chat,intent), not only by exact text hash.
+    evt_same_intent_other_text = _FakeEvent(
+        text="Підкажіть, будь ласка, телефон електрика",
+        chat_id=-100123,
+        msg_id=503,
+        forwarder=forwarder,
+    )
+    handled_same_intent = await listener.process(
+        evt_same_intent_other_text,
+        source_chat_id=evt_same_intent_other_text.chat_id,
+    )
+    _assert(
+        handled_same_intent is False,
+        "expected cooldown to suppress same intent with different wording in same chat",
+    )
+    _assert(len(evt_same_intent_other_text.responses) == 0, "suppressed same-intent message must not reply")
+
     # Fallback flow: matched intent with empty inline result must return fallback text.
     evt_fallback = _FakeEvent(
         text="Дайте номер сантехніка будь ласка",
