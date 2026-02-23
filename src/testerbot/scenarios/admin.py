@@ -35,6 +35,21 @@ def _has_button(message, needle: str) -> bool:
     return False
 
 
+def _is_nav_button(label: str) -> bool:
+    normalized = str(label or "").strip().casefold()
+    if not normalized:
+        return True
+    if "назад" in normalized or "меню" in normalized or "бізнес" in normalized:
+        return True
+    if normalized in {"⬅️", "➡️"}:
+        return True
+    if "/" in normalized and all(part.strip().isdigit() for part in normalized.split("/", 1)):
+        return True
+    if normalized.startswith("«"):
+        return True
+    return False
+
+
 def _to_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
@@ -143,6 +158,47 @@ async def run(ctx) -> ScenarioResult:
                 continue
 
         raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
+
+    async def click_first_non_nav_button(message, *, predicate, ctx_name: str):
+        current = message
+        for _ in range(4):
+            buttons = getattr(current, "buttons", None) or []
+            for row_idx, row in enumerate(buttons):
+                for btn_idx, btn in enumerate(row):
+                    label = str(getattr(btn, "text", "")).strip()
+                    if _is_nav_button(label):
+                        continue
+                    prev_snapshot = (
+                        getattr(current, "id", None),
+                        extract_text(current),
+                        _to_utc(getattr(current, "edit_date", None)),
+                    )
+                    try:
+                        ctx.record_clicked_callback("admin", callback_at(current, row_idx, btn_idx))
+                        await current.click(row_idx, btn_idx)
+                    except MessageIdInvalidError:
+                        current, _ = await wait_bot_message(
+                            predicate=lambda m, _t: bool(getattr(m, "buttons", None)),
+                            ctx_name=f"{ctx_name} (refresh stale message)",
+                        )
+                        break
+                    try:
+                        msg, text = await wait_bot_message(
+                            predicate=predicate,
+                            ctx_name=ctx_name,
+                            previous_snapshot=prev_snapshot,
+                        )
+                        ctx.record_seen_callbacks("admin", collect_message_callbacks(msg))
+                        return msg, text
+                    except AssertionError:
+                        current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                        break
+                else:
+                    continue
+                break
+            else:
+                raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
+        raise AssertionError(f"{ctx_name}: unable to click non-navigation button")
 
     async def ensure_main_menu(message):
         current = message
@@ -278,6 +334,50 @@ async def run(ctx) -> ScenarioResult:
                     "Бізнес",
                     predicate=lambda _m, t: "Бізнес" in t,
                     ctx_name=f"admin business back from {button}",
+                )
+
+        # Claim tokens read-only deep flow:
+        # menu -> list places -> first service -> places list -> back categories -> back tokens menu
+        if _has_button(msg, "Коди прив'язки"):
+            msg, text = await click_and_wait(
+                msg,
+                "Коди прив'язки",
+                predicate=lambda _m, t: "Коди прив'язки" in t,
+                ctx_name="admin business tokens menu open",
+            )
+            if _has_button(msg, "Список закладів"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Список закладів",
+                    predicate=lambda _m, t: ("Список закладів" in t) and ("категор" in t.casefold()),
+                    ctx_name="admin business tokens services open",
+                )
+                if _has_button(msg, "Категорії") or _has_button(msg, "Коди прив'язки") or _has_button(msg, "Бізнес"):
+                    msg, text = await click_first_non_nav_button(
+                        msg,
+                        predicate=lambda _m, t: "Список закладів" in t and ("заклад" in t.casefold()),
+                        ctx_name="admin business tokens service pick",
+                    )
+                    if _has_button(msg, "Категорії"):
+                        msg, text = await click_and_wait(
+                            msg,
+                            "Категорії",
+                            predicate=lambda _m, t: ("Список закладів" in t) and ("категор" in t.casefold()),
+                            ctx_name="admin business tokens places back to services",
+                        )
+                if _has_button(msg, "Коди прив'язки"):
+                    msg, text = await click_and_wait(
+                        msg,
+                        "Коди прив'язки",
+                        predicate=lambda _m, t: "Коди прив'язки" in t,
+                        ctx_name="admin business tokens back to menu",
+                    )
+            if _has_button(msg, "Бізнес"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Бізнес",
+                    predicate=lambda _m, t: "Бізнес" in t,
+                    ctx_name="admin business tokens back to business",
                 )
 
         msg, text = await ensure_main_menu(msg)

@@ -154,6 +154,7 @@ _READ_ONLY_INCLUDE_EQ: dict[str, set[str]] = {
         "abiz_reports",
         "abiz_support",
         "abiz_tok_menu",
+        "abiz_tok_list",
         "abiz_subs",
         "abiz_subs_export",
     },
@@ -173,6 +174,7 @@ _READ_ONLY_INCLUDE_SW: dict[str, set[str]] = {
         "admin_jobs_page|",
         "admin_sensors_page|",
         "admin_sensor|",
+        "abiz_tokv_s|",
     },
     "business": {
         "bp_menu:",
