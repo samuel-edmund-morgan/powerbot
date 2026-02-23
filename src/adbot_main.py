@@ -116,6 +116,8 @@ async def _run(config: AdbotConfig) -> None:
         logger.error("adbot session is not authorized.")
         await client.disconnect()
         return
+    me = await client.get_me()
+    self_user_id = int(getattr(me, "id", 0) or 0) or None
 
     powerbot_inline = PowerbotInlineClient(client, config.target_powerbot_username)
     pipeline = ResponsePipeline(
@@ -130,6 +132,9 @@ async def _run(config: AdbotConfig) -> None:
         cooldown=cooldown,
         pipeline=pipeline,
         internal_chat_id=config.internal_chat_id,
+        allow_self_outgoing_e2e=config.allow_self_outgoing_e2e,
+        self_user_id=self_user_id,
+        self_outgoing_prefix=config.self_outgoing_prefix,
     )
 
     @client.on(events.NewMessage)
@@ -142,8 +147,10 @@ async def _run(config: AdbotConfig) -> None:
         )
 
     logger.info(
-        "adbot started. source_chats=%s",
+        "adbot started. source_chats=%s self_user_id=%s allow_self_outgoing_e2e=%s",
         sorted(source_chat_ids) if source_chat_ids is not None else "<all>",
+        self_user_id,
+        config.allow_self_outgoing_e2e,
     )
     try:
         await client.run_until_disconnected()

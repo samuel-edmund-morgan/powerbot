@@ -19,7 +19,10 @@ Required env:
   ADBOT_E2E_SOURCE_CHAT_ID
 
 Optional env:
+  ADBOT_STRING_SESSION
+  ADBOT_E2E_ADBOT_STRING_SESSION
   ADBOT_E2E_INTERNAL_CHAT_ID
+  ADBOT_E2E_PROMPT_PREFIX  (default: "[E2E] ")
   ADBOT_E2E_TIMEOUT_SEC      (default: 45)
   ADBOT_E2E_POLL_SEC         (default: 1.0)
   ADBOT_E2E_NEGATIVE_WAIT_SEC (default: 12)
@@ -49,6 +52,12 @@ def _parse_bool(raw: str, default: bool = False) -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _same_session(a: str | None, b: str | None) -> bool:
+    left = str(a or "").strip()
+    right = str(b or "").strip()
+    return bool(left and right and left == right)
 
 
 def _load_telethon():
@@ -216,8 +225,19 @@ async def _run() -> None:
     poll_sec = float(str(os.getenv("ADBOT_E2E_POLL_SEC", "1.0")).strip())
     negative_wait_sec = int(str(os.getenv("ADBOT_E2E_NEGATIVE_WAIT_SEC", "12")).strip())
     verify_forward = _parse_bool(os.getenv("ADBOT_E2E_VERIFY_FORWARD", "1"), default=True)
+    prompt_prefix = str(os.getenv("ADBOT_E2E_PROMPT_PREFIX", "[E2E] ")).strip()
+    if not prompt_prefix:
+        prompt_prefix = "[E2E]"
 
     session = _require_env("ADBOT_E2E_DRIVER_STRING_SESSION")
+    adbot_session = (
+        str(os.getenv("ADBOT_E2E_ADBOT_STRING_SESSION", "")).strip()
+        or str(os.getenv("ADBOT_STRING_SESSION", "")).strip()
+    )
+    if _same_session(session, adbot_session) and not prompt_prefix:
+        raise SystemExit(
+            "ERROR: adbot and e2e-driver sessions are identical; set ADBOT_E2E_PROMPT_PREFIX."
+        )
     client = TelegramClient(StringSession(session), api_id, api_hash)
     await client.connect()
     if not await client.is_user_authorized():
@@ -248,7 +268,7 @@ async def _run() -> None:
     try:
         for idx, scenario in enumerate(scenarios, start=1):
             nonce = f"e2e-{int(time.time())}-{idx}"
-            prompt = f"{scenario.prompt} ({nonce})"
+            prompt = f"{prompt_prefix} {scenario.prompt} ({nonce})".strip()
 
             internal_baseline = 0
             if internal_chat_id is not None:
@@ -288,7 +308,7 @@ async def _run() -> None:
         # Anti-false-positive: long noisy text with one weak signal should not trigger adbot.
         negative_nonce = f"e2e-negative-{int(time.time())}"
         negative_prompt = (
-            "Сьогодні обговорюємо ремонт підʼїзду, доставку матеріалів та графік робіт, "
+            f"{prompt_prefix} Сьогодні обговорюємо ремонт підʼїзду, доставку матеріалів та графік робіт, "
             "нічого не питаємо про контакти служб, просто довге повідомлення зі словом світло "
             f"для перевірки анти-фолс-позитиву ({negative_nonce})"
         )

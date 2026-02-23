@@ -22,6 +22,9 @@ class AdbotListener:
         cooldown: CooldownGuard,
         pipeline: ResponsePipeline,
         internal_chat_id: int | None = None,
+        allow_self_outgoing_e2e: bool = False,
+        self_user_id: int | None = None,
+        self_outgoing_prefix: str = "[E2E]",
     ):
         self._matcher_min_len = matcher_min_len
         self._matcher_max_len = matcher_max_len
@@ -29,6 +32,9 @@ class AdbotListener:
         self._cooldown = cooldown
         self._pipeline = pipeline
         self._internal_chat_id = internal_chat_id
+        self._allow_self_outgoing_e2e = bool(allow_self_outgoing_e2e)
+        self._self_user_id = int(self_user_id) if self_user_id else None
+        self._self_outgoing_prefix = str(self_outgoing_prefix or "[E2E]").strip() or "[E2E]"
 
     async def process(self, event, *, source_chat_id: int) -> bool:
         """
@@ -36,11 +42,12 @@ class AdbotListener:
         """
         message_obj = event.message if hasattr(event, "message") else event
         text = (getattr(message_obj, "text", "") or "").strip()
+        sender_id = int(getattr(message_obj, "sender_id", 0) or 0)
         if not text:
             log_decision(
                 build_decision_payload(
                     chat_id=source_chat_id,
-                    user_id=getattr(message_obj, "sender_id", None),
+                    user_id=sender_id or None,
                     reason="empty_text",
                 )
             )
@@ -48,16 +55,31 @@ class AdbotListener:
 
         # Skip bot/system messages and short noise.
         if bool(getattr(message_obj, "out", False)):
-            log_decision(
-                build_decision_payload(
-                    chat_id=source_chat_id,
-                    user_id=getattr(message_obj, "sender_id", None),
-                    reason="outgoing_or_system",
-                    message_text=text,
-                )
+            allow_outgoing = (
+                self._allow_self_outgoing_e2e
+                and bool(self._self_user_id)
+                and sender_id == self._self_user_id
+                and text.startswith(self._self_outgoing_prefix)
             )
-            return False
-        sender_id = getattr(message_obj, "sender_id", 0) or 0
+            if allow_outgoing:
+                log_decision(
+                    build_decision_payload(
+                        chat_id=source_chat_id,
+                        user_id=sender_id or None,
+                        reason="outgoing_e2e_allowed",
+                        message_text=text,
+                    )
+                )
+            else:
+                log_decision(
+                    build_decision_payload(
+                        chat_id=source_chat_id,
+                        user_id=sender_id or None,
+                        reason="outgoing_or_system",
+                        message_text=text,
+                    )
+                )
+                return False
         if not sender_id:
             log_decision(
                 build_decision_payload(

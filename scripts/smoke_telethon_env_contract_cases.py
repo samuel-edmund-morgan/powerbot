@@ -83,6 +83,25 @@ def main() -> None:
     )
     _assert(res_bad_adbot_e2e.returncode != 0, "invalid adbot e2e contract must fail")
 
+    # 4b) If adbot and e2e-driver sessions are identical, self-outgoing guard must be enabled.
+    res_same_session_guard = _run_preflight(
+        common
+        + "ADBOT_ENABLED=1\nADBOT_TEST_MODE=0\n"
+        + f"ADBOT_STRING_SESSION={long_session}\n"
+        + "ADBOT_SOURCE_CHAT_IDS=-100111\nADBOT_INTERNAL_CHAT_ID=-100333\n"
+        + "ADBOT_E2E_ENABLED=1\n"
+        + f"ADBOT_E2E_DRIVER_STRING_SESSION={long_session}\n"
+        + "ADBOT_E2E_SOURCE_CHAT_ID=-100111\n"
+    )
+    _assert(
+        res_same_session_guard.returncode != 0,
+        "same adbot/e2e sessions without self-outgoing guard must fail",
+    )
+    _assert(
+        "ADBOT_ALLOW_SELF_OUTGOING_E2E=1" in (res_same_session_guard.stdout + res_same_session_guard.stderr),
+        "expected same-session guard diagnostics",
+    )
+
     # 5) Valid-looking runner env should pass.
     res_ok = _run_preflight(
         common
@@ -90,9 +109,13 @@ def main() -> None:
         + f"TESTERBOT_STRING_SESSION={long_session}\n"
         + "ADBOT_ENABLED=1\nADBOT_TEST_MODE=0\n"
         + f"ADBOT_STRING_SESSION={long_session}\n"
+        + "ADBOT_ALLOW_SELF_OUTGOING_E2E=1\n"
+        + "ADBOT_SELF_OUTGOING_PREFIX=[E2E]\n"
         + "ADBOT_SOURCE_CHAT_IDS=-100111,-100222\nADBOT_INTERNAL_CHAT_ID=-100333\n"
         + "ADBOT_E2E_ENABLED=1\n"
-        + f"ADBOT_E2E_DRIVER_STRING_SESSION={long_session}\nADBOT_E2E_SOURCE_CHAT_ID=-100111\n"
+        + f"ADBOT_E2E_DRIVER_STRING_SESSION={long_session}\n"
+        + "ADBOT_E2E_PROMPT_PREFIX=[E2E] \n"
+        + "ADBOT_E2E_SOURCE_CHAT_ID=-100111\n"
     )
     _assert(res_ok.returncode == 0, f"valid-looking env must pass, got={res_ok.stdout}{res_ok.stderr}")
 

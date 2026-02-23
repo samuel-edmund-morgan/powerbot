@@ -311,6 +311,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_source_filter_runtime.py"
 echo "Running adbot listener-exception runtime smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_listener_exception_runtime.py"
 
+# Automated smoke: adbot self-outgoing E2E guard (same-session compatibility).
+echo "Running adbot outgoing E2E guard smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_outgoing_e2e_guard.py"
+
 # Optional real Telegram E2E for adbot on test groups.
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   echo "Running adbot E2E test-groups suite..."
@@ -322,6 +326,8 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   ADBOT_E2E_POLL_SEC_VAL="$(get_env_value "ADBOT_E2E_POLL_SEC" "${TEST_DIR}/.env")"
   ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL="$(get_env_value "ADBOT_E2E_NEGATIVE_WAIT_SEC" "${TEST_DIR}/.env")"
   ADBOT_E2E_VERIFY_FORWARD_VAL="$(get_env_value "ADBOT_E2E_VERIFY_FORWARD" "${TEST_DIR}/.env")"
+  ADBOT_E2E_PROMPT_PREFIX_VAL="$(get_env_value "ADBOT_E2E_PROMPT_PREFIX" "${TEST_DIR}/.env")"
+  ADBOT_STRING_SESSION_VAL="$(get_env_value "ADBOT_STRING_SESSION" "${TEST_DIR}/.env")"
   TELETHON_API_ID_VAL="$(get_env_value "TELETHON_API_ID" "${TEST_DIR}/.env")"
   TELETHON_API_HASH_VAL="$(get_env_value "TELETHON_API_HASH" "${TEST_DIR}/.env")"
 
@@ -345,6 +351,8 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
   ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
   ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
+  ADBOT_E2E_PROMPT_PREFIX="${ADBOT_E2E_PROMPT_PREFIX_VAL:-[E2E] }" \
+  ADBOT_STRING_SESSION="${ADBOT_STRING_SESSION_VAL}" \
   python3 "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
 else
   echo "Adbot E2E test-groups disabled (ADBOT_E2E_ENABLED!=1)."

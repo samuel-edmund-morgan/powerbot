@@ -115,6 +115,12 @@ def _require_numeric_chat_id_list(
         errors.append(f"{ctx}: `{key}` contains non-numeric chat_id values: {', '.join(bad)}")
 
 
+def _same_non_empty(a: str | None, b: str | None) -> bool:
+    left = str(a or "").strip()
+    right = str(b or "").strip()
+    return bool(left and right and left == right)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", required=True, help="Path to .env file")
@@ -148,6 +154,23 @@ def main() -> None:
         _require(errors, env, "TELETHON_API_HASH", ctx)
         _require_valid_string_session(errors, env, "ADBOT_E2E_DRIVER_STRING_SESSION", ctx)
         _require_numeric_chat_id(errors, env, "ADBOT_E2E_SOURCE_CHAT_ID", ctx)
+
+    # If adbot and e2e-driver use the same Telethon account, require explicit safe mode.
+    if _is_true(env.get("ADBOT_ENABLED")) and _is_true(env.get("ADBOT_E2E_ENABLED")):
+        if _same_non_empty(env.get("ADBOT_STRING_SESSION"), env.get("ADBOT_E2E_DRIVER_STRING_SESSION")):
+            if not _is_true(env.get("ADBOT_ALLOW_SELF_OUTGOING_E2E")):
+                errors.append(
+                    "adbot_e2e: ADBOT_E2E_DRIVER_STRING_SESSION equals ADBOT_STRING_SESSION; "
+                    "set ADBOT_ALLOW_SELF_OUTGOING_E2E=1"
+                )
+            if not str(env.get("ADBOT_SELF_OUTGOING_PREFIX", "")).strip():
+                errors.append(
+                    "adbot_e2e: ADBOT_SELF_OUTGOING_PREFIX must be non-empty when sessions are identical"
+                )
+            if not str(env.get("ADBOT_E2E_PROMPT_PREFIX", "")).strip():
+                errors.append(
+                    "adbot_e2e: ADBOT_E2E_PROMPT_PREFIX must be non-empty when sessions are identical"
+                )
 
     if errors:
         print("ERROR: Telethon env preflight failed:")

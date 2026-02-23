@@ -81,6 +81,8 @@ def main() -> None:
         _assert(cfg.source_chat_ids == (-100111, -100222), f"unexpected source ids: {cfg.source_chat_ids}")
         _assert(cfg.internal_chat_id == -100333, "internal chat id should parse")
         _assert(cfg.target_powerbot_username == "TestNaButlerBot", "unexpected target bot username")
+        _assert(cfg.allow_self_outgoing_e2e is False, "self-outgoing e2e must be disabled by default")
+        _assert(cfg.self_outgoing_prefix == "[E2E]", "unexpected default self-outgoing prefix")
 
     # Username should be sanitized from leading @.
     with _patched_env(**{**_base_env(), "ADBOT_TARGET_POWERBOT_USERNAME": "@TestNaButlerBot"}):

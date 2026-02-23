@@ -45,6 +45,8 @@ class AdbotConfig:
     max_message_len: int
     min_confidence: int
     pipeline_timeout_ms: int
+    allow_self_outgoing_e2e: bool
+    self_outgoing_prefix: str
 
 
 def build_config() -> AdbotConfig:
@@ -77,6 +79,12 @@ def build_config() -> AdbotConfig:
     if internal_chat_id is None and not test_mode:
         raise ValueError("ADBOT_INTERNAL_CHAT_ID is required (non-test mode)")
 
+    allow_self_outgoing_e2e = parse_bool(
+        os.getenv("ADBOT_ALLOW_SELF_OUTGOING_E2E", "0"),
+        default=False,
+    )
+    self_outgoing_prefix = os.getenv("ADBOT_SELF_OUTGOING_PREFIX", "[E2E]").strip() or "[E2E]"
+
     return AdbotConfig(
         enabled=enabled,
         test_mode=test_mode,
@@ -91,4 +99,6 @@ def build_config() -> AdbotConfig:
         max_message_len=int(os.getenv("ADBOT_MAX_MESSAGE_LEN", "280")),
         min_confidence=int(os.getenv("ADBOT_MIN_CONFIDENCE", "120")),
         pipeline_timeout_ms=int(os.getenv("ADBOT_PIPELINE_TIMEOUT_MS", "5000")),
+        allow_self_outgoing_e2e=allow_self_outgoing_e2e,
+        self_outgoing_prefix=self_outgoing_prefix,
     )
