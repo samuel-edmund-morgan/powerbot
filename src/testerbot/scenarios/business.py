@@ -79,14 +79,28 @@ async def run(ctx) -> ScenarioResult:
     """Open business bot and verify key menu screens without data mutations."""
     started = time.perf_counter()
     async with ctx.client.conversation(ctx.cfg.targets.businessbot, timeout=ctx.cfg.timeout_sec) as conv:
+        async def settle(message):
+            text_local = extract_text(message)
+            if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
+                return message, text_local
+            for _ in range(5):
+                message = await ctx.wait_msg(conv)
+                text_local = extract_text(message)
+                if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
+                    break
+            return message, text_local
+
+        async def click_and_settle(message, needle: str):
+            message = await click_button_and_wait(conv, message, needle, ctx.cfg.timeout_sec)
+            return await settle(message)
+
         await conv.send_message("/start")
         msg = await ctx.wait_msg(conv)
-        text = extract_text(msg)
+        msg, text = await settle(msg)
         assert_contains(text, ("Бізнес-кабінет",), ctx="business /start")
         assert_contains(text, ("Оберіть дію:",), ctx="business /start action prompt")
 
-        msg = await click_button_and_wait(conv, msg, "🏢 Мої бізнеси", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
+        msg, text = await click_and_settle(msg, "🏢 Мої бізнеси")
         # If owner has no business, bot still should open a valid flow.
         assert_contains_any(
             text,
@@ -97,7 +111,7 @@ async def run(ctx) -> ScenarioResult:
         if "Оберіть заклад" in text:
             # Open first owner card and return back without mutating actions.
             msg = await _click_first_non_nav_button(conv, msg, ctx.cfg.timeout_sec)
-            text = extract_text(msg)
+            msg, text = await settle(msg)
             assert_contains_any(
                 text,
                 ("Статус доступу", "Тариф", "Активно до"),
@@ -106,16 +120,14 @@ async def run(ctx) -> ScenarioResult:
 
             # Open plans from owner card and return back to card.
             if _has_button(msg, "Змінити план"):
-                msg = await click_button_and_wait(conv, msg, "Змінити план", ctx.cfg.timeout_sec)
-                text = extract_text(msg)
+                msg, text = await click_and_settle(msg, "Змінити план")
                 assert_contains_any(
                     text,
                     ("Обери тариф для", "Оберіть заклад", "Немає підтверджених закладів"),
                     ctx="business owner card open plans",
                 )
                 if "Обери тариф для" in text and _has_button(msg, "Назад"):
-                    msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
-                    text = extract_text(msg)
+                    msg, text = await click_and_settle(msg, "Назад")
                     assert_contains_any(
                         text,
                         ("Статус доступу", "Тариф"),
@@ -123,8 +135,7 @@ async def run(ctx) -> ScenarioResult:
                     )
 
             if _has_button(msg, "Мої бізнеси"):
-                msg = await click_button_and_wait(conv, msg, "Мої бізнеси", ctx.cfg.timeout_sec)
-                text = extract_text(msg)
+                msg, text = await click_and_settle(msg, "Мої бізнеси")
                 assert_contains_any(
                     text,
                     ("Оберіть заклад", "У тебе ще немає бізнесів"),
@@ -132,9 +143,9 @@ async def run(ctx) -> ScenarioResult:
                 )
 
         msg = await _ensure_main_menu(conv, msg, ctx.cfg.timeout_sec)
+        msg, _ = await settle(msg)
 
-        msg = await click_button_and_wait(conv, msg, "💳 Плани", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
+        msg, text = await click_and_settle(msg, "💳 Плани")
         assert_contains_any(
             text,
             ("Плани", "Немає підтверджених закладів"),
@@ -143,15 +154,14 @@ async def run(ctx) -> ScenarioResult:
 
         if "Оберіть заклад" in text:
             msg = await _click_first_non_nav_button(conv, msg, ctx.cfg.timeout_sec)
-            text = extract_text(msg)
+            msg, text = await settle(msg)
             assert_contains_any(
                 text,
                 ("Обери тариф для", "Плани"),
                 ctx="business plans place menu",
             )
             if _has_button(msg, "Назад"):
-                msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
-                text = extract_text(msg)
+                msg, text = await click_and_settle(msg, "Назад")
                 assert_contains_any(
                     text,
                     ("Оберіть заклад", "Немає підтверджених закладів"),
@@ -159,28 +169,25 @@ async def run(ctx) -> ScenarioResult:
                 )
 
         msg = await _ensure_main_menu(conv, msg, ctx.cfg.timeout_sec)
+        msg, _ = await settle(msg)
 
         # Start add-flow and cancel immediately (idempotent flow smoke).
-        msg = await click_button_and_wait(conv, msg, "Додати бізнес", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
+        msg, text = await click_and_settle(msg, "Додати бізнес")
         assert_contains_any(
             text,
             ("Оберіть категорію", "Немає жодної категорії"),
             ctx="business add menu",
         )
         if _has_button(msg, "Скасувати"):
-            msg = await click_button_and_wait(conv, msg, "Скасувати", ctx.cfg.timeout_sec)
-            text = extract_text(msg)
+            msg, text = await click_and_settle(msg, "Скасувати")
             assert_contains(text, ("Оберіть дію:",), ctx="business add cancel")
         else:
             assert_contains(text, ("Оберіть дію:",), ctx="business add fallback menu")
 
         # Start attach-flow and cancel immediately (idempotent flow smoke).
-        msg = await click_button_and_wait(conv, msg, "Прив'язати бізнес", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
+        msg, text = await click_and_settle(msg, "Прив'язати бізнес")
         assert_contains(text, ("Введи код прив'язки",), ctx="business attach menu")
-        msg = await click_button_and_wait(conv, msg, "Скасувати", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
+        msg, text = await click_and_settle(msg, "Скасувати")
         assert_contains(text, ("Оберіть дію:",), ctx="business attach cancel")
 
     elapsed = int((time.perf_counter() - started) * 1000)
