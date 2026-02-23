@@ -528,6 +528,10 @@ python3 "${REPO_DIR}/scripts/smoke_admin_claim_tokens_security_policy.py"
 echo "Running admin claim-tokens handler flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_claim_tokens_handler_flow.py"
 
+# Automated smoke: admin business moderation callback runtime (jump/approve/reject + visibility gate).
+echo "Running admin business moderation runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_business_moderation_runtime.py"
+
 # Automated smoke: admin claim-token bulk-generation handler flow (confirm -> rotate all).
 echo "Running admin claim-tokens bulk handler flow smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_admin_claim_tokens_bulk_handler_flow.py"
