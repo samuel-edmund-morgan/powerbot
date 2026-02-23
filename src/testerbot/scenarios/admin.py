@@ -228,6 +228,47 @@ async def run(ctx) -> ScenarioResult:
             break
         raise AssertionError("admin ensure main menu: unable to return to main menu without extra /start")
 
+    async def ensure_business_menu(message):
+        current = message
+        for _ in range(8):
+            current_text = extract_text(current)
+            if "Бізнес" in current_text and (
+                _has_button(current, "Модерація") or _has_button(current, "Коди прив'язки")
+            ):
+                return current, current_text
+            if _has_button(current, "Бізнес"):
+                current, current_text = await click_and_wait(
+                    current,
+                    "Бізнес",
+                    predicate=lambda m, t: "Бізнес" in t and (
+                        _has_button(m, "Модерація") or _has_button(m, "Коди прив'язки")
+                    ),
+                    ctx_name="admin ensure business via business",
+                )
+                continue
+            if _has_button(current, "Головне меню"):
+                current, _ = await click_and_wait(
+                    current,
+                    "Головне меню",
+                    predicate=lambda _m, t: "Оберіть дію" in t,
+                    ctx_name="admin ensure business via home",
+                )
+                continue
+            if _has_button(current, "Назад"):
+                current, current_text = await click_and_wait(
+                    current,
+                    "Назад",
+                    predicate=lambda m, t: ("Бізнес" in t) or ("Оберіть дію" in t) or _has_button(m, "Бізнес"),
+                    ctx_name="admin ensure business via back",
+                )
+                continue
+            current, current_text = await latest_bot_message("admin ensure business latest")
+            if "Бізнес" in current_text and (
+                _has_button(current, "Модерація") or _has_button(current, "Коди прив'язки")
+            ):
+                return current, current_text
+        raise AssertionError("admin ensure business menu: unable to open Бізнес")
+
     sent_start = await ctx.client.send_message(target, "/start")
     sent_start_utc = _to_utc(getattr(sent_start, "date", None)) or scenario_started_utc
     try:
@@ -296,21 +337,18 @@ async def run(ctx) -> ScenarioResult:
 
     # Business section and read-only subsections.
     if _has_button(msg, "Бізнес"):
-        msg, text = await click_and_wait(
-            msg,
-            "Бізнес",
-            predicate=lambda _m, t: "Бізнес" in t,
-            ctx_name="admin business menu",
-        )
+        msg, text = await ensure_business_menu(msg)
         assert_contains(text, ("Бізнес",), ctx="admin business menu")
 
         for button, expect_tokens in (
             ("Модерація", ("Модерація", "Черга модерації")),
             ("Правки закладів", ("Правки закладів", "Черга порожня")),
             ("Підтримка Partner", ("Підтримка Partner", "Черга порожня")),
-            ("Коди прив'язки", ("Коди прив'язки", "Оберіть дію")),
             ("Підписки", ("Підписки",)),
+            ("Платежі", ("Платежі",)),
+            ("Аудит", ("Аудит",)),
         ):
+            msg, _ = await ensure_business_menu(msg)
             if not _has_button(msg, button):
                 continue
             msg, text = await click_and_wait(
@@ -320,24 +358,10 @@ async def run(ctx) -> ScenarioResult:
                 ctx_name=f"admin business {button}",
             )
             assert_contains_any(text, expect_tokens, ctx=f"admin business {button}")
-            if "Оберіть дію" in text and "Бізнес" not in text and _has_button(msg, "Бізнес"):
-                # "Коди прив'язки" може мати own меню з кнопкою "Бізнес".
-                msg, text = await click_and_wait(
-                    msg,
-                    "Бізнес",
-                    predicate=lambda _m, t: "Бізнес" in t,
-                    ctx_name=f"admin business back from {button}",
-                )
-            elif _has_button(msg, "Бізнес"):
-                msg, text = await click_and_wait(
-                    msg,
-                    "Бізнес",
-                    predicate=lambda _m, t: "Бізнес" in t,
-                    ctx_name=f"admin business back from {button}",
-                )
 
         # Claim tokens read-only deep flow:
         # menu -> list places -> first service -> places list -> back categories -> back tokens menu
+        msg, _ = await ensure_business_menu(msg)
         if _has_button(msg, "Коди прив'язки"):
             msg, text = await click_and_wait(
                 msg,
@@ -372,13 +396,6 @@ async def run(ctx) -> ScenarioResult:
                         predicate=lambda _m, t: "Коди прив'язки" in t,
                         ctx_name="admin business tokens back to menu",
                     )
-            if _has_button(msg, "Бізнес"):
-                msg, text = await click_and_wait(
-                    msg,
-                    "Бізнес",
-                    predicate=lambda _m, t: "Бізнес" in t,
-                    ctx_name="admin business tokens back to business",
-                )
 
         msg, text = await ensure_main_menu(msg)
         assert_contains(text, ("Оберіть дію",), ctx="admin business back to main")
