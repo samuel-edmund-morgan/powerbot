@@ -8,6 +8,8 @@ import re
 import time
 from dataclasses import dataclass
 
+from telethon.errors.rpcerrorlist import MessageIdInvalidError
+
 from testerbot.assertions import assert_contains, assert_contains_any
 from testerbot.scenarios.common import extract_text, find_button
 
@@ -68,21 +70,68 @@ async def run(ctx) -> ScenarioResult:
             await asyncio.sleep(0.6)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
+    async def latest_bot_message(ctx_name: str):
+        msgs = await ctx.client.get_messages(target, limit=12)
+        for msg in msgs:
+            if getattr(msg, "out", False):
+                continue
+            if getattr(msg, "sender_id", None) != bot_id:
+                continue
+            return msg, extract_text(msg)
+        raise AssertionError(f"{ctx_name}: no incoming bot message found")
+
     async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
-        i, j = find_button(message, needle)
-        await message.click(i, j)
-        return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+        current = message
+        for _ in range(4):
+            try:
+                i, j = find_button(current, needle)
+            except AssertionError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh buttons)",
+                )
+                continue
+            try:
+                await current.click(i, j)
+                try:
+                    return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                except AssertionError:
+                    current, _ = await latest_bot_message(f"{ctx_name} (refresh after no update)")
+                    continue
+            except MessageIdInvalidError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh stale message)",
+                )
+                continue
+        raise AssertionError(f"{ctx_name}: unable to click button `{needle}` on current bot message")
 
     async def click_first_non_nav_button(message, *, predicate, ctx_name: str):
-        buttons = getattr(message, "buttons", None) or []
-        for row_idx, row in enumerate(buttons):
-            for btn_idx, btn in enumerate(row):
-                label = str(getattr(btn, "text", "")).strip()
-                if _is_nav_button(label):
+        current = message
+        for _ in range(4):
+            buttons = getattr(current, "buttons", None) or []
+            for row_idx, row in enumerate(buttons):
+                for btn_idx, btn in enumerate(row):
+                    label = str(getattr(btn, "text", "")).strip()
+                    if _is_nav_button(label):
+                        continue
+                    try:
+                        await current.click(row_idx, btn_idx)
+                    except MessageIdInvalidError:
+                        current, _ = await wait_bot_message(
+                            predicate=lambda m, _t: bool(getattr(m, "buttons", None)),
+                            ctx_name=f"{ctx_name} (refresh stale message)",
+                        )
+                        break
+                    return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                else:
                     continue
-                await message.click(row_idx, btn_idx)
-                return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
-        raise AssertionError(f"{ctx_name}: no non-navigation button found")
+                break
+            else:
+                raise AssertionError(f"{ctx_name}: no non-navigation button found")
+            # stale message path: retry with refreshed message
+            continue
+        raise AssertionError(f"{ctx_name}: unable to click non-navigation button on current bot message")
 
     async def ensure_main_menu(message):
         current = message
