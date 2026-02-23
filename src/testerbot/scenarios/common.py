@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from testerbot.assertions import first_message_text
+from testerbot.callbacks import extract_callback_data, extract_message_callbacks
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,26 @@ def find_button(message, needle: str) -> tuple[int, int]:
     raise AssertionError(f"button containing `{needle}` not found. available={available}")
 
 
-async def click_button_and_wait(conv, message, needle: str, timeout_sec: int):
+def callback_at(message, row_idx: int, btn_idx: int) -> str | None:
+    buttons = getattr(message, "buttons", None) or []
+    try:
+        btn = buttons[row_idx][btn_idx]
+    except Exception:
+        return None
+    return extract_callback_data(btn)
+
+
+def collect_message_callbacks(message) -> set[str]:
+    return extract_message_callbacks(message)
+
+
+async def click_button_and_wait(conv, message, needle: str, timeout_sec: int, on_click_callback=None):
     i, j = find_button(message, needle)
+    if on_click_callback is not None:
+        try:
+            on_click_callback(callback_at(message, i, j))
+        except Exception:
+            logger.exception("failed to invoke on_click_callback")
     before_id = getattr(message, "id", None)
     before_text = extract_text(message)
     before_edit = getattr(message, "edit_date", None)

@@ -7,7 +7,7 @@ import logging
 import time
 
 from testerbot.assertions import assert_contains, assert_contains_any
-from testerbot.scenarios.common import click_button_and_wait, extract_text
+from testerbot.scenarios.common import click_button_and_wait, collect_message_callbacks, extract_text
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ def _has_button(message, needle: str) -> bool:
 
 
 async def _open_business_subsection(
+    ctx,
     conv,
     message,
     section_button: str,
@@ -39,14 +40,26 @@ async def _open_business_subsection(
     timeout_sec: int,
     settle_fn=None,
 ):
-    msg = await click_button_and_wait(conv, message, section_button, timeout_sec)
+    msg = await click_button_and_wait(
+        conv,
+        message,
+        section_button,
+        timeout_sec,
+        on_click_callback=lambda cb: ctx.record_clicked_callback("admin", cb),
+    )
     if settle_fn is not None:
         msg, text = await settle_fn(msg)
     else:
         text = extract_text(msg)
     assert_contains_any(text, expect_tokens, ctx=f"admin business {section_button}")
     if _has_button(msg, "Бізнес"):
-        msg = await click_button_and_wait(conv, msg, "Бізнес", timeout_sec)
+        msg = await click_button_and_wait(
+            conv,
+            msg,
+            "Бізнес",
+            timeout_sec,
+            on_click_callback=lambda cb: ctx.record_clicked_callback("admin", cb),
+        )
         if settle_fn is not None:
             msg, text = await settle_fn(msg)
         else:
@@ -76,6 +89,7 @@ async def run(ctx) -> ScenarioResult:
         async def settle(message):
             text_local = extract_text(message)
             if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
+                ctx.record_seen_callbacks("admin", collect_message_callbacks(message))
                 return message, text_local
             for _ in range(5):
                 try:
@@ -87,10 +101,17 @@ async def run(ctx) -> ScenarioResult:
                     message, text_local = await latest_bot_message("admin settle fallback")
                 if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
                     break
+            ctx.record_seen_callbacks("admin", collect_message_callbacks(message))
             return message, text_local
 
         async def click_and_settle(message, needle: str):
-            message = await click_button_and_wait(conv, message, needle, ctx.cfg.timeout_sec)
+            message = await click_button_and_wait(
+                conv,
+                message,
+                needle,
+                ctx.cfg.timeout_sec,
+                on_click_callback=lambda cb: ctx.record_clicked_callback("admin", cb),
+            )
             return await settle(message)
 
         await conv.send_message("/start")
@@ -129,6 +150,7 @@ async def run(ctx) -> ScenarioResult:
 
         # Read-only pass through core business admin subsections.
         msg = await _open_business_subsection(
+            ctx,
             conv,
             msg,
             "Модерація",
@@ -137,6 +159,7 @@ async def run(ctx) -> ScenarioResult:
             settle_fn=settle,
         )
         msg = await _open_business_subsection(
+            ctx,
             conv,
             msg,
             "Правки закладів",
@@ -145,6 +168,7 @@ async def run(ctx) -> ScenarioResult:
             settle_fn=settle,
         )
         msg = await _open_business_subsection(
+            ctx,
             conv,
             msg,
             "Підтримка Partner",
@@ -153,6 +177,7 @@ async def run(ctx) -> ScenarioResult:
             settle_fn=settle,
         )
         msg = await _open_business_subsection(
+            ctx,
             conv,
             msg,
             "Коди прив'язки",

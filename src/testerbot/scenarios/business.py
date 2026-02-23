@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from telethon.errors.rpcerrorlist import MessageIdInvalidError
 
 from testerbot.assertions import assert_contains, assert_contains_any
-from testerbot.scenarios.common import extract_text, find_button
+from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,7 @@ async def run(ctx) -> ScenarioResult:
             if latest_msg is not None:
                 last_text = latest_text
                 if predicate(latest_msg, latest_text):
+                    ctx.record_seen_callbacks("business", collect_message_callbacks(latest_msg))
                     return latest_msg, latest_text
             await asyncio.sleep(0.6)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
@@ -83,6 +84,7 @@ async def run(ctx) -> ScenarioResult:
                 continue
             if getattr(msg, "sender_id", None) != bot_id:
                 continue
+            ctx.record_seen_callbacks("business", collect_message_callbacks(msg))
             return msg, extract_text(msg)
         raise AssertionError(f"{ctx_name}: no incoming bot message found")
 
@@ -98,9 +100,12 @@ async def run(ctx) -> ScenarioResult:
                 )
                 continue
             try:
+                ctx.record_clicked_callback("business", callback_at(current, i, j))
                 await current.click(i, j)
                 try:
-                    return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                    msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                    ctx.record_seen_callbacks("business", collect_message_callbacks(msg))
+                    return msg, text
                 except AssertionError:
                     current, _ = await latest_bot_message(f"{ctx_name} (refresh after no update)")
                     continue
@@ -122,6 +127,7 @@ async def run(ctx) -> ScenarioResult:
                     if _is_nav_button(label):
                         continue
                     try:
+                        ctx.record_clicked_callback("business", callback_at(current, row_idx, btn_idx))
                         await current.click(row_idx, btn_idx)
                     except MessageIdInvalidError:
                         current, _ = await wait_bot_message(
@@ -129,7 +135,9 @@ async def run(ctx) -> ScenarioResult:
                             ctx_name=f"{ctx_name} (refresh stale message)",
                         )
                         break
-                    return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                    msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                    ctx.record_seen_callbacks("business", collect_message_callbacks(msg))
+                    return msg, text
                 else:
                     continue
                 break

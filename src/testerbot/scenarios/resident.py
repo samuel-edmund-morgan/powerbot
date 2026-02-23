@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 from testerbot.assertions import assert_contains, assert_contains_any
-from testerbot.scenarios.common import extract_text, find_button
+from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +55,32 @@ async def run(ctx) -> ScenarioResult:
                     continue
                 last_text = text
                 if predicate(msg, text):
+                    ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
                     return msg, text
             await asyncio.sleep(0.6)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
     async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
         i, j = find_button(message, needle)
+        ctx.record_clicked_callback("resident", callback_at(message, i, j))
         await message.click(i, j)
-        return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+        msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+        ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
+        return msg, text
+
+    async def click_first_non_nav_button(message, *, predicate, ctx_name: str):
+        buttons = getattr(message, "buttons", None) or []
+        for row_idx, row in enumerate(buttons):
+            for btn_idx, btn in enumerate(row):
+                label = str(getattr(btn, "text", "")).strip()
+                if _is_nav_button(label):
+                    continue
+                ctx.record_clicked_callback("resident", callback_at(message, row_idx, btn_idx))
+                await message.click(row_idx, btn_idx)
+                msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
+                return msg, text
+        raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
 
     await ctx.client.send_message(target, "/start")
     msg, text = await wait_bot_message(
@@ -92,6 +110,177 @@ async def run(ctx) -> ScenarioResult:
     )
     assert_contains(text, ("Головне меню",), ctx="resident back to menu")
 
+    # Utilities flow.
+    msg, text = await click_and_wait(
+        msg,
+        "Світло/опалення/вода",
+        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        ctx_name="resident utilities menu",
+    )
+    assert_contains_any(
+        text,
+        ("Оберіть, що перевірити", "Оберіть що перевірити", "Світло", "Статистика"),
+        ctx="resident utilities menu",
+    )
+
+    msg, text = await click_and_wait(
+        msg,
+        "Світло",
+        predicate=lambda _m, t: ("Стан електропостачання" in t) or ("Світла" in t),
+        ctx_name="resident utilities status",
+    )
+    assert_contains_any(text, ("Стан електропостачання", "Світла"), ctx="resident utilities status")
+
+    msg, text = await click_and_wait(
+        msg,
+        "Назад",
+        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        ctx_name="resident utilities back from status",
+    )
+    assert_contains_any(text, ("Оберіть", "Світло", "Статистика"), ctx="resident utilities back from status")
+
+    msg, text = await click_and_wait(
+        msg,
+        "Опалення",
+        predicate=lambda _m, t: ("Стан опалення" in t) or ("Опалення" in t),
+        ctx_name="resident utilities heating",
+    )
+    assert_contains_any(text, ("Стан опалення", "Опалення"), ctx="resident utilities heating")
+    msg, text = await click_and_wait(
+        msg,
+        "Назад",
+        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        ctx_name="resident utilities back from heating",
+    )
+
+    msg, text = await click_and_wait(
+        msg,
+        "Вода",
+        predicate=lambda _m, t: ("Стан водопостачання" in t) or ("Вода" in t),
+        ctx_name="resident utilities water",
+    )
+    assert_contains_any(text, ("Стан водопостачання", "Вода"), ctx="resident utilities water")
+    msg, text = await click_and_wait(
+        msg,
+        "Назад",
+        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Статистика"),
+        ctx_name="resident utilities back from water",
+    )
+
+    msg, text = await click_and_wait(
+        msg,
+        "Статистика",
+        predicate=lambda _m, t: ("Статистика" in t) and ("електропостачання" in t.casefold()),
+        ctx_name="resident utilities stats",
+    )
+    assert_contains(text, ("Статистика",), ctx="resident utilities stats")
+
+    for label in ("День", "Тиждень", "Місяць"):
+        if not _has_button(msg, label):
+            continue
+        msg, text = await click_and_wait(
+            msg,
+            label,
+            predicate=lambda _m, t: ("Статистика" in t) and ("електропостачання" in t.casefold()),
+            ctx_name=f"resident utilities stats {label}",
+        )
+        assert_contains(text, ("Статистика",), ctx=f"resident utilities stats {label}")
+
+    msg, text = await click_and_wait(
+        msg,
+        "Назад",
+        predicate=lambda m, t: ("що перевірити" in t.casefold()) or _has_button(m, "Меню"),
+        ctx_name="resident utilities back from stats",
+    )
+    msg, text = await click_and_wait(
+        msg,
+        "Меню",
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Тривоги та укриття"),
+        ctx_name="resident utilities back to menu",
+    )
+
+    # Service menu flow.
+    msg, text = await click_and_wait(
+        msg,
+        "Сервісна служба",
+        predicate=lambda _m, t: "Сервісна служба" in t,
+        ctx_name="resident service menu",
+    )
+    assert_contains(text, ("Сервісна служба",), ctx="resident service menu")
+    service_buttons = (
+        "Адміністрація",
+        "Бухгалтерія",
+        "Охорона",
+        "Сантехнік",
+        "Електрик",
+        "ІТ відділ",
+        "Диспетчер ліфтів",
+        "перепустки авто",
+        "Оренда паркінгу",
+    )
+    for label in service_buttons:
+        if not _has_button(msg, label):
+            continue
+        msg, text = await click_and_wait(
+            msg,
+            label,
+            predicate=lambda m, _t: _has_button(m, "Назад"),
+            ctx_name=f"resident service {label}",
+        )
+        msg, text = await click_and_wait(
+            msg,
+            "Назад",
+            predicate=lambda _m, t: "Сервісна служба" in t,
+            ctx_name=f"resident service {label} back",
+        )
+    msg, text = await click_and_wait(
+        msg,
+        "Меню",
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Тривоги та укриття"),
+        ctx_name="resident service back to menu",
+    )
+
+    # Notifications flow (read-only nav and quiet-hours screens).
+    msg, text = await click_and_wait(
+        msg,
+        "Сповіщення",
+        predicate=lambda _m, t: "Сповіщення" in t,
+        ctx_name="resident notifications menu",
+    )
+    assert_contains(text, ("Сповіщення",), ctx="resident notifications menu")
+    if _has_button(msg, "Тихі години"):
+        msg, text = await click_and_wait(
+            msg,
+            "Тихі години",
+            predicate=lambda _m, t: ("Тихі години" in t) or ("Не турбувати" in t),
+            ctx_name="resident notifications quiet menu",
+        )
+        assert_contains_any(
+            text,
+            ("Тихі години", "Не турбувати"),
+            ctx="resident notifications quiet menu",
+        )
+        if _has_button(msg, "ℹ️ Довідка") or _has_button(msg, "Довідка"):
+            hint = "ℹ️ Довідка" if _has_button(msg, "ℹ️ Довідка") else "Довідка"
+            msg, text = await click_and_wait(
+                msg,
+                hint,
+                predicate=lambda _m, t: ("Тихі години" in t) or ("сповіщення" in t.casefold()),
+                ctx_name="resident notifications quiet info",
+            )
+        msg, text = await click_and_wait(
+            msg,
+            "Назад",
+            predicate=lambda _m, t: "Сповіщення" in t,
+            ctx_name="resident notifications quiet back",
+        )
+    msg, text = await click_and_wait(
+        msg,
+        "Меню",
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Тривоги та укриття"),
+        ctx_name="resident notifications back to menu",
+    )
+
     # Alerts flow.
     msg, text = await click_and_wait(
         msg,
@@ -114,6 +303,38 @@ async def run(ctx) -> ScenarioResult:
         ("ПОВІТРЯНА ТРИВОГА", "Відбій тривоги", "Статус невідомий"),
         ctx="resident alert status",
     )
+
+    if _has_button(msg, "Назад"):
+        msg, text = await click_and_wait(
+            msg,
+            "Назад",
+            predicate=lambda _m, t: "Тривоги та укриття" in t,
+            ctx_name="resident alert status back",
+        )
+    if _has_button(msg, "Укриття"):
+        msg, text = await click_and_wait(
+            msg,
+            "Укриття",
+            predicate=lambda _m, t: ("Оберіть укриття" in t) or ("Укриття" in t),
+            ctx_name="resident shelters list",
+        )
+        assert_contains_any(text, ("Укриття", "Оберіть укриття"), ctx="resident shelters list")
+        if _has_button(msg, "Назад"):
+            # Open one shelter card if available (non-nav button), then return.
+            try:
+                msg, _ = await click_first_non_nav_button(
+                    msg,
+                    predicate=lambda m, t: ("Адреса" in t) and _has_button(m, "Назад"),
+                    ctx_name="resident shelters detail",
+                )
+                msg, _ = await click_and_wait(
+                    msg,
+                    "Назад",
+                    predicate=lambda _m, t: ("Укриття" in t) or ("Оберіть укриття" in t),
+                    ctx_name="resident shelters detail back",
+                )
+            except AssertionError:
+                pass
 
     try:
         msg, _ = await click_and_wait(

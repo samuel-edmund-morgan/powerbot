@@ -9,11 +9,12 @@ import os
 import re
 import sqlite3
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from logging_setup import configure_logging
 from testerbot.client import TesterbotConfig, build_telethon_client, ensure_enabled
+from testerbot.callbacks import parse_callback_inventory
 from testerbot.reporting import (
     ScenarioReport,
     TesterbotRunReport,
@@ -38,11 +39,26 @@ class TesterContext:
     client: any
     cfg: TesterbotConfig
     timeout_sec: int
+    seen_callbacks: dict[str, set[str]] = field(default_factory=dict)
+    clicked_callbacks: dict[str, set[str]] = field(default_factory=dict)
 
 
     async def wait_msg(self, conv):
         # Wait for edited or new message response.
         return await _wait_for_bot_update(conv, self.timeout_sec)
+
+    def record_seen_callbacks(self, bot_name: str, callbacks: set[str]) -> None:
+        if not callbacks:
+            return
+        bucket = self.seen_callbacks.setdefault(bot_name, set())
+        bucket.update(callbacks)
+
+    def record_clicked_callback(self, bot_name: str, callback_data: str | None) -> None:
+        value = str(callback_data or "").strip()
+        if not value:
+            return
+        bucket = self.clicked_callbacks.setdefault(bot_name, set())
+        bucket.add(value)
 
 
 async def _wait_for_bot_update(conv, timeout_sec: int):
@@ -162,6 +178,34 @@ def _idempotence_error(before: dict[str, int], after: dict[str, int]) -> str | N
     )
 
 
+def _coverage_missing(
+    seen: set[str],
+    clicked: set[str],
+    inventory: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    missing_eq: set[str] = set()
+    for value in inventory.get("eq", set()):
+        if value not in seen and value not in clicked:
+            missing_eq.add(value)
+
+    missing_sw: set[str] = set()
+    for prefix in inventory.get("startswith", set()):
+        if not any(x.startswith(prefix) for x in seen) and not any(x.startswith(prefix) for x in clicked):
+            missing_sw.add(prefix)
+
+    missing_rgx: set[str] = set()
+    for pattern in inventory.get("regexp", set()):
+        try:
+            rx = re.compile(pattern)
+        except re.error:
+            missing_rgx.add(pattern)
+            continue
+        if not any(rx.search(x) for x in seen) and not any(rx.search(x) for x in clicked):
+            missing_rgx.add(pattern)
+
+    return {"eq": missing_eq, "startswith": missing_sw, "regexp": missing_rgx}
+
+
 async def main() -> int:
     if not ensure_enabled():
         logger.info("TESTERBOT_ENABLED=0, skipping testerbot run.")
@@ -219,6 +263,57 @@ async def main() -> int:
             junit_path = os.getenv("TESTERBOT_JUNIT_PATH", "").strip()
             if junit_path:
                 write_junit_xml(report, junit_path)
+
+            # Callback coverage telemetry (for full-click roadmap).
+            try:
+                strict = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "0")).strip() == "1"
+                repo_root = Path(__file__).resolve().parents[1]
+                inventory = parse_callback_inventory(repo_root)
+                coverage_lines: list[str] = []
+                coverage_failed = False
+                for bot_name in ("resident", "admin", "business"):
+                    inv = inventory.get(bot_name, {"eq": set(), "startswith": set(), "regexp": set()})
+                    seen = ctx.seen_callbacks.get(bot_name, set())
+                    clicked = ctx.clicked_callbacks.get(bot_name, set())
+                    missing = _coverage_missing(seen, clicked, inv)
+                    total_rules = (
+                        len(inv.get("eq", set()))
+                        + len(inv.get("startswith", set()))
+                        + len(inv.get("regexp", set()))
+                    )
+                    missing_total = (
+                        len(missing.get("eq", set()))
+                        + len(missing.get("startswith", set()))
+                        + len(missing.get("regexp", set()))
+                    )
+                    coverage_lines.append(
+                        f"{bot_name}: seen={len(seen)} clicked={len(clicked)} inventory={total_rules} missing={missing_total}"
+                    )
+                    if strict and missing_total > 0:
+                        coverage_failed = True
+                        logger.error(
+                            "callback coverage strict fail for %s: missing eq=%s startswith=%s regexp=%s",
+                            bot_name,
+                            sorted(missing.get("eq", set())),
+                            sorted(missing.get("startswith", set())),
+                            sorted(missing.get("regexp", set())),
+                        )
+                logger.info("testerbot callback coverage: %s", " | ".join(coverage_lines))
+                if strict and coverage_failed:
+                    scenario_results.append(
+                        ScenarioReport(
+                            name="callback_coverage_strict",
+                            status="error",
+                            duration_ms=0,
+                            message="missing callback coverage in strict mode",
+                        )
+                    )
+                    report = mark_finished(report, scenario_results)
+                    write_report(report, cfg.report_path)
+                    if junit_path:
+                        write_junit_xml(report, junit_path)
+            except Exception:
+                logger.exception("testerbot callback coverage telemetry failed")
 
             summary = format_text_summary(report)
             logger.info(summary)
