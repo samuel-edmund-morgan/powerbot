@@ -92,7 +92,7 @@ async def run(ctx) -> ScenarioResult:
     bot_id = await ctx.client.get_peer_id(target)
     scenario_started_utc = datetime.now(timezone.utc)
 
-    async def latest_bot_message(ctx_name: str):
+    async def latest_bot_message(ctx_name: str, *, require_buttons: bool = False):
         msgs = await ctx.client.get_messages(target, limit=12)
         for msg in msgs:
             if getattr(msg, "out", False):
@@ -101,6 +101,8 @@ async def run(ctx) -> ScenarioResult:
                 continue
             text = extract_text(msg)
             if text:
+                if require_buttons and not (getattr(msg, "buttons", None) or []):
+                    continue
                 ctx.record_seen_callbacks("admin", collect_message_callbacks(msg))
                 return msg, text
         raise AssertionError(f"{ctx_name}: no incoming admin-bot message found")
@@ -178,6 +180,37 @@ async def run(ctx) -> ScenarioResult:
                 )
             except AssertionError:
                 current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                continue
+
+        raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
+
+    async def click_and_stay(message, needle: str, *, ctx_name: str):
+        current = message
+        for _ in range(4):
+            try:
+                i, j = find_button(current, needle)
+            except AssertionError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh buttons)",
+                )
+                continue
+
+            try:
+                ctx.record_clicked_callback("admin", callback_at(current, i, j))
+                await current.click(i, j)
+            except MessageIdInvalidError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh stale message)",
+                )
+                continue
+
+            await asyncio.sleep(1.0)
+            try:
+                return await latest_bot_message(f"{ctx_name} latest with buttons", require_buttons=True)
+            except AssertionError:
+                current, _ = await latest_bot_message(f"{ctx_name} latest fallback")
                 continue
 
         raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
@@ -355,12 +388,7 @@ async def run(ctx) -> ScenarioResult:
         if not _has_button(current, "Бізнес"):
             return current, ""
 
-        current, _ = await click_and_wait(
-            current,
-            "Бізнес",
-            predicate=lambda m, t: "Бізнес" in t and (_has_button(m, "Модерація") or _has_button(m, "Коди прив'язки")),
-            ctx_name=f"{ctx_name} open business",
-        )
+        current, _ = await ensure_business_menu(current)
         if not _has_button(current, button):
             current, _ = await ensure_main_menu(current)
             return current, ""
@@ -433,6 +461,59 @@ async def run(ctx) -> ScenarioResult:
             expect_tokens=expect,
             ctx_name=f"admin {section}",
         )
+        if section == "Черга задач" and _has_button(msg, "Експорт"):
+            msg, text = await click_and_stay(
+                msg,
+                "Експорт",
+                ctx_name="admin jobs export",
+            )
+            assert_contains_any(text, ("Черга задач", "Admin jobs"), ctx="admin jobs export")
+            if _has_button(msg, "Назад"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Назад",
+                    predicate=lambda _m, t: ("Черга задач" in t) or ("Оберіть дію" in t),
+                    ctx_name="admin jobs export back",
+                )
+                if "Оберіть дію" not in text:
+                    assert_contains_any(text, ("Черга задач",), ctx="admin jobs export back")
+            assert_not_dead_end(msg, ctx_name="admin jobs export")
+
+        if section == "Сенсори":
+            if _has_button(msg, "Старіші"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Старіші",
+                    predicate=lambda _m, t: "Сенсори" in t,
+                    ctx_name="admin sensors older page",
+                )
+                assert_contains(text, ("Сенсори",), ctx="admin sensors older page")
+            if _has_button(msg, "Новіші"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Новіші",
+                    predicate=lambda _m, t: "Сенсори" in t,
+                    ctx_name="admin sensors newer page",
+                )
+                assert_contains(text, ("Сенсори",), ctx="admin sensors newer page")
+            if _has_button(msg, "•"):
+                msg, text = await click_first_non_nav_button(
+                    msg,
+                    predicate=lambda _m, t: "Сенсор" in t and "uuid:" in t,
+                    ctx_name="admin sensor detail open",
+                )
+                assert_contains(text, ("Сенсор", "uuid:"), ctx="admin sensor detail open")
+                assert_not_dead_end(msg, ctx_name="admin sensor detail open")
+                if _has_button(msg, "До сенсорів"):
+                    msg, text = await click_and_wait(
+                        msg,
+                        "До сенсорів",
+                        predicate=lambda _m, t: "Сенсори" in t,
+                        ctx_name="admin sensor detail back",
+                    )
+                    assert_contains(text, ("Сенсори",), ctx="admin sensor detail back")
+                    assert_not_dead_end(msg, ctx_name="admin sensor detail back")
+
         msg, text = await ensure_main_menu(msg)
         assert_contains(text, ("Оберіть дію",), ctx=f"admin {section} back")
 
