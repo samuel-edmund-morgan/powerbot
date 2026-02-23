@@ -50,6 +50,29 @@ def _is_nav_button(label: str) -> bool:
     return False
 
 
+def _has_recovery_controls(message) -> bool:
+    """Detect whether current screen has controls that allow deterministic recovery."""
+    labels: list[str] = []
+    for row in (getattr(message, "buttons", None) or []):
+        for btn in row:
+            labels.append(str(getattr(btn, "text", "")).strip())
+    if not labels:
+        return False
+    for label in labels:
+        normalized = label.casefold()
+        if _is_nav_button(label):
+            return True
+        if (
+            "оновити" in normalized
+            or "скасувати" in normalized
+            or "бізнес" in normalized
+            or "категор" in normalized
+            or "список закладів" in normalized
+        ):
+            return True
+    return False
+
+
 def _to_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
@@ -200,6 +223,14 @@ async def run(ctx) -> ScenarioResult:
                 raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
         raise AssertionError(f"{ctx_name}: unable to click non-navigation button")
 
+    def assert_not_dead_end(current_msg, *, ctx_name: str) -> None:
+        if _has_recovery_controls(current_msg):
+            return
+        text = extract_text(current_msg)
+        raise AssertionError(
+            f"{ctx_name}: dead-end screen detected (no recovery controls). text={text[:220]!r}"
+        )
+
     async def exercise_read_only_navigation(
         message,
         *,
@@ -216,6 +247,7 @@ async def run(ctx) -> ScenarioResult:
                 ctx_name=f"{ctx_name} refresh",
             )
             assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} refresh")
+            assert_not_dead_end(current, ctx_name=f"{ctx_name} refresh")
 
         if _has_button(current, "➡️"):
             current, text = await click_and_wait(
@@ -225,6 +257,7 @@ async def run(ctx) -> ScenarioResult:
                 ctx_name=f"{ctx_name} next page",
             )
             assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} next page")
+            assert_not_dead_end(current, ctx_name=f"{ctx_name} next page")
 
             if _has_button(current, "⬅️"):
                 current, text = await click_and_wait(
@@ -234,6 +267,7 @@ async def run(ctx) -> ScenarioResult:
                     ctx_name=f"{ctx_name} prev page",
                 )
                 assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} prev page")
+                assert_not_dead_end(current, ctx_name=f"{ctx_name} prev page")
 
         return current, text
 
@@ -338,6 +372,7 @@ async def run(ctx) -> ScenarioResult:
             ctx_name=ctx_name,
         )
         assert_contains_any(text, expect_tokens, ctx=ctx_name)
+        assert_not_dead_end(current, ctx_name=f"{ctx_name} open")
 
         current, _ = await exercise_read_only_navigation(
             current,
@@ -392,6 +427,7 @@ async def run(ctx) -> ScenarioResult:
             ctx_name=f"admin {section}",
         )
         assert_contains_any(text, expect, ctx=f"admin {section}")
+        assert_not_dead_end(msg, ctx_name=f"admin {section} open")
         msg, text = await exercise_read_only_navigation(
             msg,
             expect_tokens=expect,
