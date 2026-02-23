@@ -336,11 +336,15 @@ async def run(ctx) -> ScenarioResult:
             ("Тихі години", "Не турбувати"),
             ctx="resident notifications quiet menu",
         )
-        if _has_button(msg, "ℹ️ Довідка") or _has_button(msg, "Довідка"):
-            hint = "ℹ️ Довідка" if _has_button(msg, "ℹ️ Довідка") else "Довідка"
+        quiet_hint = None
+        for candidate in ("ℹ️ Довідка", "Довідка", "ℹ️ Інфо", "Інфо"):
+            if _has_button(msg, candidate):
+                quiet_hint = candidate
+                break
+        if quiet_hint:
             msg, text = await click_and_wait(
                 msg,
-                hint,
+                quiet_hint,
                 predicate=lambda _m, t: ("Тихі години" in t) or ("сповіщення" in t.casefold()),
                 ctx_name="resident notifications quiet info",
             )

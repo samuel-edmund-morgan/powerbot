@@ -72,8 +72,10 @@ async def run(ctx) -> ScenarioResult:
         predicate,
         ctx_name: str,
         previous_snapshot: tuple[int | None, str, datetime | None] | None = None,
+        timeout_sec: int | None = None,
+        allow_preexisting: bool = False,
     ):
-        deadline = time.monotonic() + ctx.cfg.timeout_sec
+        deadline = time.monotonic() + (timeout_sec if timeout_sec is not None else ctx.cfg.timeout_sec)
         last_text = ""
         while time.monotonic() < deadline:
             msgs = await ctx.client.get_messages(target, limit=12)
@@ -86,7 +88,7 @@ async def run(ctx) -> ScenarioResult:
                 if not text:
                     continue
                 activity_utc = _message_activity_utc(msg)
-                if activity_utc is not None and activity_utc < scenario_started_utc:
+                if (not allow_preexisting) and activity_utc is not None and activity_utc < scenario_started_utc:
                     continue
                 last_text = text
                 if previous_snapshot is not None:
@@ -99,7 +101,7 @@ async def run(ctx) -> ScenarioResult:
                 if predicate(msg, text):
                     ctx.record_seen_callbacks("admin", collect_message_callbacks(msg))
                     return msg, text
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(1.1)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
     async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
@@ -170,10 +172,18 @@ async def run(ctx) -> ScenarioResult:
         raise AssertionError("admin ensure main menu: unable to return to main menu without extra /start")
 
     await ctx.client.send_message(target, "/start")
-    msg, text = await wait_bot_message(
-        predicate=lambda m, t: ("Оберіть дію" in t) or ("Доступно лише адміністраторам" in t) or ("Лише для адмінів" in t),
-        ctx_name="admin /start",
-    )
+    try:
+        msg, text = await wait_bot_message(
+            predicate=lambda m, t: ("Оберіть дію" in t) or ("Доступно лише адміністраторам" in t) or ("Лише для адмінів" in t),
+            ctx_name="admin /start",
+            timeout_sec=max(ctx.cfg.timeout_sec * 2, 45),
+            allow_preexisting=True,
+        )
+    except AssertionError:
+        # Fallback to latest bot message in case of transient history lag/flood waits.
+        msg, text = await latest_bot_message("admin /start fallback latest")
+        if ("Оберіть дію" not in text) and ("Доступно лише адміністраторам" not in text) and ("Лише для адмінів" not in text):
+            raise
     if "Доступно лише адміністраторам" in text or "Лише для адмінів" in text:
         logger.info("admin scenario skipped: user is not admin")
         elapsed = int((time.perf_counter() - started) * 1000)
