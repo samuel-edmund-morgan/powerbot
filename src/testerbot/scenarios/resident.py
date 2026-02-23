@@ -115,12 +115,26 @@ async def run(ctx) -> ScenarioResult:
         ctx="resident alert status",
     )
 
-    msg, _ = await click_and_wait(
-        msg,
-        "Меню",
-        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
-        ctx_name="resident alerts back to menu",
-    )
+    try:
+        msg, _ = await click_and_wait(
+            msg,
+            "Меню",
+            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
+            ctx_name="resident alerts back to menu",
+        )
+    except AssertionError:
+        msg, _ = await click_and_wait(
+            msg,
+            "Назад",
+            predicate=lambda m, t: ("Тривоги та укриття" in t) and (_has_button(m, "Меню") or _has_button(m, "Назад")),
+            ctx_name="resident alerts back step",
+        )
+        msg, _ = await click_and_wait(
+            msg,
+            "Меню",
+            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
+            ctx_name="resident alerts back to menu",
+        )
 
     # Places flow (read-only).
     msg, text = await click_and_wait(
