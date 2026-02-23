@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from testerbot.assertions import assert_contains, assert_contains_any
 from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
@@ -49,13 +50,26 @@ def _is_stats_screen(text: str) -> bool:
     )
 
 
+def _to_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _message_activity_utc(msg) -> datetime | None:
+    return _to_utc(getattr(msg, "edit_date", None) or getattr(msg, "date", None))
+
+
 async def run(ctx) -> ScenarioResult:
     """Resident path (stable): /start -> building menu -> alerts -> places -> search."""
     started = time.perf_counter()
     target = ctx.cfg.targets.powerbot
     bot_id = await ctx.client.get_peer_id(target)
+    scenario_started_utc = datetime.now(timezone.utc)
 
-    async def wait_bot_message(*, predicate, ctx_name: str):
+    async def wait_bot_message(*, predicate, ctx_name: str, previous_snapshot: tuple[int | None, str, datetime | None] | None = None):
         deadline = time.monotonic() + ctx.cfg.timeout_sec
         last_text = ""
         while time.monotonic() < deadline:
@@ -68,7 +82,18 @@ async def run(ctx) -> ScenarioResult:
                 text = extract_text(msg)
                 if not text:
                     continue
+                activity_utc = _message_activity_utc(msg)
+                if activity_utc is not None and activity_utc < scenario_started_utc:
+                    continue
                 last_text = text
+                if previous_snapshot is not None:
+                    prev_id, prev_text, prev_edit_utc = previous_snapshot
+                    same_message_id = getattr(msg, "id", None) == prev_id
+                    same_text = text == prev_text
+                    same_edit = _to_utc(getattr(msg, "edit_date", None)) == prev_edit_utc
+                    if same_message_id and same_text and same_edit:
+                        # Ignore unchanged message snapshot from before click.
+                        continue
                 if predicate(msg, text):
                     ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
                     return msg, text
@@ -77,9 +102,18 @@ async def run(ctx) -> ScenarioResult:
 
     async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
         i, j = find_button(message, needle)
+        prev_snapshot = (
+            getattr(message, "id", None),
+            extract_text(message),
+            _to_utc(getattr(message, "edit_date", None)),
+        )
         ctx.record_clicked_callback("resident", callback_at(message, i, j))
         await message.click(i, j)
-        msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+        msg, text = await wait_bot_message(
+            predicate=predicate,
+            ctx_name=ctx_name,
+            previous_snapshot=prev_snapshot,
+        )
         ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
         return msg, text
 
@@ -90,9 +124,18 @@ async def run(ctx) -> ScenarioResult:
                 label = str(getattr(btn, "text", "")).strip()
                 if _is_nav_button(label):
                     continue
+                prev_snapshot = (
+                    getattr(message, "id", None),
+                    extract_text(message),
+                    _to_utc(getattr(message, "edit_date", None)),
+                )
                 ctx.record_clicked_callback("resident", callback_at(message, row_idx, btn_idx))
                 await message.click(row_idx, btn_idx)
-                msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                msg, text = await wait_bot_message(
+                    predicate=predicate,
+                    ctx_name=ctx_name,
+                    previous_snapshot=prev_snapshot,
+                )
                 ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
                 return msg, text
         raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
