@@ -44,6 +44,13 @@ async def run(ctx) -> ScenarioResult:
         await conv.send_message("/start")
         msg = await ctx.wait_msg(conv)
         text = extract_text(msg)
+        # Resident bot can return a transient "Оновлюю меню…" before final menu render.
+        if "Оновлюю меню" in text:
+            for _ in range(4):
+                msg = await wait_for_bot_response(conv, ctx.cfg.timeout_sec)
+                text = extract_text(msg)
+                if "Головне меню" in text:
+                    break
         assert_contains(text, ("Головне меню",), ctx="resident /start")
 
         msg = await click_button_and_wait(conv, msg, "Обрати будинок", ctx.cfg.timeout_sec)
