@@ -83,7 +83,7 @@ async def run(ctx) -> ScenarioResult:
             rows = conn.execute(
                 """
                 SELECT DISTINCT place_id
-                FROM place_owners
+                FROM business_owners
                 WHERE tg_user_id = ? AND status = 'approved'
                 ORDER BY place_id
                 """,
