@@ -414,7 +414,7 @@ async def run(ctx) -> ScenarioResult:
     for section, expect in (
         ("Підписники", ("Підписники",)),
         ("Сенсори", ("Сенсори",)),
-        ("Черга задач", ("Черга задач",)),
+        ("Черга задач", ("Черга задач", "Admin jobs")),
     ):
         require_button(msg, section, "admin main menu")
         msg, text = await click_and_wait(
