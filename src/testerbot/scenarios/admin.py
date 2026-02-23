@@ -73,7 +73,7 @@ async def run(ctx) -> ScenarioResult:
         ctx_name: str,
         previous_snapshot: tuple[int | None, str, datetime | None] | None = None,
         timeout_sec: int | None = None,
-        allow_preexisting: bool = False,
+        min_activity_utc: datetime | None = None,
     ):
         deadline = time.monotonic() + (timeout_sec if timeout_sec is not None else ctx.cfg.timeout_sec)
         last_text = ""
@@ -88,7 +88,8 @@ async def run(ctx) -> ScenarioResult:
                 if not text:
                     continue
                 activity_utc = _message_activity_utc(msg)
-                if (not allow_preexisting) and activity_utc is not None and activity_utc < scenario_started_utc:
+                min_allowed = min_activity_utc or scenario_started_utc
+                if activity_utc is not None and activity_utc < min_allowed:
                     continue
                 last_text = text
                 if previous_snapshot is not None:
@@ -171,13 +172,14 @@ async def run(ctx) -> ScenarioResult:
             break
         raise AssertionError("admin ensure main menu: unable to return to main menu without extra /start")
 
-    await ctx.client.send_message(target, "/start")
+    sent_start = await ctx.client.send_message(target, "/start")
+    sent_start_utc = _to_utc(getattr(sent_start, "date", None)) or scenario_started_utc
     try:
         msg, text = await wait_bot_message(
             predicate=lambda m, t: ("Оберіть дію" in t) or ("Доступно лише адміністраторам" in t) or ("Лише для адмінів" in t),
             ctx_name="admin /start",
             timeout_sec=max(ctx.cfg.timeout_sec * 2, 45),
-            allow_preexisting=True,
+            min_activity_utc=sent_start_utc,
         )
     except AssertionError:
         # Fallback to latest bot message in case of transient history lag/flood waits.
@@ -195,6 +197,11 @@ async def run(ctx) -> ScenarioResult:
         )
 
     assert_contains(text, ("Оберіть дію",), ctx="admin /start")
+    msg, text = await ensure_main_menu(msg)
+
+    def require_button(current_msg, needle: str, ctx_name: str) -> None:
+        if not _has_button(current_msg, needle):
+            raise AssertionError(f"{ctx_name}: expected button containing `{needle}`")
 
     # Core admin sections.
     for section, expect in (
@@ -202,8 +209,7 @@ async def run(ctx) -> ScenarioResult:
         ("Сенсори", ("Сенсори",)),
         ("Черга задач", ("Черга задач",)),
     ):
-        if not _has_button(msg, section):
-            continue
+        require_button(msg, section, "admin main menu")
         msg, text = await click_and_wait(
             msg,
             section,
@@ -215,22 +221,22 @@ async def run(ctx) -> ScenarioResult:
         assert_contains(text, ("Оберіть дію",), ctx=f"admin {section} back")
 
     # Open broadcast composer and cancel (covers admin_cancel read-only callback).
-    if _has_button(msg, "Розсилка"):
-        msg, text = await click_and_wait(
-            msg,
-            "Розсилка",
-            predicate=lambda _m, t: ("Введіть текст" in t) or ("Надішліть текст" in t) or ("розсилк" in t.casefold()),
-            ctx_name="admin broadcast open",
-        )
-        assert_contains_any(text, ("Введіть текст", "Надішліть текст", "розсилк"), ctx="admin broadcast open")
-        if _has_button(msg, "Скасувати"):
-            msg, text = await click_and_wait(
-                msg,
-                "Скасувати",
-                predicate=lambda _m, t: "Оберіть дію" in t,
-                ctx_name="admin broadcast cancel",
-            )
-            assert_contains(text, ("Оберіть дію",), ctx="admin broadcast cancel")
+    require_button(msg, "Розсилка", "admin main menu")
+    msg, text = await click_and_wait(
+        msg,
+        "Розсилка",
+        predicate=lambda _m, t: ("Введіть текст" in t) or ("Надішліть текст" in t) or ("розсилк" in t.casefold()),
+        ctx_name="admin broadcast open",
+    )
+    assert_contains_any(text, ("Введіть текст", "Надішліть текст", "розсилк"), ctx="admin broadcast open")
+    require_button(msg, "Скасувати", "admin broadcast composer")
+    msg, text = await click_and_wait(
+        msg,
+        "Скасувати",
+        predicate=lambda _m, t: "Оберіть дію" in t,
+        ctx_name="admin broadcast cancel",
+    )
+    assert_contains(text, ("Оберіть дію",), ctx="admin broadcast cancel")
 
     # Business section and read-only subsections.
     if _has_button(msg, "Бізнес"):
