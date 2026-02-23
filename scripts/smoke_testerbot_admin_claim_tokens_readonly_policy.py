@@ -24,6 +24,7 @@ def main() -> None:
     admin_scenario = (repo_root / "src" / "testerbot" / "scenarios" / "admin.py").read_text(
         encoding="utf-8"
     )
+    callbacks_py = (repo_root / "src" / "testerbot" / "callbacks.py").read_text(encoding="utf-8")
 
     required_tokens = (
         "_load_places_with_active_claim_token",
@@ -45,9 +46,13 @@ def main() -> None:
             f"admin testerbot claim-token readonly policy token is missing: {token}",
         )
 
+    _assert(
+        '"abiz_tokv_o|"' in callbacks_py,
+        "callbacks read-only whitelist must include admin prefix `abiz_tokv_o|`",
+    )
+
     print("OK: testerbot admin claim-token readonly policy smoke passed.")
 
 
 if __name__ == "__main__":
     main()
-

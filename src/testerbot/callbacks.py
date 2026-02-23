@@ -176,6 +176,7 @@ _READ_ONLY_INCLUDE_SW: dict[str, set[str]] = {
         "admin_sensors_page|",
         "admin_sensor|",
         "abiz_tokv_s|",
+        "abiz_tokv_o|",
     },
     "business": {
         "bp_menu:",
