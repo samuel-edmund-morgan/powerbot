@@ -244,6 +244,10 @@ fi
 echo "Running adbot matcher smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_matcher.py"
 
+# Automated smoke: adbot config contract (env requirements + allowlist rules).
+echo "Running adbot config contract smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_config_contract.py"
+
 # Automated smoke: adbot cooldown contract (per chat+intent + dedupe behavior).
 echo "Running adbot cooldown contract smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_cooldown_contract.py"
