@@ -147,6 +147,27 @@ async def run(ctx) -> ScenarioResult:
             continue
         raise AssertionError(f"{ctx_name}: unable to click non-navigation button on current bot message")
 
+    async def exercise_paged_list(message, *, expect_tokens: tuple[str, ...], ctx_name: str):
+        current = message
+        text = extract_text(current)
+        if _has_button(current, "➡️"):
+            current, text = await click_and_wait(
+                current,
+                "➡️",
+                predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                ctx_name=f"{ctx_name} next page",
+            )
+            assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} next page")
+            if _has_button(current, "⬅️"):
+                current, text = await click_and_wait(
+                    current,
+                    "⬅️",
+                    predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                    ctx_name=f"{ctx_name} prev page",
+                )
+                assert_contains_any(text, expect_tokens, ctx=f"{ctx_name} prev page")
+        return current, text
+
     async def ensure_main_menu(message):
         current = message
         current_text = extract_text(current)
@@ -199,6 +220,11 @@ async def run(ctx) -> ScenarioResult:
     )
 
     if "Оберіть заклад" in text:
+        msg, text = await exercise_paged_list(
+            msg,
+            expect_tokens=("Оберіть заклад", "У тебе ще немає бізнесів"),
+            ctx_name="business my places list",
+        )
         msg, text = await click_first_non_nav_button(
             msg,
             predicate=lambda _m, t: ("Статус доступу" in t) or ("Тариф" in t) or ("Активно до" in t),
@@ -267,6 +293,11 @@ async def run(ctx) -> ScenarioResult:
     )
 
     if "Оберіть заклад" in text:
+        msg, text = await exercise_paged_list(
+            msg,
+            expect_tokens=("Оберіть заклад", "Немає підтверджених закладів"),
+            ctx_name="business plans list",
+        )
         msg, text = await click_first_non_nav_button(
             msg,
             predicate=lambda _m, t: ("Обери тариф для" in t) or ("Плани" in t),
