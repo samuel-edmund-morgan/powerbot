@@ -223,6 +223,14 @@ fi
 echo "Running adbot matcher smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_matcher.py"
 
+# Automated smoke: adbot inline contract (intent -> inline query -> response block).
+echo "Running adbot inline contract smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_inline_contract.py"
+
+# Automated smoke: adbot listener/pipeline integration via mock stubs.
+echo "Running adbot pipeline integration smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
+
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sections.py"

@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable, Dict
 import re
 
 from config import CFG
+from inline_special_queries import resolve_inline_special_result
 from tg_buttons import STYLE_PRIMARY, STYLE_SUCCESS, ikb
 from database import (
     add_subscriber, remove_subscriber, db_get, db_set, set_quiet_hours, get_quiet_hours,
@@ -3719,22 +3720,18 @@ async def inline_search(inline_query: InlineQuery):
         )
         return
     
-    # Якщо запит про світло — повертаємо один результат зі статусом світла
-    if is_light_query(query):
-        text = (
-            "💡 <b>Статус світла</b>\n\n"
-            "Точний статус залежить від будинку та секції.\n"
-            "Відкрийте бота і оберіть будинок та секцію через «🏠 Обрати будинок»."
-        )
+    # Special intents for adbot (services + light) are handled before catalog search.
+    special = resolve_inline_special_result(query, cfg=CFG)
+    if special is not None:
         articles = [
             InlineQueryResultArticle(
-                id="light_status",
-                title="Статус світла",
-                description="Поточний стан електропостачання",
+                id=special.result_id,
+                title=special.title,
+                description=special.description,
                 input_message_content=InputTextMessageContent(
-                    message_text=text,
+                    message_text=special.message_text,
                     parse_mode="HTML"
-                )
+                ),
             )
         ]
         await inline_query.answer(results=articles, cache_time=5)

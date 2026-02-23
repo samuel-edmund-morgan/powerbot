@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""
+Integration smoke for adbot listener/pipeline with mock Telethon-like stubs.
+
+Checks:
+- intent match -> inline query fetch -> reply as message reply
+- audit forward is emitted
+- cooldown dedupe suppresses identical repeated triggers
+- fallback is used when inline provider returns no result
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+def _assert(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def _bootstrap_imports() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    src_root = repo_root / "src"
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+
+
+@dataclass
+class _FakeArticle:
+    title: str
+    description: str
+
+
+@dataclass
+class _FakeInlineResponse:
+    results: list[_FakeArticle]
+
+
+class _FakeInlineClient:
+    def __init__(self, responses: dict[str, list[_FakeArticle]]):
+        self._responses = responses
+        self.calls: list[tuple[str, str]] = []
+
+    async def inline_query(self, username: str, query: str):
+        self.calls.append((username, query))
+        return _FakeInlineResponse(results=self._responses.get(query, []))
+
+
+class _FakeForwarder:
+    def __init__(self):
+        self.sent: list[tuple[int, str]] = []
+
+    async def send_message(self, chat_id: int, text: str):
+        self.sent.append((int(chat_id), str(text)))
+
+
+@dataclass
+class _FakeMessage:
+    text: str
+    id: int
+    out: bool = False
+    sender_id: int = 1001
+
+
+class _FakeEvent:
+    def __init__(self, *, text: str, chat_id: int, msg_id: int, forwarder: _FakeForwarder):
+        self.chat_id = int(chat_id)
+        self.client = forwarder
+        self.message = _FakeMessage(text=text, id=int(msg_id))
+        self.responses: list[tuple[str, int | None]] = []
+
+    async def respond(self, text: str, reply_to: int | None = None):
+        self.responses.append((str(text), reply_to))
+
+
+async def _run() -> None:
+    _bootstrap_imports()
+
+    from adbot.cooldown import CooldownGuard
+    from adbot.listener import AdbotListener
+    from adbot.pipeline import PowerbotInlineClient, ResponsePipeline
+
+    # Positive flow: electrician query resolved via inline result.
+    fake_inline = _FakeInlineClient(
+        {
+            "електрик": [_FakeArticle(title="⚡ Електрик", description="📞 067-576-22-42")],
+            "сантехнік": [],
+        }
+    )
+    provider = PowerbotInlineClient(fake_inline, "powerbot")
+    pipeline = ResponsePipeline(provider, fallback_ms=500)
+    cooldown = CooldownGuard(3600)
+    forwarder = _FakeForwarder()
+    listener = AdbotListener(
+        matcher_min_len=10,
+        matcher_max_len=280,
+        matcher_min_confidence=120,
+        cooldown=cooldown,
+        pipeline=pipeline,
+        internal_chat_id=777001,
+    )
+
+    evt_ok = _FakeEvent(
+        text="Дайте номер електрика, будь ласка",
+        chat_id=-100123,
+        msg_id=501,
+        forwarder=forwarder,
+    )
+    handled = await listener.process(evt_ok, source_chat_id=evt_ok.chat_id)
+    _assert(handled is True, "expected listener to handle electrician message")
+    _assert(len(fake_inline.calls) == 1, f"inline query not called exactly once: {fake_inline.calls}")
+    _assert(fake_inline.calls[0][1] == "електрик", f"unexpected inline query: {fake_inline.calls}")
+    _assert(len(evt_ok.responses) == 1, "expected one response")
+    _assert(evt_ok.responses[0][1] == 501, f"response should be reply to original message: {evt_ok.responses}")
+    _assert("⚡ Електрик" in evt_ok.responses[0][0], f"unexpected response body: {evt_ok.responses}")
+    _assert(len(forwarder.sent) == 1, "expected one audit message")
+    _assert("intent" in forwarder.sent[0][1], f"audit payload missing intent: {forwarder.sent}")
+
+    # Cooldown dedupe for same chat+intent+message.
+    evt_dup = _FakeEvent(
+        text="Дайте номер електрика, будь ласка",
+        chat_id=-100123,
+        msg_id=502,
+        forwarder=forwarder,
+    )
+    handled_dup = await listener.process(evt_dup, source_chat_id=evt_dup.chat_id)
+    _assert(handled_dup is False, "expected cooldown to suppress duplicate message")
+    _assert(len(evt_dup.responses) == 0, "duplicate should not produce response")
+
+    # Fallback flow: matched intent with empty inline result must return fallback text.
+    evt_fallback = _FakeEvent(
+        text="Дайте номер сантехніка будь ласка",
+        chat_id=-100124,
+        msg_id=601,
+        forwarder=forwarder,
+    )
+    handled_fb = await listener.process(evt_fallback, source_chat_id=evt_fallback.chat_id)
+    _assert(handled_fb is True, "fallback flow should still be handled")
+    _assert(len(evt_fallback.responses) == 1, "fallback should send one response")
+    _assert("сантехніка" in evt_fallback.responses[0][0].lower(), f"unexpected fallback response: {evt_fallback.responses}")
+
+    # Non-matching text should be ignored.
+    evt_skip = _FakeEvent(
+        text="Привіт, як справи?",
+        chat_id=-100125,
+        msg_id=701,
+        forwarder=forwarder,
+    )
+    handled_skip = await listener.process(evt_skip, source_chat_id=evt_skip.chat_id)
+    _assert(handled_skip is False, "non-intent text should not be handled")
+    _assert(len(evt_skip.responses) == 0, "non-intent text should not produce response")
+
+
+def main() -> None:
+    asyncio.run(_run())
+    print("OK: adbot pipeline integration smoke passed.")
+
+
+if __name__ == "__main__":
+    main()
+

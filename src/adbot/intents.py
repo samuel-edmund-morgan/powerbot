@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from inline_special_queries import (
+    ADBOT_INLINE_QUERY_CONTRACT,
+    INTENT_CAR_PASS,
+    INTENT_ELECTRICIAN,
+    INTENT_LIGHT_STATUS,
+    INTENT_PARKING,
+    INTENT_PLUMBER,
+    INTENT_SECURITY,
+)
 
-INTENT_ELECTRICIAN = "electrician"
-INTENT_PLUMBER = "plumber"
-INTENT_SECURITY = "security"
-INTENT_PARKING = "parking"
-INTENT_CAR_PASS = "car_pass"
-INTENT_LIGHT_STATUS = "light_status"
+INLINE_QUERY_BY_INTENT = dict(ADBOT_INLINE_QUERY_CONTRACT)
 
 
 @dataclass(frozen=True)
@@ -35,7 +39,7 @@ INTENTS: tuple[Intent, ...] = (
             "зникло",
             "вимк",
         ),
-        inline_query="електрик",
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_ELECTRICIAN],
         fallback_reply="📞 Номер електрика: 067-576-22-42",
         required_signals=2,
     ),
@@ -44,7 +48,7 @@ INTENTS: tuple[Intent, ...] = (
         title="Сантехнік",
         keywords=("сантехн", "номер", "вода", "теч", "злив", "підтеч", "тече", "кран", "перевір", "душ"),
         # require two signals: common phrasing often includes "номер" + "сантехнік/вода"
-        inline_query="сантехнік",
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_PLUMBER],
         fallback_reply="🛠 Зараз сантехніка в чаті не видно, зверніться в оголошення в адмін-чаті.",
         required_signals=2,
     ),
@@ -52,7 +56,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_SECURITY,
         title="Охорона",
         keywords=("охорона", "охорон", "номер", "вишка", "сторож", "патруль", "цілодобово"),
-        inline_query="охорона",
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_SECURITY],
         fallback_reply="🛡️ Охорона доступна цілодобово.",
         required_signals=2,
     ),
@@ -60,7 +64,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_PARKING,
         title="Паркінг",
         keywords=("паркінг", "паркінгу", "машин", "павільйон", "номер"),
-        inline_query="паркінг",
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_PARKING],
         fallback_reply="🅿️ Для питань паркінгу відкрийте розділ «🚗 Оформлення...».",
         required_signals=2,
     ),
@@ -68,7 +72,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_CAR_PASS,
         title="Перепустка",
         keywords=("перепуст", "пропуск", "пропуска", "прохід", "вхід", "номер", "член", "авто"),
-        inline_query="перепустка авто",
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_CAR_PASS],
         fallback_reply="🚗 Оформлення перепустки авто — через резидент-бота.",
         required_signals=2,
     ),
@@ -76,7 +80,7 @@ INTENTS: tuple[Intent, ...] = (
         code=INTENT_LIGHT_STATUS,
         title="Світло",
         keywords=("світло", "світла", "чи", "вимк", "відсутн", "зникло", "поточн"),
-        inline_query="світло",
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_LIGHT_STATUS],
         fallback_reply="💡 Щоб подивитись точний статус, відкрийте резидент-бота.",
         required_signals=2,
     ),
