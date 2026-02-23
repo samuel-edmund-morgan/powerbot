@@ -22,6 +22,7 @@ Optional env:
   ADBOT_E2E_INTERNAL_CHAT_ID
   ADBOT_E2E_TIMEOUT_SEC      (default: 45)
   ADBOT_E2E_POLL_SEC         (default: 1.0)
+  ADBOT_E2E_NEGATIVE_WAIT_SEC (default: 12)
   ADBOT_E2E_VERIFY_FORWARD   (default: 1)
 """
 
@@ -117,6 +118,27 @@ async def _wait_for_source_reply(
     )
 
 
+async def _assert_no_source_reply(
+    client,
+    *,
+    source_chat_id: int,
+    original_message_id: int,
+    wait_sec: int,
+    poll_sec: float,
+):
+    deadline = time.monotonic() + wait_sec
+    while time.monotonic() < deadline:
+        messages = await client.get_messages(source_chat_id, limit=40)
+        for message in messages:
+            reply_to = _reply_to_msg_id(message)
+            if reply_to == original_message_id:
+                text = str(getattr(message, "raw_text", "") or getattr(message, "text", "") or "")
+                raise AssertionError(
+                    f"unexpected adbot reply in anti-false-positive case for msg_id={original_message_id}: {text[:180]}"
+                )
+        await asyncio.sleep(poll_sec)
+
+
 async def _wait_for_internal_audit(
     client,
     *,
@@ -161,6 +183,28 @@ async def _wait_for_internal_audit(
     )
 
 
+async def _assert_no_internal_audit_for_prompt(
+    client,
+    *,
+    internal_chat_id: int,
+    baseline_id: int,
+    prompt_with_nonce: str,
+    wait_sec: int,
+    poll_sec: float,
+):
+    deadline = time.monotonic() + wait_sec
+    while time.monotonic() < deadline:
+        messages = await client.get_messages(internal_chat_id, limit=80)
+        new_messages = [m for m in messages if int(getattr(m, "id", 0) or 0) > baseline_id]
+        for message in new_messages:
+            text = str(getattr(message, "raw_text", "") or getattr(message, "text", "") or "")
+            if prompt_with_nonce.casefold() in text.casefold():
+                raise AssertionError(
+                    "unexpected internal audit/forward for anti-false-positive case"
+                )
+        await asyncio.sleep(poll_sec)
+
+
 async def _run() -> None:
     TelegramClient, StringSession = _load_telethon()
     api_id = int(_require_env("TELETHON_API_ID"))
@@ -170,6 +214,7 @@ async def _run() -> None:
     internal_chat_id = int(internal_chat_raw) if internal_chat_raw else None
     timeout_sec = int(str(os.getenv("ADBOT_E2E_TIMEOUT_SEC", "45")).strip())
     poll_sec = float(str(os.getenv("ADBOT_E2E_POLL_SEC", "1.0")).strip())
+    negative_wait_sec = int(str(os.getenv("ADBOT_E2E_NEGATIVE_WAIT_SEC", "12")).strip())
     verify_forward = _parse_bool(os.getenv("ADBOT_E2E_VERIFY_FORWARD", "1"), default=True)
 
     session = _require_env("ADBOT_E2E_DRIVER_STRING_SESSION")
@@ -240,6 +285,44 @@ async def _run() -> None:
                 )
                 print(f"OK internal audit [{scenario.code}]")
 
+        # Anti-false-positive: long noisy text with one weak signal should not trigger adbot.
+        negative_nonce = f"e2e-negative-{int(time.time())}"
+        negative_prompt = (
+            "Сьогодні обговорюємо ремонт підʼїзду, доставку матеріалів та графік робіт, "
+            "нічого не питаємо про контакти служб, просто довге повідомлення зі словом світло "
+            f"для перевірки анти-фолс-позитиву ({negative_nonce})"
+        )
+        internal_baseline = 0
+        if internal_chat_id is not None:
+            latest_internal = await client.get_messages(internal_chat_id, limit=1)
+            if latest_internal:
+                internal_baseline = int(getattr(latest_internal[0], "id", 0) or 0)
+
+        negative_source = await client.send_message(source_chat_id, negative_prompt)
+        negative_source_id = int(getattr(negative_source, "id", 0) or 0)
+        if negative_source_id <= 0:
+            raise AssertionError("failed to send anti-false-positive source message")
+
+        await _assert_no_source_reply(
+            client,
+            source_chat_id=source_chat_id,
+            original_message_id=negative_source_id,
+            wait_sec=negative_wait_sec,
+            poll_sec=poll_sec,
+        )
+        print("OK anti-false-positive: no source reply")
+
+        if internal_chat_id is not None:
+            await _assert_no_internal_audit_for_prompt(
+                client,
+                internal_chat_id=internal_chat_id,
+                baseline_id=internal_baseline,
+                prompt_with_nonce=negative_prompt,
+                wait_sec=negative_wait_sec,
+                poll_sec=poll_sec,
+            )
+            print("OK anti-false-positive: no internal audit")
+
         print("OK: adbot E2E test-groups suite passed.")
     finally:
         await client.disconnect()
@@ -251,4 +334,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

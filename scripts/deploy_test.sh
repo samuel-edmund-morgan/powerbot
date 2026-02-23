@@ -252,6 +252,7 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   ADBOT_E2E_INTERNAL_CHAT_ID_VAL="$(get_env_value "ADBOT_E2E_INTERNAL_CHAT_ID" "${TEST_DIR}/.env")"
   ADBOT_E2E_TIMEOUT_SEC_VAL="$(get_env_value "ADBOT_E2E_TIMEOUT_SEC" "${TEST_DIR}/.env")"
   ADBOT_E2E_POLL_SEC_VAL="$(get_env_value "ADBOT_E2E_POLL_SEC" "${TEST_DIR}/.env")"
+  ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL="$(get_env_value "ADBOT_E2E_NEGATIVE_WAIT_SEC" "${TEST_DIR}/.env")"
   ADBOT_E2E_VERIFY_FORWARD_VAL="$(get_env_value "ADBOT_E2E_VERIFY_FORWARD" "${TEST_DIR}/.env")"
   TELETHON_API_ID_VAL="$(get_env_value "TELETHON_API_ID" "${TEST_DIR}/.env")"
   TELETHON_API_HASH_VAL="$(get_env_value "TELETHON_API_HASH" "${TEST_DIR}/.env")"
@@ -274,6 +275,7 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   ADBOT_E2E_INTERNAL_CHAT_ID="${ADBOT_E2E_INTERNAL_CHAT_ID_VAL}" \
   ADBOT_E2E_TIMEOUT_SEC="${ADBOT_E2E_TIMEOUT_SEC_VAL:-45}" \
   ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
+  ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
   ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
   python3 "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
 else
