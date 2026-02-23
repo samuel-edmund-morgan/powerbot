@@ -143,8 +143,8 @@ async def run(ctx) -> ScenarioResult:
 
     async def ensure_main_menu(message):
         current = message
-        current_text = extract_text(current)
         for _ in range(6):
+            current_text = extract_text(current)
             if "Оберіть дію" in current_text:
                 return current, current_text
             if _has_button(current, "Головне меню"):
@@ -163,12 +163,11 @@ async def run(ctx) -> ScenarioResult:
                     ctx_name="admin ensure main via back",
                 )
                 continue
+            current, current_text = await latest_bot_message("admin ensure main latest")
+            if "Оберіть дію" in current_text:
+                return current, current_text
             break
-        await ctx.client.send_message(target, "/start")
-        return await wait_bot_message(
-            predicate=lambda m, t: ("Оберіть дію" in t) and _has_button(m, "Підписники"),
-            ctx_name="admin ensure main via /start",
-        )
+        raise AssertionError("admin ensure main menu: unable to return to main menu without extra /start")
 
     await ctx.client.send_message(target, "/start")
     msg, text = await wait_bot_message(
