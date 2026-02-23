@@ -58,14 +58,33 @@ async def _open_business_subsection(
 async def run(ctx) -> ScenarioResult:
     """Open admin bot and exercise core read-only sections/callbacks."""
     started = time.perf_counter()
-    async with ctx.client.conversation(ctx.cfg.targets.adminbot, timeout=ctx.cfg.timeout_sec) as conv:
+    target = ctx.cfg.targets.adminbot
+    bot_id = await ctx.client.get_peer_id(target)
+    async with ctx.client.conversation(target, timeout=ctx.cfg.timeout_sec) as conv:
+        async def latest_bot_message(ctx_name: str):
+            msgs = await ctx.client.get_messages(target, limit=12)
+            for msg_local in msgs:
+                if getattr(msg_local, "out", False):
+                    continue
+                if getattr(msg_local, "sender_id", None) != bot_id:
+                    continue
+                text_local = extract_text(msg_local)
+                if text_local:
+                    return msg_local, text_local
+            raise AssertionError(f"{ctx_name}: no incoming admin-bot message found")
+
         async def settle(message):
             text_local = extract_text(message)
             if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
                 return message, text_local
             for _ in range(5):
-                message = await ctx.wait_msg(conv)
-                text_local = extract_text(message)
+                try:
+                    message = await ctx.wait_msg(conv)
+                    text_local = extract_text(message)
+                except TimeoutError:
+                    # Conversation may occasionally miss callback updates.
+                    # Fall back to reading latest incoming admin-bot message directly.
+                    message, text_local = await latest_bot_message("admin settle fallback")
                 if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
                     break
             return message, text_local
