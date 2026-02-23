@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 import re
 import time
@@ -45,13 +46,36 @@ def _is_nav_button(label: str) -> bool:
     return False
 
 
+def _to_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _message_activity_utc(msg) -> datetime | None:
+    return _to_utc(getattr(msg, "edit_date", None) or getattr(msg, "date", None))
+
+
+def _is_owner_card_text(text: str) -> bool:
+    return any(token in text for token in ("Статус доступу", "Тариф", "Активно до"))
+
+
 async def run(ctx) -> ScenarioResult:
     """Business path (stable): /start -> my places/plans -> add/attach cancel flows."""
     started = time.perf_counter()
     target = ctx.cfg.targets.businessbot
     bot_id = await ctx.client.get_peer_id(target)
+    scenario_started_utc = datetime.now(timezone.utc)
 
-    async def wait_bot_message(*, predicate, ctx_name: str):
+    async def wait_bot_message(
+        *,
+        predicate,
+        ctx_name: str,
+        previous_snapshot: tuple[int | None, str, datetime | None] | None = None,
+        min_activity_utc: datetime | None = None,
+    ):
         deadline = time.monotonic() + ctx.cfg.timeout_sec
         last_text = ""
         while time.monotonic() < deadline:
@@ -66,8 +90,19 @@ async def run(ctx) -> ScenarioResult:
                 text = extract_text(msg)
                 if not text:
                     continue
+                activity_utc = _message_activity_utc(msg)
+                min_allowed = min_activity_utc or scenario_started_utc
+                if activity_utc is not None and activity_utc < min_allowed:
+                    continue
                 latest_msg = msg
                 latest_text = text
+                if previous_snapshot is not None:
+                    prev_id, prev_text, prev_edit_utc = previous_snapshot
+                    same_message_id = getattr(msg, "id", None) == prev_id
+                    same_text = text == prev_text
+                    same_edit = _to_utc(getattr(msg, "edit_date", None)) == prev_edit_utc
+                    if same_message_id and same_text and same_edit:
+                        continue
                 break
             if latest_msg is not None:
                 last_text = latest_text
@@ -101,9 +136,18 @@ async def run(ctx) -> ScenarioResult:
                 continue
             try:
                 ctx.record_clicked_callback("business", callback_at(current, i, j))
+                prev_snapshot = (
+                    getattr(current, "id", None),
+                    extract_text(current),
+                    _to_utc(getattr(current, "edit_date", None)),
+                )
                 await current.click(i, j)
                 try:
-                    msg, text = await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
+                    msg, text = await wait_bot_message(
+                        predicate=predicate,
+                        ctx_name=ctx_name,
+                        previous_snapshot=prev_snapshot,
+                    )
                     ctx.record_seen_callbacks("business", collect_message_callbacks(msg))
                     return msg, text
                 except AssertionError:
@@ -195,9 +239,71 @@ async def run(ctx) -> ScenarioResult:
                     ctx_name="business ensure main menu via back",
                 )
                 continue
+            if _has_button(current, "Скасувати"):
+                current, current_text = await click_and_wait(
+                    current,
+                    "Скасувати",
+                    predicate=lambda _m, t: (
+                        "Оберіть дію:" in t
+                        or _is_owner_card_text(t)
+                        or "Оберіть заклад" in t
+                        or "Обери тариф для" in t
+                        or "Плани" in t
+                    ),
+                    ctx_name="business ensure main menu via cancel",
+                )
+                continue
             break
         assert_contains(current_text, ("Оберіть дію:",), ctx="business ensure main menu")
         return current, current_text
+
+    async def open_first_owner_card(message, *, ctx_name: str):
+        current, _ = await ensure_main_menu(message)
+        current, text = await click_and_wait(
+            current,
+            "🏢 Мої бізнеси",
+            predicate=lambda _m, t: ("Оберіть заклад" in t) or ("У тебе ще немає бізнесів" in t),
+            ctx_name=f"{ctx_name} open my businesses",
+        )
+        assert_contains_any(
+            text,
+            ("Оберіть заклад", "У тебе ще немає бізнесів"),
+            ctx=f"{ctx_name} open my businesses",
+        )
+        if "Оберіть заклад" not in text:
+            raise AssertionError(f"{ctx_name}: no businesses to open owner card")
+        current, text = await click_first_non_nav_button(
+            current,
+            predicate=lambda _m, t: _is_owner_card_text(t),
+            ctx_name=f"{ctx_name} open owner card",
+        )
+        assert_contains_any(text, ("Статус доступу", "Тариф", "Активно до"), ctx=f"{ctx_name} owner card")
+        return current, text
+
+    async def exercise_owner_card_actions(message):
+        current = message
+        actions: tuple[tuple[str, tuple[str, ...]], ...] = (
+            ("Редагувати", ("Що хочеш змінити", "Обери тариф для", "Оберіть заклад", "Плани")),
+            ("QR голосування", ("QR голосування", "Обери тариф для", "Оберіть заклад", "Плани")),
+            ("QR-комплект", ("QR-комплект", "Обери тариф для", "Оберіть заклад", "Плани")),
+            (
+                "Пріоритетна підтримка",
+                ("Пріоритетна підтримка", "Обери тариф для", "Оберіть заклад", "Плани"),
+            ),
+            ("Запропонувати правку", ("Запропонувати правку", "Що хочеш змінити", "Скасовано", "Плани")),
+        )
+        for needle, expect in actions:
+            if not _has_button(current, needle):
+                continue
+            current, text = await click_and_wait(
+                current,
+                needle,
+                predicate=lambda _m, t, tokens=expect: any(tok in t for tok in tokens),
+                ctx_name=f"business owner action {needle}",
+            )
+            assert_contains_any(text, expect, ctx=f"business owner action {needle}")
+            current, _ = await open_first_owner_card(current, ctx_name=f"business owner action {needle}")
+        return current
 
     await ctx.client.send_message(ctx.cfg.targets.businessbot, "/start")
     msg, text = await wait_bot_message(
@@ -264,6 +370,9 @@ async def run(ctx) -> ScenarioResult:
                     ("Статус доступу", "Тариф", "Активно до"),
                     ctx="business owner plans back to card",
                 )
+
+        msg = await exercise_owner_card_actions(msg)
+        text = extract_text(msg)
 
         if _has_button(msg, "Мої бізнеси"):
             msg, text = await click_and_wait(
