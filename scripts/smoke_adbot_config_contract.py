@@ -80,6 +80,12 @@ def main() -> None:
         _assert(cfg.test_mode is False, "test_mode should parse to False")
         _assert(cfg.source_chat_ids == (-100111, -100222), f"unexpected source ids: {cfg.source_chat_ids}")
         _assert(cfg.internal_chat_id == -100333, "internal chat id should parse")
+        _assert(cfg.target_powerbot_username == "TestNaButlerBot", "unexpected target bot username")
+
+    # Username should be sanitized from leading @.
+    with _patched_env(**{**_base_env(), "ADBOT_TARGET_POWERBOT_USERNAME": "@TestNaButlerBot"}):
+        cfg = build_config()
+        _assert(cfg.target_powerbot_username == "TestNaButlerBot", "target bot username should be normalized")
 
     # Non-test mode with empty allowlist must fail.
     with _patched_env(**{**_base_env(), "ADBOT_TEST_MODE": "0", "ADBOT_SOURCE_CHAT_IDS": ""}):
@@ -97,7 +103,12 @@ def main() -> None:
         _assert(cfg.source_chat_ids == (), f"source ids should be empty in test mode: {cfg.source_chat_ids}")
 
     # Missing required vars must fail.
-    for missing_key in ("TELETHON_API_ID", "TELETHON_API_HASH", "ADBOT_STRING_SESSION"):
+    for missing_key in (
+        "TELETHON_API_ID",
+        "TELETHON_API_HASH",
+        "ADBOT_STRING_SESSION",
+        "ADBOT_TARGET_POWERBOT_USERNAME",
+    ):
         env = _base_env()
         env[missing_key] = None  # type: ignore[assignment]
         with _patched_env(**env):

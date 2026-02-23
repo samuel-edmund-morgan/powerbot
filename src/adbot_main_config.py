@@ -58,6 +58,9 @@ def build_config() -> AdbotConfig:
         raise ValueError("TELETHON_API_HASH is required for adbot")
     if not os.getenv("ADBOT_STRING_SESSION"):
         raise ValueError("ADBOT_STRING_SESSION is required for adbot")
+    target_powerbot_username = os.getenv("ADBOT_TARGET_POWERBOT_USERNAME", "").strip().lstrip("@")
+    if not target_powerbot_username:
+        raise ValueError("ADBOT_TARGET_POWERBOT_USERNAME is required for adbot")
 
     source_raw = os.getenv("ADBOT_SOURCE_CHAT_IDS", "")
     source_chat_ids = parse_chat_ids(source_raw)
@@ -78,7 +81,7 @@ def build_config() -> AdbotConfig:
         api_id=int(api_id_raw),
         api_hash=os.getenv("TELETHON_API_HASH", "").strip(),
         string_session=os.getenv("ADBOT_STRING_SESSION", "").strip(),
-        target_powerbot_username=os.getenv("ADBOT_TARGET_POWERBOT_USERNAME", "").strip().lstrip("@"),
+        target_powerbot_username=target_powerbot_username,
         source_chat_ids=source_chat_ids,
         internal_chat_id=internal_chat_id,
         reply_cooldown_sec=int(os.getenv("ADBOT_REPLY_COOLDOWN_SEC", "10800")),
