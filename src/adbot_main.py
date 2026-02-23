@@ -43,6 +43,20 @@ async def _process_new_message_event(
 
     # Test mode can optionally disable source filtering for QA.
     if not enabled:
+        message_obj = event.message if hasattr(event, "message") else None
+        text = (getattr(message_obj, "text", "") or "").strip()
+        sender_id = getattr(message_obj, "sender_id", None)
+        try:
+            log_decision(
+                build_decision_payload(
+                    chat_id=int(event.chat_id),
+                    user_id=int(sender_id) if sender_id else None,
+                    reason="adbot_disabled",
+                    message_text=text,
+                )
+            )
+        except Exception:
+            logger.exception("failed to log disabled-state decision")
         return False
 
     await listener.process(event, source_chat_id=event.chat_id)

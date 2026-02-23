@@ -4,6 +4,7 @@ Dynamic smoke for adbot source-filter runtime behavior.
 
 Checks:
 - non-allowlisted chat is skipped and logs `source_chat_not_allowed`;
+- allowlisted chat with enabled=0 is skipped and logs `adbot_disabled`;
 - allowlisted chat is delegated to listener when enabled.
 """
 
@@ -106,6 +107,19 @@ async def _run() -> None:
         _assert(delegated_blocked is False, "blocked chat must not delegate to listener")
         _assert(listener.calls == [], f"listener must not be called for blocked chat: {listener.calls}")
 
+        disabled = _FakeEvent(
+            chat_id=-100100,
+            message=_FakeMessage(text="Чи є світло в Ньюкасл?", sender_id=12345),
+        )
+        delegated_disabled = await _process_new_message_event(
+            event=disabled,
+            listener=listener,
+            source_chat_ids=allowlist,
+            enabled=False,
+        )
+        _assert(delegated_disabled is False, "disabled adbot must not delegate to listener")
+        _assert(listener.calls == [], "listener must not be called when adbot is disabled")
+
         allowed = _FakeEvent(
             chat_id=-100100,
             message=_FakeMessage(text="Дайте номер електрика", sender_id=12345),
@@ -123,6 +137,10 @@ async def _run() -> None:
         _assert(
             "source_chat_not_allowed" in reasons,
             f"missing source_chat_not_allowed decision reason, got={reasons}",
+        )
+        _assert(
+            "adbot_disabled" in reasons,
+            f"missing adbot_disabled decision reason, got={reasons}",
         )
     finally:
         decision_logger.removeHandler(handler)
