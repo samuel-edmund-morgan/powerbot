@@ -84,6 +84,19 @@ def main() -> None:
         "Прив'язати бізнес" in business and "business attach cancel" in business,
         "business scenario must open attach-flow only with explicit cancel branch",
     )
+    _assert(
+        "business owner card" in business and "business owner card open plans" in business,
+        "business scenario must cover owner card -> plan menu read-only navigation",
+    )
+    _assert(
+        "business plans place menu" in business and "business plans place back" in business,
+        "business scenario must cover plans list -> place plan menu -> back",
+    )
+    business_sends = _extract_send_message_literals(business)
+    _assert(
+        business_sends == ["/start"],
+        f"business scenario must only send /start, got: {business_sends}",
+    )
 
     # Admin scenario should remain read-only (no data-entry message sends).
     admin_sends = _extract_send_message_literals(admin)
@@ -97,4 +110,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
