@@ -40,6 +40,14 @@ def main() -> None:
         "missing poll interval wiring from config",
     )
     _assert(
+        "if is_outgoing and sender_id != self_user_id:" in main_src,
+        "missing outgoing sender guard for poll fallback",
+    )
+    _assert(
+        "if not text.startswith(prefix):" in main_src,
+        "missing prefix guard in poll fallback",
+    )
+    _assert(
         "ADBOT_SELF_OUTGOING_POLL_SEC" in cfg_src,
         "missing ADBOT_SELF_OUTGOING_POLL_SEC config key",
     )

@@ -72,10 +72,24 @@ class _FakeMessage:
 
 
 class _FakeEvent:
-    def __init__(self, *, text: str, chat_id: int, msg_id: int, forwarder: _FakeForwarder):
+    def __init__(
+        self,
+        *,
+        text: str,
+        chat_id: int,
+        msg_id: int,
+        forwarder: _FakeForwarder,
+        sender_id: int = 1001,
+        out: bool = False,
+    ):
         self.chat_id = int(chat_id)
         self.client = forwarder
-        self.message = _FakeMessage(text=text, id=int(msg_id))
+        self.message = _FakeMessage(
+            text=text,
+            id=int(msg_id),
+            sender_id=int(sender_id),
+            out=bool(out),
+        )
         self.responses: list[tuple[str, int | None]] = []
 
     async def respond(self, text: str, reply_to: int | None = None):
@@ -155,6 +169,42 @@ async def _run() -> None:
         "expected cooldown to suppress same intent with different wording in same chat",
     )
     _assert(len(evt_same_intent_other_text.responses) == 0, "suppressed same-intent message must not reply")
+
+    # E2E-prefixed probes must bypass cooldown to keep deploy_test deterministic
+    # when adbot E2E suite runs repeatedly.
+    e2e_forwarder = _FakeForwarder()
+    e2e_pipeline = ResponsePipeline(provider, fallback_ms=500)
+    e2e_listener = AdbotListener(
+        matcher_min_len=10,
+        matcher_max_len=280,
+        matcher_min_confidence=120,
+        cooldown=CooldownGuard(3600),
+        pipeline=e2e_pipeline,
+        internal_chat_id=None,
+        allow_self_outgoing_e2e=True,
+        self_user_id=5555,
+        self_outgoing_prefix="[E2E]",
+    )
+    evt_e2e_1 = _FakeEvent(
+        text="[E2E] Дайте номер електрика, будь ласка",
+        chat_id=-10012345,
+        msg_id=511,
+        forwarder=e2e_forwarder,
+        sender_id=7777,
+        out=False,
+    )
+    evt_e2e_2 = _FakeEvent(
+        text="[E2E] Дайте номер електрика, будь ласка",
+        chat_id=-10012345,
+        msg_id=512,
+        forwarder=e2e_forwarder,
+        sender_id=7777,
+        out=False,
+    )
+    handled_e2e_1 = await e2e_listener.process(evt_e2e_1, source_chat_id=evt_e2e_1.chat_id)
+    handled_e2e_2 = await e2e_listener.process(evt_e2e_2, source_chat_id=evt_e2e_2.chat_id)
+    _assert(handled_e2e_1 is True and handled_e2e_2 is True, "expected E2E-prefixed probes to bypass cooldown")
+    _assert(len(evt_e2e_1.responses) == 1 and len(evt_e2e_2.responses) == 1, "expected both E2E probes to reply")
 
     # Fallback flow: matched intent with empty inline result must return fallback text.
     evt_fallback = _FakeEvent(

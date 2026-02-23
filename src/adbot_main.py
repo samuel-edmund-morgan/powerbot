@@ -163,16 +163,17 @@ async def _run_self_outgoing_poll_loop(
                 if message_id <= cursor:
                     continue
                 cursor = max(cursor, message_id)
-                if not bool(getattr(message, "out", False)):
-                    continue
                 sender_id = int(getattr(message, "sender_id", 0) or 0)
-                if sender_id != self_user_id:
+                is_outgoing = bool(getattr(message, "out", False))
+                if not sender_id:
                     continue
                 text = (
                     str(getattr(message, "text", "") or getattr(message, "raw_text", "") or "")
                     .strip()
                 )
                 if not text.startswith(prefix):
+                    continue
+                if is_outgoing and sender_id != self_user_id:
                     continue
                 polled_event = _PolledMessageEvent(
                     client=client,

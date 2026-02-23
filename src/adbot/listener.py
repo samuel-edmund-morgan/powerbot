@@ -43,6 +43,7 @@ class AdbotListener:
         message_obj = event.message if hasattr(event, "message") else event
         text = (getattr(message_obj, "text", "") or "").strip()
         sender_id = int(getattr(message_obj, "sender_id", 0) or 0)
+        is_e2e_prefixed = self._allow_self_outgoing_e2e and text.startswith(self._self_outgoing_prefix)
         if not text:
             log_decision(
                 build_decision_payload(
@@ -118,7 +119,9 @@ class AdbotListener:
             )
             return False
 
-        if not self._cooldown.allow(source_chat_id, intent.code, text):
+        # In test E2E mode we intentionally allow repeated prefixed probes
+        # without waiting full chat-level cooldown window.
+        if (not is_e2e_prefixed) and (not self._cooldown.allow(source_chat_id, intent.code, text)):
             log_decision(
                 build_decision_payload(
                     chat_id=source_chat_id,
