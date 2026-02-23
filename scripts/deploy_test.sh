@@ -248,6 +248,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_matcher.py"
 echo "Running adbot inline contract smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_inline_contract.py"
 
+# Automated smoke: adbot real-E2E runner contract (required prompts + anti-false guards).
+echo "Running adbot E2E contract smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_e2e_contract.py"
+
 # Automated smoke: adbot listener/pipeline integration via mock stubs.
 echo "Running adbot pipeline integration smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
