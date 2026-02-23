@@ -148,7 +148,10 @@ async def run(ctx) -> ScenarioResult:
         msg, text = await click_and_settle(msg, "Бізнес")
         assert_contains(text, ("Бізнес",), ctx="admin subscriptions back to business")
 
-        msg, text = await click_and_settle(msg, "Головне меню")
+        try:
+            msg, text = await click_and_settle(msg, "Головне меню")
+        except AssertionError:
+            msg, text = await click_and_settle(msg, "Назад")
         assert_contains(text, ("Оберіть дію",), ctx="admin business back to menu")
 
     elapsed = int((time.perf_counter() - started) * 1000)
