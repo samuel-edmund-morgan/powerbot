@@ -24,6 +24,18 @@ get_env_value() {
   strip_quotes "$raw"
 }
 
+env_flag_true() {
+  local raw="${1:-}"
+  case "${raw,,}" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 ensure_required_prod_profiles() {
   # From 2026-02: prod always runs 3 bots (powerbot + adminbot + businessbot).
   local env_file="$1"
@@ -39,6 +51,11 @@ ensure_required_prod_profiles() {
     echo "ERROR: ADMIN_BOT_API_KEY is empty in ${env_file} (prod always runs adminbot)."
     exit 1
   fi
+}
+
+should_enable_adbot() {
+  local env_file="$1"
+  env_flag_true "$(get_env_value "ADBOT_ENABLED" "$env_file")"
 }
 
 assert_service_running() {
@@ -187,6 +204,12 @@ fi
 profiles=()
 echo "Prod profiles forced: admin + business."
 profiles+=(--profile admin --profile business)
+if should_enable_adbot "${PROD_DIR}/.env"; then
+  echo "Adbot profile enabled (ADBOT_ENABLED=1)."
+  profiles+=(--profile adbot)
+else
+  echo "Adbot profile disabled (ADBOT_ENABLED!=1)."
+fi
 docker compose "${profiles[@]}" up -d
 
 docker compose ps
@@ -214,6 +237,9 @@ echo "Ensuring all prod bot services are running..."
 assert_service_running "powerbot"
 assert_service_running "adminbot"
 assert_service_running "businessbot"
+if should_enable_adbot "${PROD_DIR}/.env"; then
+  assert_service_running "adbot"
+fi
 
 # Unfreeze sensors we froze for this deploy (best-effort).
 if [[ -n "${FREEZE_AT}" && "${FROZEN_BY_DEPLOY_COUNT}" != "0" && -f "${PROD_DIR}/state.db" ]]; then

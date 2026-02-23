@@ -3,3 +3,4 @@ aiosqlite
 python-dotenv
 aiohttp
 img2pdf
+telethon>=1.36,<2

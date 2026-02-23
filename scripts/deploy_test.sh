@@ -24,6 +24,18 @@ get_env_value() {
   strip_quotes "$raw"
 }
 
+env_flag_true() {
+  local raw="${1:-}"
+  case "${raw,,}" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 should_enable_business_profile() {
   local env_file="$1"
   local token
@@ -36,6 +48,16 @@ should_enable_admin_profile() {
   local token
   token="$(get_env_value "ADMIN_BOT_API_KEY" "$env_file")"
   [[ -n "$token" ]]
+}
+
+should_enable_testerbot() {
+  local env_file="$1"
+  env_flag_true "$(get_env_value "TESTERBOT_ENABLED" "$env_file")"
+}
+
+should_enable_adbot() {
+  local env_file="$1"
+  env_flag_true "$(get_env_value "ADBOT_ENABLED" "$env_file")"
 }
 
 setup_docker_auth() {
@@ -160,6 +182,12 @@ if should_enable_admin_profile "${TEST_DIR}/.env"; then
 else
   echo "Admin profile disabled (missing ADMIN_BOT_API_KEY)."
 fi
+if should_enable_adbot "${TEST_DIR}/.env"; then
+  echo "Adbot profile enabled (ADBOT_ENABLED=1)."
+  profiles+=(--profile adbot)
+else
+  echo "Adbot profile disabled (ADBOT_ENABLED!=1)."
+fi
 docker compose "${profiles[@]}" up -d
 
 docker compose ps
@@ -182,6 +210,18 @@ SENSOR_API_KEY="$(grep -m1 "^SENSOR_API_KEY=" .env | sed 's/^SENSOR_API_KEY=//')
 if [[ -n "${SENSOR_API_KEY}" ]]; then
   curl -sf --max-time 3 -H "X-API-Key: ${SENSOR_API_KEY}" http://127.0.0.1:18082/api/v1/sensors >/dev/null
 fi
+
+# Automated testerbot E2E regression suite (runs on dedicated runtime and exits with result).
+if should_enable_testerbot "${TEST_DIR}/.env"; then
+  echo "Running testerbot regression suite in test environment..."
+  docker compose --profile testerbot run --rm testerbot
+else
+  echo "Testerbot disabled (TESTERBOT_ENABLED!=1)."
+fi
+
+# Automated smoke: adbot matcher contract (positive/negative/anti-false-positive).
+echo "Running adbot matcher smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_matcher.py"
 
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
