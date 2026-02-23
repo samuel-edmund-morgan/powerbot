@@ -87,7 +87,7 @@ async def _run() -> None:
     from adbot.listener import AdbotListener
     from adbot.pipeline import ResponsePipeline
 
-    decision_logger = logging.getLogger("adbot.audit")
+    decision_logger = logging.getLogger("adbot.decision")
     handler = _ListHandler()
     handler.setFormatter(logging.Formatter("%(message)s"))
     old_level = decision_logger.level

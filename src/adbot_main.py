@@ -10,6 +10,7 @@ import os
 from adbot.cooldown import CooldownGuard
 from adbot.listener import AdbotListener
 from adbot.pipeline import PowerbotInlineClient, ResponsePipeline
+from adbot.audit import configure_decision_logging
 from adbot_main_config import AdbotConfig, build_config
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ def main() -> int:
     from logging_setup import configure_logging
 
     configure_logging("adbot")
+    configure_decision_logging()
     if os.getenv("ADBOT_ENABLED", "0").strip() not in {"1", "true", "yes", "on"}:
         logger.info("ADBOT_ENABLED=0; skipping.")
         return 0

@@ -4,9 +4,81 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+decision_logger = logging.getLogger("adbot.decision")
+_DECISION_HANDLER_MARKER = "_is_adbot_decision_handler"
+_DEFAULT_DECISION_FILE_NAME = "adbot_decisions.log"
+_DEFAULT_LOG_DIR = "/data/logs"
+_DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
+_DEFAULT_LOG_BACKUP_COUNT = 10
+
+
+def _clean(value: str | None, default: str) -> str:
+    if value is None:
+        return default
+    return value.strip().strip('"').strip("'") or default
+
+
+def _parse_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    cleaned = value.strip().strip('"').strip("'")
+    if not cleaned:
+        return default
+    try:
+        return int(cleaned)
+    except ValueError:
+        return default
+
+
+def configure_decision_logging() -> None:
+    """Attach separate rotating-file handler for adbot decision logs.
+
+    Decision entries stay visible in the main adbot log via propagation,
+    and are additionally persisted in a dedicated file.
+    """
+    for handler in decision_logger.handlers:
+        if getattr(handler, _DECISION_HANDLER_MARKER, False):
+            return
+
+    explicit_path = _clean(os.getenv("ADBOT_DECISION_LOG_PATH"), "")
+    log_dir = _clean(os.getenv("LOG_DIR"), _DEFAULT_LOG_DIR)
+    file_name = _clean(os.getenv("ADBOT_DECISION_LOG_FILE_NAME"), _DEFAULT_DECISION_FILE_NAME)
+    max_bytes = _parse_int(
+        os.getenv("ADBOT_DECISION_LOG_MAX_BYTES"),
+        _parse_int(os.getenv("LOG_MAX_BYTES"), _DEFAULT_LOG_MAX_BYTES),
+    )
+    backup_count = _parse_int(
+        os.getenv("ADBOT_DECISION_LOG_BACKUP_COUNT"),
+        _parse_int(os.getenv("LOG_BACKUP_COUNT"), _DEFAULT_LOG_BACKUP_COUNT),
+    )
+
+    try:
+        if explicit_path:
+            path = Path(explicit_path)
+            if path.parent:
+                path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            Path(log_dir).mkdir(parents=True, exist_ok=True)
+            path = Path(log_dir) / file_name
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(name)s:%(message)s"))
+        setattr(handler, _DECISION_HANDLER_MARKER, True)
+        decision_logger.addHandler(handler)
+        decision_logger.setLevel(logging.INFO)
+        decision_logger.propagate = True
+    except Exception:
+        logger.exception("failed to configure adbot decision logger")
 
 
 def build_audit_payload(chat_id: int, user_id: int, intent_code: str, message_text: str) -> dict:
@@ -43,7 +115,7 @@ def build_decision_payload(
 
 def log_decision(payload: dict) -> None:
     """Write a structured adbot decision log entry."""
-    logger.info("adbot decision: %s", json.dumps(payload, ensure_ascii=False))
+    decision_logger.info("adbot decision: %s", json.dumps(payload, ensure_ascii=False))
 
 
 async def log_match(
