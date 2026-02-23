@@ -1,13 +1,17 @@
-"""Admin bot smoke scenario."""
+"""Admin bot smoke scenario (polling-based, no Telethon Conversation races)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import asyncio
 import logging
 import time
 
+from telethon.errors.rpcerrorlist import MessageIdInvalidError
+
 from testerbot.assertions import assert_contains, assert_contains_any
-from testerbot.scenarios.common import click_button_and_wait, collect_message_callbacks, extract_text
+from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
 
 logger = logging.getLogger(__name__)
 
@@ -31,41 +35,16 @@ def _has_button(message, needle: str) -> bool:
     return False
 
 
-async def _open_business_subsection(
-    ctx,
-    conv,
-    message,
-    section_button: str,
-    expect_tokens: tuple[str, ...],
-    timeout_sec: int,
-    settle_fn=None,
-):
-    msg = await click_button_and_wait(
-        conv,
-        message,
-        section_button,
-        timeout_sec,
-        on_click_callback=lambda cb: ctx.record_clicked_callback("admin", cb),
-    )
-    if settle_fn is not None:
-        msg, text = await settle_fn(msg)
-    else:
-        text = extract_text(msg)
-    assert_contains_any(text, expect_tokens, ctx=f"admin business {section_button}")
-    if _has_button(msg, "Бізнес"):
-        msg = await click_button_and_wait(
-            conv,
-            msg,
-            "Бізнес",
-            timeout_sec,
-            on_click_callback=lambda cb: ctx.record_clicked_callback("admin", cb),
-        )
-        if settle_fn is not None:
-            msg, text = await settle_fn(msg)
-        else:
-            text = extract_text(msg)
-        assert_contains(text, ("Бізнес",), ctx=f"admin back from {section_button}")
-    return msg
+def _to_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _message_activity_utc(msg) -> datetime | None:
+    return _to_utc(getattr(msg, "edit_date", None) or getattr(msg, "date", None))
 
 
 async def run(ctx) -> ScenarioResult:
@@ -73,133 +52,203 @@ async def run(ctx) -> ScenarioResult:
     started = time.perf_counter()
     target = ctx.cfg.targets.adminbot
     bot_id = await ctx.client.get_peer_id(target)
-    async with ctx.client.conversation(target, timeout=ctx.cfg.timeout_sec) as conv:
-        async def latest_bot_message(ctx_name: str):
+    scenario_started_utc = datetime.now(timezone.utc)
+
+    async def latest_bot_message(ctx_name: str):
+        msgs = await ctx.client.get_messages(target, limit=12)
+        for msg in msgs:
+            if getattr(msg, "out", False):
+                continue
+            if getattr(msg, "sender_id", None) != bot_id:
+                continue
+            text = extract_text(msg)
+            if text:
+                ctx.record_seen_callbacks("admin", collect_message_callbacks(msg))
+                return msg, text
+        raise AssertionError(f"{ctx_name}: no incoming admin-bot message found")
+
+    async def wait_bot_message(
+        *,
+        predicate,
+        ctx_name: str,
+        previous_snapshot: tuple[int | None, str, datetime | None] | None = None,
+    ):
+        deadline = time.monotonic() + ctx.cfg.timeout_sec
+        last_text = ""
+        while time.monotonic() < deadline:
             msgs = await ctx.client.get_messages(target, limit=12)
-            for msg_local in msgs:
-                if getattr(msg_local, "out", False):
+            for msg in msgs:
+                if getattr(msg, "out", False):
                     continue
-                if getattr(msg_local, "sender_id", None) != bot_id:
+                if getattr(msg, "sender_id", None) != bot_id:
                     continue
-                text_local = extract_text(msg_local)
-                if text_local:
-                    return msg_local, text_local
-            raise AssertionError(f"{ctx_name}: no incoming admin-bot message found")
+                text = extract_text(msg)
+                if not text:
+                    continue
+                activity_utc = _message_activity_utc(msg)
+                if activity_utc is not None and activity_utc < scenario_started_utc:
+                    continue
+                last_text = text
+                if previous_snapshot is not None:
+                    prev_id, prev_text, prev_edit_utc = previous_snapshot
+                    same_message_id = getattr(msg, "id", None) == prev_id
+                    same_text = text == prev_text
+                    same_edit = _to_utc(getattr(msg, "edit_date", None)) == prev_edit_utc
+                    if same_message_id and same_text and same_edit:
+                        continue
+                if predicate(msg, text):
+                    ctx.record_seen_callbacks("admin", collect_message_callbacks(msg))
+                    return msg, text
+            await asyncio.sleep(0.6)
+        raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
-        async def settle(message):
-            text_local = extract_text(message)
-            if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
-                ctx.record_seen_callbacks("admin", collect_message_callbacks(message))
-                return message, text_local
-            for _ in range(5):
-                try:
-                    message = await ctx.wait_msg(conv)
-                    text_local = extract_text(message)
-                except TimeoutError:
-                    # Conversation may occasionally miss callback updates.
-                    # Fall back to reading latest incoming admin-bot message directly.
-                    message, text_local = await latest_bot_message("admin settle fallback")
-                if text_local.strip() not in {"…", "...", "Оновлюю меню…"}:
-                    break
-            ctx.record_seen_callbacks("admin", collect_message_callbacks(message))
-            return message, text_local
+    async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
+        current = message
+        for _ in range(4):
+            try:
+                i, j = find_button(current, needle)
+            except AssertionError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh buttons)",
+                )
+                continue
 
-        async def click_and_settle(message, needle: str):
-            message = await click_button_and_wait(
-                conv,
-                message,
-                needle,
-                ctx.cfg.timeout_sec,
-                on_click_callback=lambda cb: ctx.record_clicked_callback("admin", cb),
+            prev_snapshot = (
+                getattr(current, "id", None),
+                extract_text(current),
+                _to_utc(getattr(current, "edit_date", None)),
             )
-            return await settle(message)
+            try:
+                ctx.record_clicked_callback("admin", callback_at(current, i, j))
+                await current.click(i, j)
+            except MessageIdInvalidError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh stale message)",
+                )
+                continue
 
-        await conv.send_message("/start")
-        try:
-            msg = await ctx.wait_msg(conv)
-        except TimeoutError:
-            msg, _ = await latest_bot_message("admin /start fallback")
-        msg, text = await settle(msg)
-        if "Доступно лише адміністраторам" in text or "Лише для адмінів" in text:
-            logger.info("admin scenario skipped: user is not admin")
-            elapsed = int((time.perf_counter() - started) * 1000)
-            return ScenarioResult(
-                name="admin_skip",
-                status="ok",
-                duration_ms=elapsed,
-                message=text[:120] or "not_admin",
+            try:
+                return await wait_bot_message(
+                    predicate=predicate,
+                    ctx_name=ctx_name,
+                    previous_snapshot=prev_snapshot,
+                )
+            except AssertionError:
+                current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                continue
+
+        raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
+
+    async def ensure_main_menu(message):
+        current = message
+        current_text = extract_text(current)
+        for _ in range(6):
+            if "Оберіть дію" in current_text:
+                return current, current_text
+            if _has_button(current, "Головне меню"):
+                current, current_text = await click_and_wait(
+                    current,
+                    "Головне меню",
+                    predicate=lambda _m, t: "Оберіть дію" in t,
+                    ctx_name="admin ensure main via home",
+                )
+                continue
+            if _has_button(current, "Назад"):
+                current, current_text = await click_and_wait(
+                    current,
+                    "Назад",
+                    predicate=lambda _m, t: ("Оберіть дію" in t) or ("Бізнес" in t),
+                    ctx_name="admin ensure main via back",
+                )
+                continue
+            break
+        await ctx.client.send_message(target, "/start")
+        return await wait_bot_message(
+            predicate=lambda m, t: ("Оберіть дію" in t) and _has_button(m, "Підписники"),
+            ctx_name="admin ensure main via /start",
+        )
+
+    await ctx.client.send_message(target, "/start")
+    msg, text = await wait_bot_message(
+        predicate=lambda m, t: ("Оберіть дію" in t) or ("Доступно лише адміністраторам" in t) or ("Лише для адмінів" in t),
+        ctx_name="admin /start",
+    )
+    if "Доступно лише адміністраторам" in text or "Лише для адмінів" in text:
+        logger.info("admin scenario skipped: user is not admin")
+        elapsed = int((time.perf_counter() - started) * 1000)
+        return ScenarioResult(
+            name="admin_skip",
+            status="ok",
+            duration_ms=elapsed,
+            message=text[:120] or "not_admin",
+        )
+
+    assert_contains(text, ("Оберіть дію",), ctx="admin /start")
+
+    # Core admin sections.
+    for section, expect in (
+        ("Підписники", ("Підписники",)),
+        ("Сенсори", ("Сенсори",)),
+        ("Черга задач", ("Черга задач",)),
+    ):
+        if not _has_button(msg, section):
+            continue
+        msg, text = await click_and_wait(
+            msg,
+            section,
+            predicate=lambda _m, t, tokens=expect: any(tok in t for tok in tokens),
+            ctx_name=f"admin {section}",
+        )
+        assert_contains_any(text, expect, ctx=f"admin {section}")
+        msg, text = await ensure_main_menu(msg)
+        assert_contains(text, ("Оберіть дію",), ctx=f"admin {section} back")
+
+    # Business section and read-only subsections.
+    if _has_button(msg, "Бізнес"):
+        msg, text = await click_and_wait(
+            msg,
+            "Бізнес",
+            predicate=lambda _m, t: "Бізнес" in t,
+            ctx_name="admin business menu",
+        )
+        assert_contains(text, ("Бізнес",), ctx="admin business menu")
+
+        for button, expect_tokens in (
+            ("Модерація", ("Модерація", "Черга модерації")),
+            ("Правки закладів", ("Правки закладів", "Черга порожня")),
+            ("Підтримка Partner", ("Підтримка Partner", "Черга порожня")),
+            ("Коди прив'язки", ("Коди прив'язки", "Оберіть дію")),
+            ("Підписки", ("Підписки",)),
+        ):
+            if not _has_button(msg, button):
+                continue
+            msg, text = await click_and_wait(
+                msg,
+                button,
+                predicate=lambda _m, t, tokens=expect_tokens: any(tok in t for tok in tokens),
+                ctx_name=f"admin business {button}",
             )
+            assert_contains_any(text, expect_tokens, ctx=f"admin business {button}")
+            if "Оберіть дію" in text and "Бізнес" not in text and _has_button(msg, "Бізнес"):
+                # "Коди прив'язки" може мати own меню з кнопкою "Бізнес".
+                msg, text = await click_and_wait(
+                    msg,
+                    "Бізнес",
+                    predicate=lambda _m, t: "Бізнес" in t,
+                    ctx_name=f"admin business back from {button}",
+                )
+            elif _has_button(msg, "Бізнес"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Бізнес",
+                    predicate=lambda _m, t: "Бізнес" in t,
+                    ctx_name=f"admin business back from {button}",
+                )
 
-        # Expect admin menu title and a few core sections.
-        assert_contains(text, ("Оберіть дію",), ctx="admin /start")
-
-        msg, text = await click_and_settle(msg, "Підписники")
-        assert_contains(text, ("Підписники",), ctx="admin subscribers")
-        msg, text = await click_and_settle(msg, "Назад")
-        assert_contains(text, ("Оберіть дію",), ctx="admin subscribers back")
-
-        msg, text = await click_and_settle(msg, "Сенсори")
-        assert_contains(text, ("Сенсори",), ctx="admin sensors")
-        msg, text = await click_and_settle(msg, "Назад")
-        assert_contains(text, ("Оберіть дію",), ctx="admin sensors back")
-
-        msg, text = await click_and_settle(msg, "🧾 Черга задач")
-        assert_contains(text, ("Черга задач",), ctx="admin jobs")
-        msg, text = await click_and_settle(msg, "Назад")
-        assert_contains(text, ("Оберіть дію",), ctx="admin jobs back")
-
-        msg, text = await click_and_settle(msg, "Бізнес")
-        assert_contains(text, ("Бізнес", "Оберіть дію"), ctx="admin business menu")
-
-        # Read-only pass through core business admin subsections.
-        msg = await _open_business_subsection(
-            ctx,
-            conv,
-            msg,
-            "Модерація",
-            ("Модерація", "Черга модерації"),
-            ctx.cfg.timeout_sec,
-            settle_fn=settle,
-        )
-        msg = await _open_business_subsection(
-            ctx,
-            conv,
-            msg,
-            "Правки закладів",
-            ("Правки закладів", "Черга порожня"),
-            ctx.cfg.timeout_sec,
-            settle_fn=settle,
-        )
-        msg = await _open_business_subsection(
-            ctx,
-            conv,
-            msg,
-            "Підтримка Partner",
-            ("Підтримка Partner", "Черга порожня"),
-            ctx.cfg.timeout_sec,
-            settle_fn=settle,
-        )
-        msg = await _open_business_subsection(
-            ctx,
-            conv,
-            msg,
-            "Коди прив'язки",
-            ("Коди прив'язки", "Оберіть дію"),
-            ctx.cfg.timeout_sec,
-            settle_fn=settle,
-        )
-
-        msg, text = await click_and_settle(msg, "Підписки")
-        assert_contains(text, ("Підписки",), ctx="admin business subscriptions")
-
-        msg, text = await click_and_settle(msg, "Бізнес")
-        assert_contains(text, ("Бізнес",), ctx="admin subscriptions back to business")
-
-        try:
-            msg, text = await click_and_settle(msg, "Головне меню")
-        except AssertionError:
-            msg, text = await click_and_settle(msg, "Назад")
-        assert_contains(text, ("Оберіть дію",), ctx="admin business back to menu")
+        msg, text = await ensure_main_menu(msg)
+        assert_contains(text, ("Оберіть дію",), ctx="admin business back to main")
 
     elapsed = int((time.perf_counter() - started) * 1000)
     logger.info("admin scenario completed in %sms", elapsed)
