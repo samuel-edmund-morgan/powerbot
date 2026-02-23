@@ -49,6 +49,16 @@ async def run(ctx) -> ScenarioResult:
         await conv.send_message("/start")
         msg = await ctx.wait_msg(conv)
         text = extract_text(msg)
+        if text.strip() in {"…", "...", "Оновлюю меню…"}:
+            for _ in range(4):
+                msg = await ctx.wait_msg(conv)
+                text = extract_text(msg)
+                if (
+                    "Оберіть дію" in text
+                    or "Доступно лише адміністраторам" in text
+                    or "Лише для адмінів" in text
+                ):
+                    break
         if "Доступно лише адміністраторам" in text or "Лише для адмінів" in text:
             logger.info("admin scenario skipped: user is not admin")
             elapsed = int((time.perf_counter() - started) * 1000)
@@ -60,28 +70,28 @@ async def run(ctx) -> ScenarioResult:
             )
 
         # Expect admin menu title and a few core sections.
-        assert_contains(text, ("Оберіть дію:",), ctx="admin /start")
+        assert_contains(text, ("Оберіть дію",), ctx="admin /start")
 
         msg = await click_button_and_wait(conv, msg, "Підписники", ctx.cfg.timeout_sec)
         text = extract_text(msg)
         assert_contains(text, ("Підписники",), ctx="admin subscribers")
         msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Оберіть дію:",), ctx="admin subscribers back")
+        assert_contains(text, ("Оберіть дію",), ctx="admin subscribers back")
 
         msg = await click_button_and_wait(conv, msg, "Сенсори", ctx.cfg.timeout_sec)
         text = extract_text(msg)
         assert_contains(text, ("Сенсори",), ctx="admin sensors")
         msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Оберіть дію:",), ctx="admin sensors back")
+        assert_contains(text, ("Оберіть дію",), ctx="admin sensors back")
 
         msg = await click_button_and_wait(conv, msg, "🧾 Черга задач", ctx.cfg.timeout_sec)
         text = extract_text(msg)
         assert_contains(text, ("Черга задач",), ctx="admin jobs")
         msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Оберіть дію:",), ctx="admin jobs back")
+        assert_contains(text, ("Оберіть дію",), ctx="admin jobs back")
 
         msg = await click_button_and_wait(conv, msg, "Бізнес", ctx.cfg.timeout_sec)
         text = extract_text(msg)
@@ -127,7 +137,7 @@ async def run(ctx) -> ScenarioResult:
 
         msg = await click_button_and_wait(conv, msg, "Головне меню", ctx.cfg.timeout_sec)
         text = extract_text(msg)
-        assert_contains(text, ("Оберіть дію:",), ctx="admin business back to menu")
+        assert_contains(text, ("Оберіть дію",), ctx="admin business back to menu")
 
     elapsed = int((time.perf_counter() - started) * 1000)
     logger.info("admin scenario completed in %sms", elapsed)
