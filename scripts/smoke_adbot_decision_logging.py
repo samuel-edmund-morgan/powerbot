@@ -125,6 +125,7 @@ async def _run() -> None:
         _assert("no_intent_match" in reasons, f"missing no_intent_match reason, got={reasons}")
         _assert("replied" in reasons, f"missing replied reason, got={reasons}")
         _assert("cooldown_skip" in reasons, f"missing cooldown_skip reason, got={reasons}")
+        _assert(any('"match_reason"' in line for line in handler.messages), "decision logs must include matcher diagnostics meta")
     finally:
         decision_logger.removeHandler(handler)
         decision_logger.setLevel(old_level)

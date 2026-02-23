@@ -6,7 +6,7 @@ import logging
 
 from adbot.audit import build_audit_payload, build_decision_payload, log_decision, log_match
 from adbot.cooldown import CooldownGuard
-from adbot.matcher import match_intent
+from adbot.matcher import analyze_intent_match
 from adbot.pipeline import ResponsePipeline
 
 logger = logging.getLogger(__name__)
@@ -69,12 +69,13 @@ class AdbotListener:
             )
             return False
 
-        intent = match_intent(
+        analysis = analyze_intent_match(
             text,
             min_len=self._matcher_min_len,
             max_len=self._matcher_max_len,
             min_confidence=self._matcher_min_confidence,
         )
+        intent = analysis.intent
         if intent is None:
             log_decision(
                 build_decision_payload(
@@ -82,6 +83,15 @@ class AdbotListener:
                     user_id=int(sender_id),
                     reason="no_intent_match",
                     message_text=text,
+                    meta={
+                        "match_reason": analysis.reason,
+                        "text_len": analysis.text_len,
+                        "token_count": analysis.token_count,
+                        "best_intent": analysis.best_intent,
+                        "best_confidence": analysis.best_confidence,
+                        "best_signals": analysis.best_signals,
+                        "min_confidence": self._matcher_min_confidence,
+                    },
                 )
             )
             return False
@@ -94,6 +104,10 @@ class AdbotListener:
                     reason="cooldown_skip",
                     message_text=text,
                     intent_code=intent.code,
+                    meta={
+                        "match_reason": analysis.reason,
+                        "best_confidence": analysis.best_confidence,
+                    },
                 )
             )
             return False
@@ -125,6 +139,10 @@ class AdbotListener:
                     reason="reply_error",
                     message_text=text,
                     intent_code=intent.code,
+                    meta={
+                        "match_reason": analysis.reason,
+                        "best_confidence": analysis.best_confidence,
+                    },
                 )
             )
             return False
@@ -135,6 +153,10 @@ class AdbotListener:
                 reason="replied",
                 message_text=text,
                 intent_code=intent.code,
+                meta={
+                    "match_reason": analysis.reason,
+                    "best_confidence": analysis.best_confidence,
+                },
             )
         )
         return True

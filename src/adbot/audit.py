@@ -98,6 +98,7 @@ def build_decision_payload(
     reason: str,
     message_text: str | None = None,
     intent_code: str | None = None,
+    meta: dict | None = None,
 ) -> dict:
     payload: dict = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -110,6 +111,24 @@ def build_decision_payload(
         payload["intent"] = str(intent_code).strip()
     if message_text:
         payload["message"] = str(message_text).strip()[:200]
+    if meta:
+        sanitized: dict[str, str | int | float | bool] = {}
+        for key, value in meta.items():
+            if value is None:
+                continue
+            key_str = str(key).strip()
+            if not key_str:
+                continue
+            if isinstance(value, bool):
+                sanitized[key_str] = value
+            elif isinstance(value, int):
+                sanitized[key_str] = value
+            elif isinstance(value, float):
+                sanitized[key_str] = value
+            else:
+                sanitized[key_str] = str(value)[:120]
+        if sanitized:
+            payload["meta"] = sanitized
     return payload
 
 
