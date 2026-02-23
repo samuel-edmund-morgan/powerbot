@@ -338,3 +338,46 @@ docker run --rm -it \
   -e TG_E2E_BUILDING_LABEL -e TG_E2E_SECTION_LABEL -e TG_E2E_TIMEOUT_SEC \
   python:3.11-slim sh -lc "pip install -r requirements-dev.txt && python3 scripts/e2e_telegram_userbot.py"
 ```
+
+## 8) Аналіз реального групового чату для adbot (зменшення false positives)
+
+Коли потрібно підкрутити matcher не “на око”, а по реальних формулюваннях мешканців, використай:
+`scripts/analyze_adbot_chat_history.py`.
+
+Скрипт робить 3 речі:
+1. Зчитує поточні можливості бота з коду (які intents/inline-відповіді доступні).
+2. Читає історію вибраного чату за останні N місяців через Telethon.
+3. Будує звіт:
+   - покриття `matched/unmatched`,
+   - топ intents,
+   - причини unmatched,
+   - топ слова для unmatched,
+   - приклади реальних запитів, які зараз не покриваються.
+
+### 8.1 Приклад запуску (1-6 місяців)
+```bash
+python3 scripts/analyze_adbot_chat_history.py \
+  --api-id "$TELETHON_API_ID" \
+  --api-hash "$TELETHON_API_HASH" \
+  --session "$ADBOT_STRING_SESSION" \
+  --chat-title 'Ньюкасл" А-7 (ЖК "Нова Англія")' \
+  --months 6 \
+  --output-json /tmp/adbot_chat_analysis.json \
+  --output-md /tmp/adbot_chat_analysis.md
+```
+
+Альтернатива через chat_id:
+```bash
+python3 scripts/analyze_adbot_chat_history.py \
+  --api-id "$TELETHON_API_ID" \
+  --api-hash "$TELETHON_API_HASH" \
+  --session "$ADBOT_STRING_SESSION" \
+  --chat-id -1001234567890 \
+  --months 3 \
+  --output-json /tmp/adbot_chat_analysis.json
+```
+
+### 8.2 Важливо
+- Потрібна валідна `Telethon StringSession` акаунта, який є учасником цього чату.
+- Якщо chat-title неоднозначний, скрипт поверне помилку і попросить використовувати `--chat-id`.
+- Рекомендовано запускати на локальній dev-машині; це аналітичний інструмент, не частина CI.
