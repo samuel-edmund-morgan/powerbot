@@ -42,6 +42,19 @@ def parse_bool(raw: str, default: bool = False) -> bool:
     return default
 
 
+def parse_csv_tokens(raw: str) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    tokens = re.split(r"[,\n]+", raw.strip())
+    values: list[str] = []
+    for token in tokens:
+        value = token.strip()
+        if not value:
+            continue
+        values.append(value)
+    return tuple(dict.fromkeys(values))
+
+
 @dataclass(frozen=True)
 class TesterbotTargets:
     powerbot: str
@@ -68,6 +81,8 @@ class TesterbotConfig:
     report_path: str
     building_label: str
     section_label: str
+    db_path: str
+    idempotence_tables: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> "TesterbotConfig":
@@ -81,6 +96,18 @@ class TesterbotConfig:
             report_path=os.getenv("TESTERBOT_REPORT_PATH", "/data/logs/testerbot_results.json").strip(),
             building_label=os.getenv("TESTERBOT_BUILDING_LABEL", "Ньюкасл (24-в)").strip(),
             section_label=os.getenv("TESTERBOT_SECTION_LABEL", "2 секція").strip(),
+            db_path=(
+                os.getenv("TESTERBOT_DB_PATH", "").strip()
+                or os.getenv("DB_PATH", "").strip()
+                or "/data/state.db"
+            ),
+            idempotence_tables=parse_csv_tokens(
+                os.getenv(
+                    "TESTERBOT_IDEMPOTENCE_TABLES",
+                    "business_owners,business_subscriptions,business_subscription_periods,"
+                    "business_payment_events,business_claim_tokens,place_reports,admin_jobs",
+                )
+            ),
         )
 
 

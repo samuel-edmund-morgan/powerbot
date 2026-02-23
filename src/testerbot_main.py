@@ -6,8 +6,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import sqlite3
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from logging_setup import configure_logging
 from testerbot.client import TesterbotConfig, build_telethon_client, ensure_enabled
@@ -27,6 +30,7 @@ from testerbot.scenarios import business as business_scenario
 
 configure_logging("testerbot")
 logger = logging.getLogger(__name__)
+_SAFE_SQLITE_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass
@@ -86,16 +90,67 @@ async def _run_scenarios(ctx: TesterContext) -> list[ScenarioReport]:
                 break
         except Exception as exc:  # pragma: no cover
             logger.exception("scenario %s failed", name)
+            reason = f"{name}: {exc.__class__.__name__}: {exc}"
             results.append(
                 ScenarioReport(
                     name=name,
                     status="error",
                     duration_ms=0,
-                    message=str(exc),
+                    message=reason,
                 )
             )
             break
     return results
+
+
+def _snapshot_table_counts(db_path: str, tables: tuple[str, ...]) -> dict[str, int]:
+    db = Path(db_path)
+    if not db.exists():
+        logger.warning("testerbot idempotence guard: db path does not exist: %s", db_path)
+        return {}
+    if not tables:
+        return {}
+
+    counts: dict[str, int] = {}
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+    try:
+        for table in tables:
+            table_name = table.strip()
+            if not table_name:
+                continue
+            if not _SAFE_SQLITE_TABLE_NAME.match(table_name):
+                logger.warning("testerbot idempotence guard: skip unsafe table name `%s`", table_name)
+                continue
+            try:
+                row = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+            except sqlite3.Error as exc:
+                logger.warning(
+                    "testerbot idempotence guard: skip table `%s`: %s",
+                    table_name,
+                    exc,
+                )
+                continue
+            counts[table_name] = int(row[0] if row else 0)
+    finally:
+        conn.close()
+    return counts
+
+
+def _idempotence_error(before: dict[str, int], after: dict[str, int]) -> str | None:
+    if not before and not after:
+        return None
+    changed: list[str] = []
+    for name in sorted(set(before) | set(after)):
+        b = before.get(name)
+        a = after.get(name)
+        if b != a:
+            changed.append(f"{name}:{b}->{a}")
+    if not changed:
+        return None
+    return (
+        "testerbot idempotence guard failed: protected table row counts changed: "
+        + ", ".join(changed)
+    )
 
 
 async def main() -> int:
@@ -134,7 +189,22 @@ async def main() -> int:
                     return 2
 
             ctx = TesterContext(client=client, cfg=cfg, timeout_sec=cfg.timeout_sec)
+            baseline_counts = _snapshot_table_counts(cfg.db_path, cfg.idempotence_tables)
             scenario_results = await _run_scenarios(ctx)
+            if baseline_counts:
+                final_counts = _snapshot_table_counts(cfg.db_path, cfg.idempotence_tables)
+                idempotence_error = _idempotence_error(baseline_counts, final_counts)
+                if idempotence_error:
+                    logger.error(idempotence_error)
+                    scenario_results.append(
+                        ScenarioReport(
+                            name="idempotence_guard",
+                            status="error",
+                            duration_ms=0,
+                            message=idempotence_error,
+                        )
+                    )
+
             report = mark_finished(report, scenario_results)
             write_report(report, cfg.report_path)
             junit_path = os.getenv("TESTERBOT_JUNIT_PATH", "").strip()
