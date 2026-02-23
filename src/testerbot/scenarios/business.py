@@ -330,6 +330,30 @@ async def run(ctx) -> ScenarioResult:
                     ctx_name="business ensure main menu via cancel",
                 )
                 continue
+            # Input-only FSM prompt (no inline controls) can trap the scenario.
+            # Use /cancel to reset state without mutating business data.
+            if (
+                not (getattr(current, "buttons", None) or [])
+                and (
+                    "Надішли" in current_text
+                    or "Введи" in current_text
+                    or "Введіть" in current_text
+                )
+            ):
+                sent = await ctx.client.send_message(target, "/cancel")
+                sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
+                current, current_text = await wait_bot_message(
+                    predicate=lambda _m, t: (
+                        "Оберіть дію:" in t
+                        or _is_owner_card_text(t)
+                        or "Оберіть заклад" in t
+                        or "Обери тариф для" in t
+                        or "Плани" in t
+                    ),
+                    ctx_name="business ensure main menu via /cancel",
+                    min_activity_utc=sent_utc,
+                )
+                continue
             break
         assert_contains(current_text, ("Оберіть дію:",), ctx="business ensure main menu")
         return current, current_text

@@ -127,9 +127,15 @@ def main() -> None:
         "business scenario must cover plans list -> place plan menu -> back",
     )
     business_sends = _extract_send_message_literals(business)
+    allowed_business_literals = {"/start", "/cancel"}
+    unexpected_business = [value for value in business_sends if value not in allowed_business_literals]
     _assert(
-        business_sends == ["/start"],
-        f"business scenario must only send /start, got: {business_sends}",
+        not unexpected_business,
+        f"business scenario has unexpected send_message literals: {unexpected_business}",
+    )
+    _assert(
+        "/start" in business_sends,
+        f"business scenario must include /start bootstrap, got: {business_sends}",
     )
 
     # Admin scenario should remain read-only (no data-entry message sends).
