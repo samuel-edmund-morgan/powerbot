@@ -375,6 +375,10 @@ python3 "${REPO_DIR}/scripts/smoke_testerbot_idempotence_policy.py"
 echo "Running testerbot callback-coverage strict policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_strict_policy.py"
 
+# Automated smoke: testerbot admin claim-token open path must stay read-only-safe.
+echo "Running testerbot admin claim-token readonly policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_admin_claim_tokens_readonly_policy.py"
+
 # Smoke: migrations/backfills for section-aware schema + clamp for 2-section buildings.
 echo "Running sections migration/backfill smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_sections.py"
