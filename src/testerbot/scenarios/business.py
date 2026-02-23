@@ -524,35 +524,31 @@ async def run(ctx) -> ScenarioResult:
             ),
             ("Запропонувати правку", ("Запропонувати правку", "Що хочеш змінити", "Скасовано", "Плани")),
         )
-        for needle, expect in actions:
-            try:
-                current, _ = await ensure_owner_card_with_action(
-                    current,
-                    needle=needle,
-                    ctx_name=f"business owner action {needle}",
-                )
-            except AssertionError as exc:
-                logger.warning(
-                    "business owner action `%s` skipped: unable to prepare owner-card state: %s",
-                    needle,
-                    exc,
-                )
-                continue
-            try:
-                current, text = await click_and_wait(
-                    current,
-                    needle,
-                    predicate=lambda _m, t, tokens=expect: any(tok in t for tok in tokens),
-                    ctx_name=f"business owner action {needle}",
-                )
-                assert_contains_any(text, expect, ctx=f"business owner action {needle}")
-            except AssertionError as exc:
-                logger.warning("business owner action `%s` skipped due unstable UI state: %s", needle, exc)
-            try:
-                current, _ = await open_first_owner_card(current, ctx_name=f"business owner action {needle} recover")
-            except AssertionError:
-                # Keep scenario moving; next iteration will re-open owner-card from main menu.
-                pass
+        current, _ = await open_first_owner_card(current, ctx_name="business owner actions preflight")
+        visible_actions = [needle for needle, _expect in actions if _has_button(current, needle)]
+        hidden_actions = [needle for needle, _expect in actions if needle not in visible_actions]
+        if hidden_actions:
+            logger.info("business owner actions hidden on current card: %s", ", ".join(hidden_actions))
+        if not visible_actions:
+            logger.info("business owner actions: no action buttons visible on current owner card")
+            return current
+
+        action_expect_map = {needle: expect for needle, expect in actions}
+        for needle in visible_actions:
+            expect = action_expect_map[needle]
+            current, _ = await ensure_owner_card_with_action(
+                current,
+                needle=needle,
+                ctx_name=f"business owner action {needle}",
+            )
+            current, text = await click_and_wait(
+                current,
+                needle,
+                predicate=lambda _m, t, tokens=expect: any(tok in t for tok in tokens),
+                ctx_name=f"business owner action {needle}",
+            )
+            assert_contains_any(text, expect, ctx=f"business owner action {needle}")
+            current, _ = await open_first_owner_card(current, ctx_name=f"business owner action {needle} recover")
         return current
 
     await ctx.client.send_message(ctx.cfg.targets.businessbot, "/start")
