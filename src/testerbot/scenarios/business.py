@@ -159,6 +159,16 @@ async def run(ctx) -> ScenarioResult:
             try:
                 i, j = find_button(current, needle)
             except AssertionError:
+                # If bot switched to input-only FSM prompt, waiting for the old button
+                # is pointless. Bubble up so caller can recover (/cancel or "-").
+                if not (getattr(current, "buttons", None) or []) and (
+                    "Надішли" in extract_text(current)
+                    or "Введи" in extract_text(current)
+                    or "Введіть" in extract_text(current)
+                ):
+                    raise AssertionError(
+                        f"{ctx_name}: target button `{needle}` is gone on input-only screen"
+                    )
                 current, _ = await wait_bot_message(
                     predicate=lambda m, _t: _has_button(m, needle),
                     ctx_name=f"{ctx_name} (refresh buttons)",
@@ -184,10 +194,13 @@ async def run(ctx) -> ScenarioResult:
                     current, _ = await latest_bot_message(f"{ctx_name} (refresh after no update)")
                     continue
             except (MessageIdInvalidError, DataInvalidError):
-                current, _ = await wait_bot_message(
-                    predicate=lambda m, _t: _has_button(m, needle),
-                    ctx_name=f"{ctx_name} (refresh stale/invalid callback message)",
+                current, _ = await latest_bot_message(
+                    f"{ctx_name} (refresh stale/invalid callback message)"
                 )
+                if not _has_button(current, needle):
+                    raise AssertionError(
+                        f"{ctx_name}: stale callback and target button `{needle}` disappeared"
+                    )
                 continue
         raise AssertionError(f"{ctx_name}: unable to click button `{needle}` on current bot message")
 
@@ -294,20 +307,33 @@ async def run(ctx) -> ScenarioResult:
         current_text = extract_text(current)
         last_nav_error: Exception | None = None
 
-        async def recover_via_cancel(*, ctx_name: str):
-            sent = await ctx.client.send_message(target, "/cancel")
-            sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
-            return await wait_bot_message(
-                predicate=lambda _m, t: (
-                    "Оберіть дію:" in t
-                    or _is_owner_card_text(t)
-                    or "Оберіть заклад" in t
-                    or "Обери тариф для" in t
-                    or "Плани" in t
-                ),
-                ctx_name=ctx_name,
-                min_activity_utc=sent_utc,
-            )
+        async def recover_via_cancel(*, ctx_name: str, text_hint: str = ""):
+            commands: list[str] = []
+            if "Надішли" in text_hint and "-" in text_hint:
+                commands.append("-")
+            commands.append("/cancel")
+
+            last_error: Exception | None = None
+            for command in commands:
+                try:
+                    sent = await ctx.client.send_message(target, command)
+                    sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
+                    return await wait_bot_message(
+                        predicate=lambda _m, t: (
+                            "Оберіть дію:" in t
+                            or _is_owner_card_text(t)
+                            or "Оберіть заклад" in t
+                            or "Обери тариф для" in t
+                            or "Плани" in t
+                        ),
+                        ctx_name=f"{ctx_name} [{command}]",
+                        min_activity_utc=sent_utc,
+                    )
+                except AssertionError as exc:
+                    last_error = exc
+            if last_error is not None:
+                raise last_error
+            raise AssertionError(f"{ctx_name}: failed to recover state")
 
         for _ in range(6):
             if "Оберіть дію:" in current_text:
@@ -323,7 +349,8 @@ async def run(ctx) -> ScenarioResult:
                 except AssertionError as exc:
                     last_nav_error = exc
                     current, current_text = await recover_via_cancel(
-                        ctx_name="business ensure main menu recover /cancel after menu failure"
+                        ctx_name="business ensure main menu recover /cancel after menu failure",
+                        text_hint=current_text,
                     )
                 continue
             if _has_button(current, "Назад"):
@@ -342,7 +369,8 @@ async def run(ctx) -> ScenarioResult:
                 except AssertionError as exc:
                     last_nav_error = exc
                     current, current_text = await recover_via_cancel(
-                        ctx_name="business ensure main menu recover /cancel after back failure"
+                        ctx_name="business ensure main menu recover /cancel after back failure",
+                        text_hint=current_text,
                     )
                 continue
             if _has_button(current, "Скасувати"):
@@ -362,7 +390,8 @@ async def run(ctx) -> ScenarioResult:
                 except AssertionError as exc:
                     last_nav_error = exc
                     current, current_text = await recover_via_cancel(
-                        ctx_name="business ensure main menu recover /cancel after cancel-button failure"
+                        ctx_name="business ensure main menu recover /cancel after cancel-button failure",
+                        text_hint=current_text,
                     )
                 continue
             # Input-only FSM prompt (no inline controls) can trap the scenario.
@@ -376,12 +405,14 @@ async def run(ctx) -> ScenarioResult:
                 )
             ):
                 current, current_text = await recover_via_cancel(
-                    ctx_name="business ensure main menu via /cancel input-only"
+                    ctx_name="business ensure main menu via /cancel input-only",
+                    text_hint=current_text,
                 )
                 continue
             if last_nav_error is not None:
                 current, current_text = await recover_via_cancel(
-                    ctx_name="business ensure main menu via /cancel nav fallback"
+                    ctx_name="business ensure main menu via /cancel nav fallback",
+                    text_hint=current_text,
                 )
                 continue
             break
