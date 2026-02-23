@@ -244,6 +244,20 @@ async def _run() -> None:
         await client.disconnect()
         raise SystemExit("ERROR: ADBOT_E2E_DRIVER_STRING_SESSION is not authorized.")
 
+    # Optional second client for internal-audit checks.
+    # Useful when E2E driver can post to source chat but is not a member
+    # of internal audit chat.
+    audit_client = client
+    own_audit_client = False
+    if internal_chat_id is not None and adbot_session and not _same_session(session, adbot_session):
+        audit_client = TelegramClient(StringSession(adbot_session), api_id, api_hash)
+        await audit_client.connect()
+        own_audit_client = True
+        if not await audit_client.is_user_authorized():
+            await audit_client.disconnect()
+            await client.disconnect()
+            raise SystemExit("ERROR: ADBOT_E2E_ADBOT_STRING_SESSION/ADBOT_STRING_SESSION is not authorized.")
+
     scenarios = (
         Scenario(
             code="electrician",
@@ -278,7 +292,7 @@ async def _run() -> None:
 
             internal_baseline = 0
             if internal_chat_id is not None:
-                latest_internal = await client.get_messages(internal_chat_id, limit=1)
+                latest_internal = await audit_client.get_messages(internal_chat_id, limit=1)
                 if latest_internal:
                     internal_baseline = int(getattr(latest_internal[0], "id", 0) or 0)
 
@@ -300,7 +314,7 @@ async def _run() -> None:
 
             if internal_chat_id is not None:
                 await _wait_for_internal_audit(
-                    client,
+                    audit_client,
                     internal_chat_id=internal_chat_id,
                     baseline_id=internal_baseline,
                     prompt_with_nonce=prompt,
@@ -320,7 +334,7 @@ async def _run() -> None:
         )
         internal_baseline = 0
         if internal_chat_id is not None:
-            latest_internal = await client.get_messages(internal_chat_id, limit=1)
+            latest_internal = await audit_client.get_messages(internal_chat_id, limit=1)
             if latest_internal:
                 internal_baseline = int(getattr(latest_internal[0], "id", 0) or 0)
 
@@ -340,7 +354,7 @@ async def _run() -> None:
 
         if internal_chat_id is not None:
             await _assert_no_internal_audit_for_prompt(
-                client,
+                audit_client,
                 internal_chat_id=internal_chat_id,
                 baseline_id=internal_baseline,
                 prompt_with_nonce=negative_prompt,
@@ -351,6 +365,8 @@ async def _run() -> None:
 
         print("OK: adbot E2E test-groups suite passed.")
     finally:
+        if own_audit_client:
+            await audit_client.disconnect()
         await client.disconnect()
 
 
