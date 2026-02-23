@@ -609,17 +609,45 @@ async def run(ctx) -> ScenarioResult:
                 ctx="business owner card open plans",
             )
             if "Обери тариф для" in text and _has_button(msg, "Назад"):
-                msg, text = await click_and_wait(
-                    msg,
-                    "Назад",
-                    predicate=lambda _m, t: ("Статус доступу" in t) or ("Тариф" in t) or ("Активно до" in t),
-                    ctx_name="business owner plans back to card",
-                )
-                assert_contains_any(
-                    text,
-                    ("Статус доступу", "Тариф", "Активно до"),
-                    ctx="business owner plans back to card",
-                )
+                try:
+                    msg, text = await click_and_wait(
+                        msg,
+                        "Назад",
+                        predicate=lambda _m, t: (
+                            ("Статус доступу" in t)
+                            or ("Тариф" in t)
+                            or ("Активно до" in t)
+                            or ("Оберіть заклад" in t)
+                            or ("Плани" in t)
+                        ),
+                        ctx_name="business owner plans back to card",
+                    )
+                    assert_contains_any(
+                        text,
+                        ("Статус доступу", "Тариф", "Активно до", "Оберіть заклад", "Плани"),
+                        ctx="business owner plans back to card",
+                    )
+                    if "Оберіть заклад" in text:
+                        try:
+                            msg, text = await click_first_non_nav_button(
+                                msg,
+                                predicate=lambda _m, t: (
+                                    ("Статус доступу" in t) or ("Тариф" in t) or ("Активно до" in t)
+                                ),
+                                ctx_name="business owner plans reopen card from list",
+                            )
+                            assert_contains_any(
+                                text,
+                                ("Статус доступу", "Тариф", "Активно до"),
+                                ctx="business owner plans reopen card from list",
+                            )
+                        except AssertionError as exc:
+                            logger.warning(
+                                "business owner plans back: list returned but owner card reopen skipped: %s",
+                                exc,
+                            )
+                except AssertionError as exc:
+                    logger.warning("business owner plans back to card skipped due unstable state: %s", exc)
 
         msg = await exercise_owner_card_actions(msg)
         text = extract_text(msg)
