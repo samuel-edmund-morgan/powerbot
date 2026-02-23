@@ -56,6 +56,8 @@ async def run(ctx) -> ScenarioResult:
         last_text = ""
         while time.monotonic() < deadline:
             msgs = await ctx.client.get_messages(target, limit=12)
+            latest_msg = None
+            latest_text = ""
             for msg in msgs:
                 if getattr(msg, "out", False):
                     continue
@@ -64,9 +66,13 @@ async def run(ctx) -> ScenarioResult:
                 text = extract_text(msg)
                 if not text:
                     continue
-                last_text = text
-                if predicate(msg, text):
-                    return msg, text
+                latest_msg = msg
+                latest_text = text
+                break
+            if latest_msg is not None:
+                last_text = latest_text
+                if predicate(latest_msg, latest_text):
+                    return latest_msg, latest_text
             await asyncio.sleep(0.6)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
