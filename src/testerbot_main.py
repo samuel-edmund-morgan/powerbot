@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import sqlite3
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from logging_setup import configure_logging
@@ -206,6 +208,15 @@ def _coverage_missing(
     return {"eq": missing_eq, "startswith": missing_sw, "regexp": missing_rgx}
 
 
+def _write_callback_coverage_report(path_value: str, payload: dict) -> None:
+    path = Path(path_value).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
 async def main() -> int:
     if not ensure_enabled():
         logger.info("TESTERBOT_ENABLED=0, skipping testerbot run.")
@@ -267,10 +278,21 @@ async def main() -> int:
             # Callback coverage telemetry (read-only subset for full-click roadmap).
             try:
                 strict = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "1")).strip() == "1"
+                coverage_path = str(
+                    os.getenv(
+                        "TESTERBOT_CALLBACK_COVERAGE_PATH",
+                        "/data/logs/testerbot_callback_coverage.json",
+                    )
+                ).strip()
                 repo_root = Path(__file__).resolve().parents[1]
                 inventory = filter_read_only_inventory(parse_callback_inventory(repo_root))
                 coverage_lines: list[str] = []
                 coverage_failed = False
+                coverage_payload: dict[str, object] = {
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "strict_mode": strict,
+                    "bots": {},
+                }
                 for bot_name in ("resident", "admin", "business"):
                     inv = inventory.get(bot_name, {"eq": set(), "startswith": set(), "regexp": set()})
                     seen = ctx.seen_callbacks.get(bot_name, set())
@@ -300,7 +322,30 @@ async def main() -> int:
                     if strict and missing_total > 0:
                         coverage_failed = True
                         logger.error("callback coverage strict fail for %s", bot_name)
+                    coverage_payload["bots"][bot_name] = {
+                        "seen": sorted(seen),
+                        "clicked": sorted(clicked),
+                        "inventory": {
+                            "eq": sorted(inv.get("eq", set())),
+                            "startswith": sorted(inv.get("startswith", set())),
+                            "regexp": sorted(inv.get("regexp", set())),
+                        },
+                        "missing": {
+                            "eq": sorted(missing.get("eq", set())),
+                            "startswith": sorted(missing.get("startswith", set())),
+                            "regexp": sorted(missing.get("regexp", set())),
+                        },
+                        "stats": {
+                            "seen": len(seen),
+                            "clicked": len(clicked),
+                            "inventory": total_rules,
+                            "missing": missing_total,
+                        },
+                    }
                 logger.info("testerbot callback coverage (read-only): %s", " | ".join(coverage_lines))
+                if coverage_path:
+                    _write_callback_coverage_report(coverage_path, coverage_payload)
+                    logger.info("testerbot callback coverage report written: %s", coverage_path)
                 if strict and coverage_failed:
                     scenario_results.append(
                         ScenarioReport(
