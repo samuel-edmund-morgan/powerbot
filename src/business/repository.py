@@ -118,6 +118,26 @@ async def execute_write_with_retry(
 class BusinessRepository:
     """Business persistence and guard queries."""
 
+    async def _ensure_place_gallery_table(self, db: aiosqlite.Connection) -> None:
+        """Best-effort compatibility for DB snapshots missing gallery table."""
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS place_gallery_media (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   place_id INTEGER NOT NULL,
+                   media_ref TEXT NOT NULL,
+                   position INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL,
+                   created_by INTEGER DEFAULT NULL,
+                   UNIQUE (place_id, media_ref),
+                   FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+               )"""
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_place_gallery_media_place_pos "
+            "ON place_gallery_media (place_id, position, id)"
+        )
+        await db.commit()
+
     async def list_all_place_ids(self) -> list[int]:
         async with open_business_db() as db:
             async with db.execute("SELECT id FROM places ORDER BY id") as cur:
@@ -1444,6 +1464,114 @@ class BusinessRepository:
                 tuple(params + [int(place_id)]),
             )
         return await self.get_place(int(place_id))
+
+    async def list_place_gallery_media(
+        self,
+        place_id: int,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 50))
+        async with open_business_db() as db:
+            await self._ensure_place_gallery_table(db)
+            async with db.execute(
+                """
+                SELECT id, place_id, media_ref, position, created_at, created_by
+                  FROM place_gallery_media
+                 WHERE place_id = ?
+                 ORDER BY position ASC, id ASC
+                 LIMIT ?
+                """,
+                (int(place_id), safe_limit),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [dict(row) for row in rows]
+
+    async def count_place_gallery_media(self, place_id: int) -> int:
+        async with open_business_db() as db:
+            await self._ensure_place_gallery_table(db)
+            async with db.execute(
+                "SELECT COUNT(*) FROM place_gallery_media WHERE place_id = ?",
+                (int(place_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] if row else 0)
+
+    async def add_place_gallery_media(
+        self,
+        *,
+        place_id: int,
+        media_ref: str,
+        created_by: int | None,
+    ) -> dict[str, Any] | None:
+        clean_media_ref = str(media_ref or "").strip()
+        if not clean_media_ref:
+            return None
+        created_at = utc_now_iso()
+        async with open_business_db() as db:
+            await self._ensure_place_gallery_table(db)
+            async with db.execute(
+                "SELECT COALESCE(MAX(position), 0) + 1 FROM place_gallery_media WHERE place_id = ?",
+                (int(place_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                next_position = int(row[0] if row and row[0] is not None else 1)
+            try:
+                cursor = await execute_write_with_retry(
+                    db,
+                    """
+                    INSERT INTO place_gallery_media (
+                        place_id, media_ref, position, created_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(place_id),
+                        clean_media_ref,
+                        int(next_position),
+                        created_at,
+                        int(created_by) if created_by is not None else None,
+                    ),
+                )
+                media_id = int(cursor.lastrowid or 0)
+            except aiosqlite.IntegrityError:
+                async with db.execute(
+                    """
+                    SELECT id, place_id, media_ref, position, created_at, created_by
+                      FROM place_gallery_media
+                     WHERE place_id = ? AND media_ref = ?
+                     LIMIT 1
+                    """,
+                    (int(place_id), clean_media_ref),
+                ) as cur:
+                    row = await cur.fetchone()
+                    return dict(row) if row else None
+
+            async with db.execute(
+                """
+                SELECT id, place_id, media_ref, position, created_at, created_by
+                  FROM place_gallery_media
+                 WHERE id = ?
+                 LIMIT 1
+                """,
+                (int(media_id),),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    async def remove_place_gallery_media(
+        self,
+        *,
+        place_id: int,
+        media_id: int,
+    ) -> bool:
+        async with open_business_db() as db:
+            await self._ensure_place_gallery_table(db)
+            cursor = await execute_write_with_retry(
+                db,
+                "DELETE FROM place_gallery_media WHERE place_id = ? AND id = ?",
+                (int(place_id), int(media_id)),
+            )
+            return int(cursor.rowcount or 0) > 0
 
     async def write_audit_log(
         self,

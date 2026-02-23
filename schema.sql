@@ -264,6 +264,19 @@ CREATE TABLE IF NOT EXISTS place_clicks_daily (
 CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_day ON place_clicks_daily (day);
 CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_action ON place_clicks_daily (action);
 
+-- Галерея медіа закладу (0..N елементів)
+CREATE TABLE IF NOT EXISTS place_gallery_media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,               -- FK на places
+    media_ref TEXT NOT NULL,                 -- URL або Telegram file_id
+    position INTEGER NOT NULL DEFAULT 0,     -- Порядок у галереї
+    created_at TEXT NOT NULL,                -- ISO 8601
+    created_by INTEGER DEFAULT NULL,         -- TG id власника/адміна
+    UNIQUE (place_id, media_ref),
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_place_gallery_media_place_pos ON place_gallery_media (place_id, position, id);
+
 -- Репорти мешканців про помилки/неточності в картках закладів
 CREATE TABLE IF NOT EXISTS place_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

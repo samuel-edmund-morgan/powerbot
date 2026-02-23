@@ -88,6 +88,9 @@ CB_EDIT_BUILDING_CHANGE_PREFIX = "bebld_change:"
 CB_PAYMENT_RESULT_PREFIX = "bpayr:"
 CB_CONTACT_PICK_PREFIX = "bec:"
 CB_CONTACT_CLEAR_PREFIX = "bec_clear:"
+CB_GALLERY_MENU_PREFIX = "begal:"
+CB_GALLERY_ADD_PREFIX = "begal_add:"
+CB_GALLERY_DEL_PREFIX = "begal_del:"
 CB_QR_OPEN_PREFIX = "bqr:"
 CB_QR_KIT_OPEN_PREFIX = "bqrkit:"
 CB_PARTNER_SUPPORT_PREFIX = "bps:"
@@ -225,6 +228,7 @@ class EditPlaceStates(StatesGroup):
     waiting_address_details = State()
     waiting_contact_type = State()
     waiting_contact_value = State()
+    waiting_gallery_media = State()
 
 
 class FreeEditRequestStates(StatesGroup):
@@ -549,6 +553,12 @@ def build_edit_fields_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text="🖼 Галерея",
+                    callback_data=f"{CB_GALLERY_MENU_PREFIX}{place_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="🎟 Промокод",
                     callback_data=f"bef:{place_id}:promo_code",
                 ),
@@ -638,6 +648,35 @@ def build_edit_building_keyboard(buildings: list[dict], place_id: int) -> Inline
 
     rows.append([InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)])
     rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"be:{int(place_id)}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _truncate_media_ref(raw_value: str, max_len: int = 72) -> str:
+    value = str(raw_value or "").strip()
+    if len(value) <= max_len:
+        return value
+    return f"{value[: max_len - 1]}…"
+
+
+def build_gallery_manage_keyboard(place_id: int, items: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="➕ Додати фото", callback_data=f"{CB_GALLERY_ADD_PREFIX}{int(place_id)}")],
+    ]
+    # Keep action list compact: show delete actions for first 8 items.
+    for idx, item in enumerate(items[:8], start=1):
+        media_id = int(item.get("id") or 0)
+        if media_id <= 0:
+            continue
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🗑 Видалити фото {idx}",
+                    callback_data=f"{CB_GALLERY_DEL_PREFIX}{int(place_id)}:{media_id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"be:{int(place_id)}")])
+    rows.append([InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2213,6 +2252,157 @@ async def cb_edit_place(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+async def render_gallery_menu(
+    message: Message,
+    *,
+    tg_user_id: int,
+    place_id: int,
+    prefer_message_id: int | None = None,
+    notice_text: str | None = None,
+) -> None:
+    try:
+        rows = await cabinet_service.list_user_businesses(tg_user_id)
+        item = next((row for row in rows if int(row.get("place_id") or 0) == int(place_id)), None)
+        place_name = str(item.get("place_name") or f"ID {place_id}") if item else f"ID {place_id}"
+        gallery_items = await cabinet_service.list_place_gallery_media(
+            tg_user_id=tg_user_id,
+            place_id=place_id,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            prefer_message_id=prefer_message_id,
+            text=str(error),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="« Назад", callback_data=f"be:{int(place_id)}")],
+                    [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+                ]
+            ),
+        )
+        return
+
+    total = len(gallery_items)
+    lines = [
+        "🖼 <b>Галерея закладу</b>",
+        "",
+        f"🏢 {html.escape(place_name)}",
+        f"📸 Додано фото: <b>{total}</b>",
+    ]
+    if gallery_items:
+        lines.append("")
+        lines.append("Поточні елементи:")
+        for idx, media in enumerate(gallery_items[:8], start=1):
+            lines.append(f"• Фото {idx}: <code>{html.escape(_truncate_media_ref(str(media.get('media_ref') or '')))}</code>")
+        if total > 8:
+            lines.append(f"… і ще {total - 8}")
+    if notice_text:
+        lines.append("")
+        lines.append(html.escape(str(notice_text)))
+
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        prefer_message_id=prefer_message_id,
+        text="\n".join(lines),
+        reply_markup=build_gallery_manage_keyboard(place_id, gallery_items),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_GALLERY_MENU_PREFIX))
+async def cb_gallery_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_GALLERY_MENU_PREFIX)
+    try:
+        place_id = int(raw)
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    await state.clear()
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await render_gallery_menu(
+        callback.message,
+        tg_user_id=callback.from_user.id,
+        place_id=place_id,
+        prefer_message_id=callback.message.message_id,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_GALLERY_ADD_PREFIX))
+async def cb_gallery_add(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_GALLERY_ADD_PREFIX)
+    try:
+        place_id = int(raw)
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    await state.set_state(EditPlaceStates.waiting_gallery_media)
+    await state.update_data(place_id=place_id)
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await ui_render(
+        callback.message.bot,
+        chat_id=callback.message.chat.id,
+        prefer_message_id=callback.message.message_id,
+        text=(
+            "Надішли фото, URL або Telegram <code>file_id</code>.\n\n"
+            "Ліміти: Light до 6 фото, Premium до 12, Partner до 20."
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_MENU_CANCEL)],
+                [InlineKeyboardButton(text="« До галереї", callback_data=f"{CB_GALLERY_MENU_PREFIX}{place_id}")],
+                [InlineKeyboardButton(text="« Меню", callback_data=CB_MENU_HOME)],
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_GALLERY_DEL_PREFIX))
+async def cb_gallery_delete(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    raw = callback.data.removeprefix(CB_GALLERY_DEL_PREFIX)
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        place_id = int(parts[0])
+        media_id = int(parts[1])
+    except Exception:
+        await callback.answer("Некоректні дані", show_alert=True)
+        return
+    try:
+        await cabinet_service.remove_place_gallery_media(
+            tg_user_id=callback.from_user.id,
+            place_id=place_id,
+            media_id=media_id,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    await state.clear()
+    await bind_ui_message_id(callback.message.chat.id, callback.message.message_id)
+    await render_gallery_menu(
+        callback.message,
+        tg_user_id=callback.from_user.id,
+        place_id=place_id,
+        prefer_message_id=callback.message.message_id,
+        notice_text="✅ Фото видалено.",
+    )
+    await callback.answer("Готово")
+
+
 @router.callback_query(F.data.startswith("bef:"))
 async def cb_edit_field_pick(callback: CallbackQuery, state: FSMContext) -> None:
     payload = callback.data.split(":")
@@ -2836,6 +3026,108 @@ async def edit_place_apply_photo(message: Message, state: FSMContext) -> None:
     await try_delete_user_message(message)
     await state.clear()
     await render_place_card_updated(message, place_id=place_id, note_text="✅ Фото оновлено.")
+
+
+@router.message(EditPlaceStates.waiting_gallery_media, F.photo)
+async def edit_place_gallery_add_photo(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    place_id = int(data.get("place_id") or 0)
+    if place_id <= 0:
+        await state.clear()
+        await send_main_menu(message, message.chat.id)
+        return
+    if not message.photo:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Не вдалося прочитати фото. Спробуй ще раз.",
+            reply_markup=build_cancel_menu(),
+        )
+        return
+    file_id = str(message.photo[-1].file_id or "").strip()
+    if not file_id:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text="Не вдалося отримати file_id для фото. Спробуй ще раз.",
+            reply_markup=build_cancel_menu(),
+        )
+        return
+    try:
+        await cabinet_service.add_place_gallery_media(
+            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+            place_id=place_id,
+            media_ref=file_id,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=build_cancel_menu(),
+        )
+        return
+    await try_delete_user_message(message)
+    await state.clear()
+    await render_gallery_menu(
+        message,
+        tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+        place_id=place_id,
+        notice_text="✅ Фото додано в галерею.",
+    )
+
+
+@router.message(EditPlaceStates.waiting_gallery_media, F.text)
+async def edit_place_gallery_add_text(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    place_id = int(data.get("place_id") or 0)
+    if place_id <= 0:
+        await state.clear()
+        await send_main_menu(message, message.chat.id)
+        return
+    value = str(message.text or "").strip()
+    if value == "-":
+        await try_delete_user_message(message)
+        await state.clear()
+        await render_gallery_menu(
+            message,
+            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+            place_id=place_id,
+            notice_text="Скасовано.",
+        )
+        return
+    try:
+        await cabinet_service.add_place_gallery_media(
+            tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+            place_id=place_id,
+            media_ref=value,
+        )
+    except (ValidationError, NotFoundError, AccessDeniedError) as error:
+        await ui_render(
+            message.bot,
+            chat_id=message.chat.id,
+            text=str(error),
+            reply_markup=build_cancel_menu(),
+        )
+        return
+    await try_delete_user_message(message)
+    await state.clear()
+    await render_gallery_menu(
+        message,
+        tg_user_id=message.from_user.id if message.from_user else message.chat.id,
+        place_id=place_id,
+        notice_text="✅ Фото додано в галерею.",
+    )
+
+
+@router.message(EditPlaceStates.waiting_gallery_media)
+async def edit_place_gallery_add_invalid(message: Message) -> None:
+    await ui_render(
+        message.bot,
+        chat_id=message.chat.id,
+        text="Надішли фото, URL або Telegram file_id.",
+        reply_markup=build_cancel_menu(),
+    )
 
 
 @router.message(Command("plans"))

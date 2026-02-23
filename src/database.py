@@ -418,6 +418,23 @@ async def init_db():
         )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_day ON place_clicks_daily (day)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_place_clicks_daily_action ON place_clicks_daily (action)")
+        # Галерея медіа закладу (0..N фото/зображень).
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS place_gallery_media (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_id INTEGER NOT NULL,
+                media_ref TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                created_by INTEGER DEFAULT NULL,
+                UNIQUE (place_id, media_ref),
+                FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+            )"""
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_place_gallery_media_place_pos "
+            "ON place_gallery_media (place_id, position, id)"
+        )
         # Репорти мешканців про неточності в картках закладів (модерація в adminbot).
         await db.execute(
             """CREATE TABLE IF NOT EXISTS place_reports (
@@ -2363,6 +2380,46 @@ async def get_place(place_id: int) -> dict | None:
             "offer_1_image_url": row[19],
             "offer_2_image_url": row[20],
         }
+
+
+async def get_place_gallery_media(place_id: int, *, limit: int = 20) -> list[dict]:
+    """Return ordered place gallery items for published place."""
+    safe_limit = max(1, min(int(limit), 50))
+    async with open_db() as db:
+        try:
+            async with db.execute(
+                """
+                SELECT gm.id, gm.place_id, gm.media_ref, gm.position, gm.created_at
+                  FROM place_gallery_media gm
+                 WHERE gm.place_id = ?
+                   AND EXISTS (
+                       SELECT 1
+                         FROM places p
+                        WHERE p.id = gm.place_id
+                          AND p.is_published = 1
+                   )
+                 ORDER BY gm.position ASC, gm.id ASC
+                 LIMIT ?
+                """,
+                (int(place_id), safe_limit),
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception as error:
+            # Backward-compatible with old DB snapshots without place_gallery_media table.
+            if "no such table" in str(error).lower():
+                return []
+            raise
+    return [
+        {
+            "id": int(row[0]),
+            "place_id": int(row[1]),
+            "media_ref": str(row[2] or "").strip(),
+            "position": int(row[3] or 0),
+            "created_at": str(row[4] or ""),
+        }
+        for row in rows
+        if str(row[2] or "").strip()
+    ]
 
 
 # ============ Функції для переглядів закладів ============

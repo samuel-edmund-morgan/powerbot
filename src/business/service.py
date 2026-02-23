@@ -172,6 +172,17 @@ def _is_supported_media_reference(raw_value: str) -> bool:
     return bool(TG_FILE_ID_RE.fullmatch(value))
 
 
+def _gallery_limit_for_tier(tier: str) -> int:
+    normalized_tier = str(tier or "").strip().lower()
+    if normalized_tier == "partner":
+        return 20
+    if normalized_tier == "pro":
+        return 12
+    if normalized_tier == "light":
+        return 6
+    return 0
+
+
 class BusinessService(Protocol):
     """Service contract used by main bot adapters."""
 
@@ -1803,6 +1814,111 @@ class BusinessCabinetService:
             payload_json=_to_json({"contact_type": ctype, "contact_value": cvalue_raw}),
         )
         return updated_place
+
+    async def list_place_gallery_media(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+    ) -> list[dict[str, Any]]:
+        can_edit = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_edit:
+            raise AccessDeniedError("Ти можеш керувати лише своїми підтвердженими закладами.")
+
+        subscription = await self.repository.get_subscription(place_id)
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+        if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
+            raise AccessDeniedError("Галерея доступна лише з активною підпискою Light або вище.")
+
+        limit = _gallery_limit_for_tier(tier)
+        return await self.repository.list_place_gallery_media(place_id=place_id, limit=limit)
+
+    async def add_place_gallery_media(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        media_ref: str,
+    ) -> dict[str, Any]:
+        can_edit = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_edit:
+            raise AccessDeniedError("Ти можеш керувати лише своїми підтвердженими закладами.")
+
+        subscription = await self.repository.get_subscription(place_id)
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+        if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
+            raise AccessDeniedError("Галерея доступна лише з активною підпискою Light або вище.")
+
+        max_items = _gallery_limit_for_tier(tier)
+        if max_items <= 0:
+            raise AccessDeniedError("Галерея недоступна для поточного тарифу.")
+
+        clean_media_ref = str(media_ref or "").strip()
+        if not clean_media_ref:
+            raise ValidationError("Надішли URL або Telegram file_id.")
+        if len(clean_media_ref) > 300:
+            raise ValidationError("Медіа-посилання занадто довге.")
+        if not _is_supported_media_reference(clean_media_ref):
+            raise ValidationError("Для галереї вкажи URL або Telegram file_id.")
+
+        current_count = await self.repository.count_place_gallery_media(place_id)
+        if current_count >= max_items:
+            raise ValidationError(f"Досягнуто ліміт галереї для тарифу: {max_items} фото.")
+
+        item = await self.repository.add_place_gallery_media(
+            place_id=place_id,
+            media_ref=clean_media_ref,
+            created_by=tg_user_id,
+        )
+        if not item:
+            raise NotFoundError("Не вдалося додати фото в галерею.")
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(tg_user_id),
+            action="place_gallery_media_added",
+            payload_json=_to_json(
+                {
+                    "media_id": int(item.get("id") or 0),
+                    "position": int(item.get("position") or 0),
+                }
+            ),
+        )
+        return item
+
+    async def remove_place_gallery_media(
+        self,
+        *,
+        tg_user_id: int,
+        place_id: int,
+        media_id: int,
+    ) -> None:
+        can_edit = await self.repository.is_approved_owner(tg_user_id, place_id)
+        if not can_edit:
+            raise AccessDeniedError("Ти можеш керувати лише своїми підтвердженими закладами.")
+
+        subscription = await self.repository.get_subscription(place_id)
+        tier = str(subscription.get("tier") or "free").strip().lower()
+        status = str(subscription.get("status") or "inactive").strip().lower()
+        expires_at = str(subscription.get("expires_at") or "").strip() or None
+        if not _has_paid_entitlement(tier=tier, status=status, expires_at=expires_at):
+            raise AccessDeniedError("Галерея доступна лише з активною підпискою Light або вище.")
+
+        removed = await self.repository.remove_place_gallery_media(
+            place_id=place_id,
+            media_id=media_id,
+        )
+        if not removed:
+            raise NotFoundError("Фото не знайдено або вже видалено.")
+        await self.repository.write_audit_log(
+            place_id=int(place_id),
+            actor_tg_user_id=int(tg_user_id),
+            action="place_gallery_media_removed",
+            payload_json=_to_json({"media_id": int(media_id)}),
+        )
 
     async def _activate_paid_subscription(
         self,

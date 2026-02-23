@@ -2446,6 +2446,7 @@ def build_place_detail_keyboard(
     likes_count: int,
     user_liked: bool,
     business_enabled: bool,
+    gallery_items: list[dict] | None = None,
 ) -> InlineKeyboardMarkup:
     place_id = int(place_enriched["id"])
     service_id = int(place_enriched["service_id"])
@@ -2475,6 +2476,17 @@ def build_place_detail_keyboard(
         if logo_target:
             # Track logo opens (action=logo_open) and then redirect.
             action_buttons.append(InlineKeyboardButton(text="🖼 Логотип/фото", callback_data=f"plogo_{place_id}"))
+        if gallery_items:
+            for idx, item in enumerate(gallery_items[:6], start=1):
+                media_id = int(item.get("id") or 0)
+                if media_id <= 0:
+                    continue
+                action_buttons.append(
+                    InlineKeyboardButton(
+                        text=f"📷 Фото {idx}",
+                        callback_data=f"pgm_{place_id}_{media_id}",
+                    )
+                )
 
         # Premium/Partner extra CTA buttons.
         if tier in {"pro", "partner"}:
@@ -2526,6 +2538,7 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
     from database import (
         get_general_service,
         get_place,
+        get_place_gallery_media,
         get_place_likes_count,
         has_liked_place,
         record_place_view,
@@ -2590,11 +2603,20 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
 
     map_file = get_map_file_for_address(place_enriched["address"])
 
+    gallery_items: list[dict] = []
+    if is_business_feature_enabled() and place_enriched.get("is_verified"):
+        try:
+            gallery_items = await get_place_gallery_media(int(place_id), limit=8)
+        except Exception:
+            logger.exception("Failed to load place gallery media place_id=%s", place_id)
+            gallery_items = []
+
     keyboard = build_place_detail_keyboard(
         place_enriched,
         likes_count=likes_count,
         user_liked=user_liked,
         business_enabled=is_business_feature_enabled(),
+        gallery_items=gallery_items,
     )
 
     if map_file:
@@ -3233,10 +3255,49 @@ async def cb_place_partner_photo_3_open(callback: CallbackQuery) -> None:
     )
 
 
+@router.callback_query(F.data.regexp(r"^pgm_\d+_\d+$"))
+async def cb_place_gallery_media_open(callback: CallbackQuery) -> None:
+    from database import get_place, get_place_gallery_media, record_place_click
+    from business import get_business_service, is_business_feature_enabled
+
+    try:
+        _, place_raw, media_raw = str(callback.data or "").split("_", 2)
+        place_id = int(place_raw)
+        media_id = int(media_raw)
+    except Exception:
+        await safe_callback_answer(callback, "❌ Некоректний запит", show_alert=True)
+        return
+
+    place = await get_place(place_id)
+    if not place:
+        await safe_callback_answer(callback, "Заклад не знайдено", show_alert=True)
+        return
+
+    place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+    if not (is_business_feature_enabled() and place_enriched.get("is_verified")):
+        await safe_callback_answer(callback, "Галерея для цього закладу недоступна.", show_alert=True)
+        return
+
+    gallery_items = await get_place_gallery_media(place_id, limit=50)
+    media_item = next((row for row in gallery_items if int(row.get("id") or 0) == int(media_id)), None)
+    if not media_item:
+        await safe_callback_answer(callback, "Фото не знайдено.", show_alert=True)
+        return
+
+    await record_place_click(place_id, "gallery_open")
+    await _open_place_media_target(
+        callback,
+        place_id=place_id,
+        raw_media_value=media_item.get("media_ref"),
+        missing_message="Фото галереї відсутнє або некоректне.",
+        fallback_label="Фото галереї",
+    )
+
+
 @router.callback_query(F.data.startswith("like_"))
 async def cb_like_place(callback: CallbackQuery):
     """Поставити лайк закладу."""
-    from database import like_place, get_place_likes_count, get_place
+    from database import like_place, get_place_likes_count, get_place, get_place_gallery_media
     
     place_id = int(callback.data.split("_")[1])
     
@@ -3255,11 +3316,18 @@ async def cb_like_place(callback: CallbackQuery):
         likes_count = await get_place_likes_count(place_id)
         from business import get_business_service, is_business_feature_enabled
         place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+        gallery_items: list[dict] = []
+        if is_business_feature_enabled() and place_enriched.get("is_verified"):
+            try:
+                gallery_items = await get_place_gallery_media(int(place_id), limit=8)
+            except Exception:
+                gallery_items = []
         new_keyboard = build_place_detail_keyboard(
             place_enriched,
             likes_count=likes_count,
             user_liked=True,
             business_enabled=is_business_feature_enabled(),
+            gallery_items=gallery_items,
         )
         
         try:
@@ -3277,7 +3345,7 @@ async def cb_like_place(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("unlike_"))
 async def cb_unlike_place(callback: CallbackQuery):
     """Забрати лайк із закладу."""
-    from database import unlike_place, get_place_likes_count, get_place
+    from database import unlike_place, get_place_likes_count, get_place, get_place_gallery_media
     
     place_id = int(callback.data.split("_")[1])
     
@@ -3296,11 +3364,18 @@ async def cb_unlike_place(callback: CallbackQuery):
         likes_count = await get_place_likes_count(place_id)
         from business import get_business_service, is_business_feature_enabled
         place_enriched = (await get_business_service().enrich_places_for_main_bot([place]))[0]
+        gallery_items: list[dict] = []
+        if is_business_feature_enabled() and place_enriched.get("is_verified"):
+            try:
+                gallery_items = await get_place_gallery_media(int(place_id), limit=8)
+            except Exception:
+                gallery_items = []
         new_keyboard = build_place_detail_keyboard(
             place_enriched,
             likes_count=likes_count,
             user_liked=False,
             business_enabled=is_business_feature_enabled(),
+            gallery_items=gallery_items,
         )
         
         try:

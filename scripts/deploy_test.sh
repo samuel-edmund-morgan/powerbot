@@ -636,6 +636,10 @@ python3 "${REPO_DIR}/scripts/smoke_business_logo_policy.py"
 echo "Running business partner gallery policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_partner_gallery_policy.py"
 
+# Automated smoke: 0..N business gallery contract (schema/repo/service/handlers).
+echo "Running business gallery policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_gallery_policy.py"
+
 # Automated smoke: media file_id runtime (logo/offer/partner photo callbacks).
 echo "Running business media file_id runtime smoke test in test container..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_media_file_id_runtime.py"
