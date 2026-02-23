@@ -7,6 +7,7 @@ Validates:
 - Card keeps short description visible.
 - Offer block ("Акції та офери") is rendered with partner offers.
 - Partner branded photo buttons are present in detail keyboard.
+- Gallery media callback (`pgm_<place_id>_<media_id>`) is present and opens media.
 """
 
 from __future__ import annotations
@@ -118,6 +119,15 @@ async def _run_checks() -> None:
             ),
         )
         place_id = int(cur.lastrowid)
+        gallery_media_ref = "AgACAgIAAxkBAAIBQ6abcdefghijklmnoPQRSTUVWXYZ1234567890"
+        gallery_cursor = await db.execute(
+            """
+            INSERT INTO place_gallery_media(place_id, media_ref, position, created_at, created_by)
+            VALUES(?, ?, 1, datetime('now'), ?)
+            """,
+            (place_id, gallery_media_ref, 1),
+        )
+        gallery_media_id = int(gallery_cursor.lastrowid or 0)
         await db.commit()
 
     class _DummyMessage:
@@ -178,6 +188,61 @@ async def _run_checks() -> None:
     _assert(any(cb.startswith(f"pph1_{place_id}") for cb in callbacks), f"pph1 CTA missing: {callbacks}")
     _assert(any(cb.startswith(f"pph2_{place_id}") for cb in callbacks), f"pph2 CTA missing: {callbacks}")
     _assert(any(cb.startswith(f"pph3_{place_id}") for cb in callbacks), f"pph3 CTA missing: {callbacks}")
+    gallery_cb = f"pgm_{place_id}_{gallery_media_id}"
+    _assert(gallery_cb in callbacks, f"gallery CTA missing: {gallery_cb} in {callbacks}")
+
+    opened_photos: list[str] = []
+    safe_answers: list[dict] = []
+
+    class _DummyOpenMessage:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(id=940001)
+            self.message_id = 91
+            self.bot = SimpleNamespace()
+
+        async def answer_photo(self, photo, **_kwargs):
+            opened_photos.append(str(photo))
+
+        async def answer(self, *_args, **_kwargs):
+            return None
+
+    class _DummyCallback:
+        def __init__(self, data: str, message: _DummyOpenMessage) -> None:
+            self.data = str(data)
+            self.message = message
+            self.from_user = SimpleNamespace(id=940002, username="smoke_partner")
+
+        async def answer(self, *args, **kwargs):
+            safe_answers.append({"args": args, "kwargs": kwargs})
+
+    original_safe_callback_answer = resident_handlers.safe_callback_answer
+
+    async def _fake_safe_callback_answer(_callback, *args, **kwargs):
+        safe_answers.append({"args": args, "kwargs": kwargs})
+        return None
+
+    resident_handlers.safe_callback_answer = _fake_safe_callback_answer
+    try:
+        await resident_handlers.cb_place_gallery_media_open(
+            _DummyCallback(gallery_cb, _DummyOpenMessage())
+        )
+    finally:
+        resident_handlers.safe_callback_answer = original_safe_callback_answer
+
+    _assert(opened_photos == [gallery_media_ref], f"gallery open media mismatch: {opened_photos}")
+
+    async with open_db() as db:
+        async with db.execute(
+            """
+            SELECT COALESCE(SUM(cnt), 0)
+              FROM place_clicks_daily
+             WHERE place_id = ? AND action = 'gallery_open'
+            """,
+            (int(place_id),),
+        ) as cur:
+            row = await cur.fetchone()
+            gallery_clicks = int(row[0] if row and row[0] is not None else 0)
+    _assert(gallery_clicks == 1, f"gallery_open click counter mismatch: {gallery_clicks}")
 
 
 def main() -> None:
