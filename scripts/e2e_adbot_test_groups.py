@@ -254,7 +254,13 @@ async def _run() -> None:
         Scenario(
             code="light_status",
             prompt="Чи є світло в Ньюкасл?",
-            expected_reply_tokens=("Статус світла", "світла", "електропостачання"),
+            expected_reply_tokens=(
+                "Статус світла",
+                "світла",
+                "електропостачання",
+                "точний статус",
+                "резидент-бота",
+            ),
             expected_intent_tokens=("light_status",),
         ),
         Scenario(
