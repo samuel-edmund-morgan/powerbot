@@ -56,8 +56,35 @@ def find_button(message, needle: str) -> tuple[int, int]:
 
 async def click_button_and_wait(conv, message, needle: str, timeout_sec: int):
     i, j = find_button(message, needle)
+    before_id = getattr(message, "id", None)
+    before_text = extract_text(message)
+    before_edit = getattr(message, "edit_date", None)
     await message.click(i, j)
-    return await wait_for_bot_response(conv, timeout_sec)
+    try:
+        return await wait_for_bot_response(conv, timeout_sec)
+    except TimeoutError:
+        # Fallback for cases when Telethon conversation misses a callback edit
+        # but the message is actually updated in chat.
+        client = getattr(message, "client", None)
+        chat_id = getattr(message, "chat_id", None)
+        if client is None or chat_id is None:
+            raise
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(timeout_sec, 1)
+        while loop.time() < deadline:
+            latest = await client.get_messages(chat_id, limit=1)
+            if latest:
+                candidate = latest[0]
+                candidate_text = extract_text(candidate)
+                candidate_edit = getattr(candidate, "edit_date", None)
+                if (
+                    getattr(candidate, "id", None) != before_id
+                    or candidate_text != before_text
+                    or candidate_edit != before_edit
+                ):
+                    return candidate
+            await asyncio.sleep(0.4)
+        raise
 
 
 async def run_callback_safe(callback: Callable[[], Any], timeout_sec: int) -> Any:
