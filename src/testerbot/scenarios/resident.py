@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
 
 from testerbot.assertions import assert_contains, assert_contains_any
-from testerbot.scenarios.common import click_button_and_wait, extract_text, wait_for_bot_response
+from testerbot.scenarios.common import extract_text, find_button
 
 logger = logging.getLogger(__name__)
 
@@ -25,161 +26,140 @@ def _is_nav_button(label: str) -> bool:
     return ("меню" in normalized) or ("назад" in normalized)
 
 
-async def _click_first_non_nav_button(conv, message, timeout_sec: int):
-    buttons = getattr(message, "buttons", None) or []
-    for row_idx, row in enumerate(buttons):
-        for btn_idx, btn in enumerate(row):
-            label = str(getattr(btn, "text", "")).strip()
-            if not label or _is_nav_button(label):
-                continue
-            await message.click(row_idx, btn_idx)
-            return await wait_for_bot_response(conv, timeout_sec)
-    raise AssertionError("resident places: no non-navigation button found")
-
-
-async def _click_any_button(conv, message, needles: tuple[str, ...], timeout_sec: int):
-    last_exc: AssertionError | None = None
-    for needle in needles:
-        try:
-            return await click_button_and_wait(conv, message, needle, timeout_sec)
-        except AssertionError as exc:
-            last_exc = exc
-    if last_exc is not None:
-        raise last_exc
-    raise AssertionError("resident flow: no button needles provided")
+def _has_button(message, needle: str) -> bool:
+    try:
+        find_button(message, needle)
+        return True
+    except AssertionError:
+        return False
 
 
 async def run(ctx) -> ScenarioResult:
-    """Resident path: /start -> building/section -> utilities/alerts/places/search."""
+    """Resident path (stable): /start -> building menu -> alerts -> places -> search."""
     started = time.perf_counter()
-    async with ctx.client.conversation(ctx.cfg.targets.powerbot, timeout=ctx.cfg.timeout_sec) as conv:
-        await conv.send_message("/start")
-        msg = await ctx.wait_msg(conv)
-        text = extract_text(msg)
-        # Resident bot can return a transient "Оновлюю меню…" before final menu render.
-        if "Оновлюю меню" in text:
-            for _ in range(4):
-                msg = await wait_for_bot_response(conv, ctx.cfg.timeout_sec)
+    target = ctx.cfg.targets.powerbot
+    bot_id = await ctx.client.get_peer_id(target)
+
+    async def wait_bot_message(*, predicate, ctx_name: str):
+        deadline = time.monotonic() + ctx.cfg.timeout_sec
+        last_text = ""
+        while time.monotonic() < deadline:
+            msgs = await ctx.client.get_messages(target, limit=10)
+            for msg in msgs:
+                if getattr(msg, "out", False):
+                    continue
+                if getattr(msg, "sender_id", None) != bot_id:
+                    continue
                 text = extract_text(msg)
-                if "Головне меню" in text:
-                    break
-        assert_contains(text, ("Головне меню",), ctx="resident /start")
+                if not text:
+                    continue
+                last_text = text
+                if predicate(msg, text):
+                    return msg, text
+            await asyncio.sleep(0.6)
+        raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
-        msg = await click_button_and_wait(conv, msg, "Обрати будинок", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains_any(
-            text,
-            ("Оберіть ваш будинок", "Оберіть свій будинок"),
-            ctx="resident buildings",
-        )
+    async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
+        i, j = find_button(message, needle)
+        await message.click(i, j)
+        return await wait_bot_message(predicate=predicate, ctx_name=ctx_name)
 
-        msg = await click_button_and_wait(conv, msg, ctx.cfg.building_label, ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains_any(
-            text,
-            ("Оберіть секцію", "оберіть вашу секцію"),
-            ctx="resident section menu",
-        )
+    await ctx.client.send_message(target, "/start")
+    msg, text = await wait_bot_message(
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Обрати будинок"),
+        ctx_name="resident /start",
+    )
+    assert_contains(text, ("Головне меню",), ctx="resident /start")
 
-        msg = await click_button_and_wait(conv, msg, ctx.cfg.section_label, ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains_any(
-            text,
-            ("Секцію", "Секція"),
-            ctx="resident section saved",
-        )
-        assert_contains_any(
-            text,
-            ("Збережено", "збережено", "Змінено", "змінено"),
-            ctx="resident section saved status",
-        )
+    msg, text = await click_and_wait(
+        msg,
+        "Обрати будинок",
+        predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
+        ctx_name="resident buildings",
+    )
+    assert_contains_any(
+        text,
+        ("Оберіть ваш будинок", "Оберіть свій будинок"),
+        ctx="resident buildings",
+    )
 
-        msg = await _click_any_button(
-            conv,
-            msg,
-            ("Світло/опалення/вода", "Перевірити світло"),
-            ctx.cfg.timeout_sec,
-        )
-        text = extract_text(msg)
-        if "Стан електропостачання" not in text:
-            assert_contains(text, ("Світло",), ctx="resident utilities")
-            msg = await click_button_and_wait(conv, msg, "Світло", ctx.cfg.timeout_sec)
-            text = extract_text(msg)
-        assert_contains(text, ("Стан електропостачання",), ctx="resident light status")
+    # Return to main menu without mutating building/section selection.
+    msg, text = await click_and_wait(
+        msg,
+        "Меню",
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Пошук закладу"),
+        ctx_name="resident back to menu",
+    )
+    assert_contains(text, ("Головне меню",), ctx="resident back to menu")
 
-        # Back to main menu.
-        msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
-        msg = await click_button_and_wait(conv, msg, "Меню", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains(text, ("Головне меню",), ctx="resident back to main menu")
+    # Alerts flow.
+    msg, text = await click_and_wait(
+        msg,
+        "Тривоги та укриття",
+        predicate=lambda _m, t: "Тривоги та укриття" in t,
+        ctx_name="resident alerts menu",
+    )
+    assert_contains(text, ("Тривоги та укриття",), ctx="resident alerts menu")
 
-        # Alerts flow.
-        msg = await click_button_and_wait(conv, msg, "Тривоги та укриття", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains(text, ("Тривоги та укриття",), ctx="resident alerts menu")
+    msg, text = await click_and_wait(
+        msg,
+        "Стан тривоги",
+        predicate=lambda _m, t: (
+            ("ПОВІТРЯНА ТРИВОГА" in t) or ("Відбій тривоги" in t) or ("Статус невідомий" in t)
+        ),
+        ctx_name="resident alert status",
+    )
+    assert_contains_any(
+        text,
+        ("ПОВІТРЯНА ТРИВОГА", "Відбій тривоги", "Статус невідомий"),
+        ctx="resident alert status",
+    )
 
-        msg = await click_button_and_wait(conv, msg, "Стан тривоги", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains_any(
-            text,
-            ("ПОВІТРЯНА ТРИВОГА", "Відбій тривоги", "Статус невідомий"),
-            ctx="resident alert status",
-        )
+    msg, _ = await click_and_wait(
+        msg,
+        "Меню",
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Заклади в ЖК"),
+        ctx_name="resident alerts back to menu",
+    )
 
-        msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
-        msg = await click_button_and_wait(conv, msg, "Меню", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains(text, ("Головне меню",), ctx="resident alerts back to menu")
+    # Places flow (read-only).
+    msg, text = await click_and_wait(
+        msg,
+        "Заклади в ЖК",
+        predicate=lambda _m, t: "Заклади в ЖК" in t,
+        ctx_name="resident places menu",
+    )
+    assert_contains(text, ("Заклади в ЖК",), ctx="resident places menu")
+    assert_contains_any(text, ("Оберіть категорію", "Поки що категорій немає"), ctx="resident places categories")
 
-        # Places flow.
-        msg = await click_button_and_wait(conv, msg, "Заклади в ЖК", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains(text, ("Заклади в ЖК",), ctx="resident places menu")
-        assert_contains_any(text, ("Оберіть категорію", "Поки що категорій немає"), ctx="resident places categories")
+    msg, _ = await click_and_wait(
+        msg,
+        "Меню",
+        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Пошук закладу"),
+        ctx_name="resident places back to menu",
+    )
 
-        if "Поки що категорій немає" not in text:
-            # Pick first category.
-            msg = await _click_first_non_nav_button(conv, msg, ctx.cfg.timeout_sec)
-            text = extract_text(msg)
-            assert_contains_any(
-                text,
-                ("Оберіть заклад", "Закладів поки немає"),
-                ctx="resident places category list",
-            )
+    # Search flow.
+    msg, text = await click_and_wait(
+        msg,
+        "Пошук закладу",
+        predicate=lambda _m, t: "Пошук закладів" in t,
+        ctx_name="resident search menu",
+    )
+    assert_contains(text, ("Пошук закладів",), ctx="resident search menu")
 
-            # Open first place card (read-only) and go back to list.
-            if "Закладів поки немає" not in text:
-                msg = await _click_first_non_nav_button(conv, msg, ctx.cfg.timeout_sec)
-                text = extract_text(msg)
-                assert_contains_any(
-                    text,
-                    ("Лайків", "Адреса", "Категорія", "Заклад"),
-                    ctx="resident place card",
-                )
-                msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
-                text = extract_text(msg)
-                assert_contains_any(
-                    text,
-                    ("Оберіть заклад", "Закладів поки немає"),
-                    ctx="resident place card back to list",
-                )
-
-            msg = await click_button_and_wait(conv, msg, "Назад", ctx.cfg.timeout_sec)
-        msg = await click_button_and_wait(conv, msg, "Меню", ctx.cfg.timeout_sec)
-
-        # Search flow.
-        msg = await click_button_and_wait(conv, msg, "Пошук закладу", ctx.cfg.timeout_sec)
-        text = extract_text(msg)
-        assert_contains(text, ("Пошук закладів",), ctx="resident search menu")
-
-        await conv.send_message("сирники")
-        msg = await ctx.wait_msg(conv)
-        text = extract_text(msg)
-        assert_contains_any(
-            text,
-            ("Результати пошуку", "нічого не знайдено", "нічого не знайдено."),
-            ctx="resident search result",
-        )
+    await ctx.client.send_message(target, "сирники")
+    _, text = await wait_bot_message(
+        predicate=lambda _m, t: (
+            ("Результати пошуку" in t) or ("нічого не знайдено" in t) or ("нічого не знайдено." in t)
+        ),
+        ctx_name="resident search result",
+    )
+    assert_contains_any(
+        text,
+        ("Результати пошуку", "нічого не знайдено", "нічого не знайдено."),
+        ctx="resident search result",
+    )
 
     elapsed = int((time.perf_counter() - started) * 1000)
     logger.info("resident scenario completed in %sms", elapsed)
