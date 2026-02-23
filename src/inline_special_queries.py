@@ -11,6 +11,8 @@ INTENT_PLUMBER = "plumber"
 INTENT_SECURITY = "security"
 INTENT_PARKING = "parking"
 INTENT_CAR_PASS = "car_pass"
+INTENT_ELEVATOR = "elevator"
+INTENT_ACCOUNTING = "accounting"
 INTENT_LIGHT_STATUS = "light_status"
 
 
@@ -21,6 +23,8 @@ ADBOT_INLINE_QUERY_CONTRACT: tuple[tuple[str, str], ...] = (
     (INTENT_SECURITY, "охорона"),
     (INTENT_PARKING, "паркінг"),
     (INTENT_CAR_PASS, "перепустка авто"),
+    (INTENT_ELEVATOR, "диспетчер ліфтів"),
+    (INTENT_ACCOUNTING, "бухгалтерія"),
     (INTENT_LIGHT_STATUS, "світло"),
 )
 
@@ -65,6 +69,38 @@ def resolve_inline_special_result(query: str, *, cfg: Any | None = None) -> Inli
             result_id="service_car_pass",
             title="🚗 Перепустка авто",
             description="Як оформити перепустку для авто",
+            message_text=text,
+        )
+
+    if _contains_any(q, ("ліфт", "ліфти", "диспетчер ліфт")):
+        phones = _phone(cfg, "elevator_phones")
+        if "," in phones:
+            phone_lines = "\n".join(f"• <code>{p.strip()}</code>" for p in phones.split(",") if p.strip())
+        else:
+            phone_lines = f"• <code>{phones}</code>"
+        text = (
+            "🛗 <b>Диспетчер ліфтів (цілодобово)</b>\n\n"
+            f"📞 Телефони:\n{phone_lines}\n\n"
+            "Працює цілодобово."
+        )
+        return InlineSpecialResult(
+            result_id="service_elevator",
+            title="🛗 Диспетчер ліфтів",
+            description="Цілодобова диспетчерська служба",
+            message_text=text,
+        )
+
+    if _contains_any(q, ("бухгалтер", "бухгалтерія", "квитанц", "нарахув", "комунал")):
+        text = (
+            "🧾 <b>Бухгалтерія</b>\n\n"
+            "📞 Телефони:\n"
+            "• <code>044-300-12-45</code>\n"
+            "• <code>067-558-35-77</code> (вайбер)"
+        )
+        return InlineSpecialResult(
+            result_id="service_accounting",
+            title="🧾 Бухгалтерія",
+            description="Контакти бухгалтерії",
             message_text=text,
         )
 
@@ -136,4 +172,3 @@ def resolve_inline_special_result(query: str, *, cfg: Any | None = None) -> Inli
         )
 
     return None
-

@@ -89,6 +89,7 @@ async def _run() -> None:
         {
             "електрик": [_FakeArticle(title="⚡ Електрик", description="📞 067-576-22-42")],
             "сантехнік": [],
+            "диспетчер ліфтів": [_FakeArticle(title="🛗 Ліфти", description="📞 2 контакти")],
         }
     )
     provider = PowerbotInlineClient(fake_inline, "powerbot")
@@ -154,6 +155,18 @@ async def _run() -> None:
     _assert(handled_skip is False, "non-intent text should not be handled")
     _assert(len(evt_skip.responses) == 0, "non-intent text should not produce response")
 
+    # Additional service intent flow (elevator).
+    evt_elev = _FakeEvent(
+        text="Дайте номер диспетчера ліфтів",
+        chat_id=-100126,
+        msg_id=801,
+        forwarder=forwarder,
+    )
+    handled_elev = await listener.process(evt_elev, source_chat_id=evt_elev.chat_id)
+    _assert(handled_elev is True, "elevator intent should be handled")
+    _assert(any(call[1] == "диспетчер ліфтів" for call in fake_inline.calls), f"missing elevator inline call: {fake_inline.calls}")
+    _assert(len(evt_elev.responses) == 1, "elevator flow should send one response")
+
 
 def main() -> None:
     asyncio.run(_run())
@@ -162,4 +175,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

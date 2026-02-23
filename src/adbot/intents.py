@@ -6,8 +6,10 @@ from dataclasses import dataclass
 
 from inline_special_queries import (
     ADBOT_INLINE_QUERY_CONTRACT,
+    INTENT_ACCOUNTING,
     INTENT_CAR_PASS,
     INTENT_ELECTRICIAN,
+    INTENT_ELEVATOR,
     INTENT_LIGHT_STATUS,
     INTENT_PARKING,
     INTENT_PLUMBER,
@@ -74,6 +76,22 @@ INTENTS: tuple[Intent, ...] = (
         keywords=("перепуст", "пропуск", "пропуска", "прохід", "вхід", "номер", "член", "авто"),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_CAR_PASS],
         fallback_reply="🚗 Оформлення перепустки авто — через резидент-бота.",
+        required_signals=2,
+    ),
+    Intent(
+        code=INTENT_ELEVATOR,
+        title="Ліфти",
+        keywords=("ліфт", "ліфти", "диспетчер", "номер", "застряг", "кабіна"),
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_ELEVATOR],
+        fallback_reply="🛗 Для ліфтів зверніться до диспетчера ліфтів (цілодобово).",
+        required_signals=2,
+    ),
+    Intent(
+        code=INTENT_ACCOUNTING,
+        title="Бухгалтерія",
+        keywords=("бухгалтер", "бухгалтерія", "квитанц", "нарахув", "комунал", "оплат"),
+        inline_query=INLINE_QUERY_BY_INTENT[INTENT_ACCOUNTING],
+        fallback_reply="🧾 Зверніться в бухгалтерію, контакти є в сервісному меню бота.",
         required_signals=2,
     ),
     Intent(
