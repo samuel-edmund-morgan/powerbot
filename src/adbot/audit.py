@@ -19,10 +19,20 @@ def build_audit_payload(chat_id: int, user_id: int, intent_code: str, message_te
     }
 
 
-async def log_match(payload: dict, *, internal_chat_id: int | None = None, forwarder) -> None:
+async def log_match(
+    payload: dict,
+    *,
+    internal_chat_id: int | None = None,
+    forwarder,
+    original_message=None,
+) -> None:
     logger.info("adbot match: %s", json.dumps(payload, ensure_ascii=False))
     if internal_chat_id and forwarder:
         try:
+            # Forward the original user message first to keep audit context native.
+            if original_message is not None and hasattr(forwarder, "forward_messages"):
+                await forwarder.forward_messages(internal_chat_id, original_message)
+
             text = (
                 "🔎 <b>adbot match</b>\n"
                 f"chat_id: <code>{payload.get('chat_id')}</code>\n"

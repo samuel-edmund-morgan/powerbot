@@ -52,7 +52,12 @@ class _FakeInlineClient:
 
 class _FakeForwarder:
     def __init__(self):
+        self.forwarded: list[tuple[int, int]] = []
         self.sent: list[tuple[int, str]] = []
+
+    async def forward_messages(self, chat_id: int, message):
+        message_id = int(getattr(message, "id", 0) or 0)
+        self.forwarded.append((int(chat_id), message_id))
 
     async def send_message(self, chat_id: int, text: str):
         self.sent.append((int(chat_id), str(text)))
@@ -118,7 +123,9 @@ async def _run() -> None:
     _assert(len(evt_ok.responses) == 1, "expected one response")
     _assert(evt_ok.responses[0][1] == 501, f"response should be reply to original message: {evt_ok.responses}")
     _assert("⚡ Електрик" in evt_ok.responses[0][0], f"unexpected response body: {evt_ok.responses}")
-    _assert(len(forwarder.sent) == 1, "expected one audit message")
+    _assert(len(forwarder.forwarded) == 1, "expected one forwarded source message to internal chat")
+    _assert(forwarder.forwarded[0] == (777001, 501), f"unexpected forwarded payload: {forwarder.forwarded}")
+    _assert(len(forwarder.sent) == 1, "expected one audit summary message")
     _assert("intent" in forwarder.sent[0][1], f"audit payload missing intent: {forwarder.sent}")
 
     # Cooldown dedupe for same chat+intent+message.

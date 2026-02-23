@@ -68,7 +68,12 @@ class AdbotListener:
         )
         # Forward audit log (non-blocking on failures).
         if self._internal_chat_id:
-            await log_match(payload, internal_chat_id=self._internal_chat_id, forwarder=event.client)
+            await log_match(
+                payload,
+                internal_chat_id=self._internal_chat_id,
+                forwarder=event.client,
+                original_message=message_obj,
+            )
 
         try:
             await event.respond(response_text, reply_to=message_obj.id)
