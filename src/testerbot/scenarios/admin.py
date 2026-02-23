@@ -245,7 +245,7 @@ async def run(ctx) -> ScenarioResult:
                             "Бізнес" in t
                             and (_has_button(m, "Модерація") or _has_button(m, "Коди прив'язки"))
                         )
-                        or ("Оберіть дію" in t and _has_button(m, "Бізнес"))
+                        or ("Оберіть дію" in t and _has_button(m, "Сенсори") and _has_button(m, "Бізнес"))
                     ),
                     ctx_name="admin ensure business via business",
                 )
