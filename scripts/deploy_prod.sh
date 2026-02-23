@@ -36,6 +36,22 @@ env_flag_true() {
   esac
 }
 
+is_placeholder_value() {
+  local value="${1:-}"
+  local lower="${value,,}"
+  if [[ -z "${lower}" ]]; then
+    return 0
+  fi
+  case "${lower}" in
+    your|your-*|your_*|*placeholder*|*example*|*changeme*|*replace*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 ensure_required_prod_profiles() {
   # From 2026-02: prod always runs 3 bots (powerbot + adminbot + businessbot).
   local env_file="$1"
@@ -56,6 +72,68 @@ ensure_required_prod_profiles() {
 should_enable_adbot() {
   local env_file="$1"
   env_flag_true "$(get_env_value "ADBOT_ENABLED" "$env_file")"
+}
+
+count_numeric_chat_ids() {
+  local raw="${1:-}"
+  local token count=0
+  for token in ${raw//,/ }; do
+    token="$(strip_quotes "$token")"
+    [[ -z "${token}" ]] && continue
+    if [[ "${token}" =~ ^-?[0-9]+$ ]]; then
+      count=$((count + 1))
+    fi
+  done
+  echo "${count}"
+}
+
+ensure_adbot_prod_config() {
+  local env_file="$1"
+  local adbot_test_mode api_id api_hash session source_ids internal_id target_username source_count
+
+  adbot_test_mode="$(get_env_value "ADBOT_TEST_MODE" "$env_file")"
+  if env_flag_true "${adbot_test_mode}"; then
+    echo "ERROR: ADBOT_TEST_MODE must be 0 in prod when ADBOT_ENABLED=1."
+    exit 1
+  fi
+
+  api_id="$(get_env_value "TELETHON_API_ID" "$env_file")"
+  if [[ ! "${api_id}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: TELETHON_API_ID must be a numeric value when ADBOT_ENABLED=1."
+    exit 1
+  fi
+
+  api_hash="$(get_env_value "TELETHON_API_HASH" "$env_file")"
+  if is_placeholder_value "${api_hash}"; then
+    echo "ERROR: TELETHON_API_HASH is empty or placeholder when ADBOT_ENABLED=1."
+    exit 1
+  fi
+
+  session="$(get_env_value "ADBOT_STRING_SESSION" "$env_file")"
+  if is_placeholder_value "${session}"; then
+    echo "ERROR: ADBOT_STRING_SESSION is empty or placeholder when ADBOT_ENABLED=1."
+    exit 1
+  fi
+
+  target_username="$(get_env_value "ADBOT_TARGET_POWERBOT_USERNAME" "$env_file")"
+  target_username="${target_username#@}"
+  if is_placeholder_value "${target_username}"; then
+    echo "ERROR: ADBOT_TARGET_POWERBOT_USERNAME is empty or placeholder when ADBOT_ENABLED=1."
+    exit 1
+  fi
+
+  source_ids="$(get_env_value "ADBOT_SOURCE_CHAT_IDS" "$env_file")"
+  source_count="$(count_numeric_chat_ids "${source_ids}")"
+  if [[ "${source_count}" -lt 1 ]]; then
+    echo "ERROR: ADBOT_SOURCE_CHAT_IDS must contain at least one numeric chat id when ADBOT_ENABLED=1."
+    exit 1
+  fi
+
+  internal_id="$(get_env_value "ADBOT_INTERNAL_CHAT_ID" "$env_file")"
+  if [[ ! "${internal_id}" =~ ^-?[0-9]+$ ]]; then
+    echo "ERROR: ADBOT_INTERNAL_CHAT_ID must be a numeric chat id when ADBOT_ENABLED=1."
+    exit 1
+  fi
 }
 
 assert_service_running() {
@@ -205,6 +283,7 @@ profiles=()
 echo "Prod profiles forced: admin + business."
 profiles+=(--profile admin --profile business)
 if should_enable_adbot "${PROD_DIR}/.env"; then
+  ensure_adbot_prod_config "${PROD_DIR}/.env"
   echo "Adbot profile enabled (ADBOT_ENABLED=1)."
   profiles+=(--profile adbot)
 else
