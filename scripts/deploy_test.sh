@@ -258,7 +258,9 @@ if should_enable_testerbot "${TEST_DIR}/.env"; then
   echo "Running testerbot callback coverage runtime smoke test..."
   python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_runtime.py" \
     --coverage-file "${TEST_DIR}/logs/testerbot_callback_coverage.json" \
-    --min-admin-clicked 18
+    --min-admin-clicked 18 \
+    --min-resident-clicked 20 \
+    --min-business-clicked 10
 else
   echo "Testerbot disabled (TESTERBOT_ENABLED!=1)."
 fi
