@@ -203,21 +203,11 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
     else
       echo "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=1" >> "${TEST_DIR}/.env"
     fi
-    if grep -q "^ADBOT_SOURCE_REQUIRE_FORWARDED=" "${TEST_DIR}/.env"; then
-      sed -i -E 's/^ADBOT_SOURCE_REQUIRE_FORWARDED=.*/ADBOT_SOURCE_REQUIRE_FORWARDED=1/' "${TEST_DIR}/.env"
-    else
-      echo "ADBOT_SOURCE_REQUIRE_FORWARDED=1" >> "${TEST_DIR}/.env"
-    fi
   else
     if grep -q "^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=" "${TEST_DIR}/.env"; then
       sed -i -E 's/^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=.*/ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0/' "${TEST_DIR}/.env"
     else
       echo "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0" >> "${TEST_DIR}/.env"
-    fi
-    if grep -q "^ADBOT_SOURCE_REQUIRE_FORWARDED=" "${TEST_DIR}/.env"; then
-      sed -i -E 's/^ADBOT_SOURCE_REQUIRE_FORWARDED=.*/ADBOT_SOURCE_REQUIRE_FORWARDED=0/' "${TEST_DIR}/.env"
-    else
-      echo "ADBOT_SOURCE_REQUIRE_FORWARDED=0" >> "${TEST_DIR}/.env"
     fi
   fi
 fi
