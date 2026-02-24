@@ -41,6 +41,29 @@ def _confidence(score: int, token_count: int) -> int:
     return int((int(score) / max(int(token_count), 1)) * 1000)
 
 
+def _is_question_like(text_norm: str) -> bool:
+    value = str(text_norm or "").strip()
+    if not value:
+        return False
+    if "?" in value:
+        return True
+    question_prefixes = (
+        "де ",
+        "як ",
+        "коли ",
+        "чи ",
+        "чому ",
+        "хто ",
+        "підкажіть",
+        "скажіть",
+        "дайте",
+        "потрібен номер",
+        "є номер",
+        "контакти ",
+    )
+    return any(value.startswith(prefix) for prefix in question_prefixes)
+
+
 def analyze_intent_match(
     text: str,
     *,
@@ -105,6 +128,22 @@ def analyze_intent_match(
             best_confidence=best_confidence,
             best_signals=best_signals,
         )
+
+    # Additional anti-false-positive guard:
+    # long non-question discussions with incidental keywords must not trigger adbot.
+    if text_len >= 80 and not _is_question_like(norm):
+        # Keep truly high-signal short-intent requests eligible,
+        # but block long narrative paragraphs unless confidence is very high.
+        if best_confidence < max(int(min_confidence) + 120, 260):
+            return MatchDiagnostics(
+                intent=None,
+                reason="non_question_long_text",
+                text_len=text_len,
+                token_count=token_count,
+                best_intent=best_intent.code,
+                best_confidence=best_confidence,
+                best_signals=best_signals,
+            )
 
     return MatchDiagnostics(
         intent=best_intent,

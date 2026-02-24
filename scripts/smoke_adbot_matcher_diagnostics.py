@@ -7,6 +7,7 @@ Verifies analyze_intent_match reason codes and key fields:
 - above_max_len
 - no_signal_candidates
 - below_min_confidence
+- non_question_long_text
 - matched
 """
 
@@ -56,6 +57,25 @@ def main() -> None:
     _assert(low_conf.reason == "below_min_confidence", f"unexpected low-confidence reason: {low_conf.reason}")
     _assert(low_conf.best_intent is not None, "best_intent should be present for below_min_confidence")
     _assert(low_conf.best_confidence is not None, "best_confidence should be present for below_min_confidence")
+
+    non_question_long = analyze_intent_match(
+        (
+            "Сьогодні у нас довге обговорення підрядників і бюджетів: номер електрика, телефон електрика, "
+            "світло зникло, світло вимкнули, але це просто розповідь без запитання і без прохання контакту."
+        ),
+        min_len=10,
+        max_len=280,
+        min_confidence=120,
+    )
+    _assert(non_question_long.intent is None, "long non-question text must not match")
+    _assert(
+        non_question_long.reason == "non_question_long_text",
+        f"unexpected non-question reason: {non_question_long.reason}",
+    )
+    _assert(
+        non_question_long.best_intent is not None,
+        "non_question_long_text must preserve best_intent diagnostics",
+    )
 
     matched = analyze_intent_match(
         "Дайте номер електрика, будь ласка",
