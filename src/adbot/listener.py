@@ -79,6 +79,13 @@ class AdbotListener:
         can see response origin in chat UI.
         Fallback mode: plain text reply to original source message.
         """
+        def _forward_ok(value: object) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, (list, tuple, set, dict)):
+                return len(value) > 0
+            return True
+
         has_forward_context = internal_chat_id > 0 and int(internal_reply_message_id or 0) > 0
         if has_forward_context:
             reply_msg_id = int(internal_reply_message_id or 0)
@@ -88,7 +95,7 @@ class AdbotListener:
                     reply_msg_id,
                     int(internal_chat_id),
                 )
-                if forwarded:
+                if _forward_ok(forwarded):
                     return True, "forwarded"
             except TypeError:
                 try:
@@ -97,7 +104,7 @@ class AdbotListener:
                         messages=reply_msg_id,
                         from_peer=int(internal_chat_id),
                     )
-                    if forwarded:
+                    if _forward_ok(forwarded):
                         return True, "forwarded"
                 except Exception:
                     logger.exception(
