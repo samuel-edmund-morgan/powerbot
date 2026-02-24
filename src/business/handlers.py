@@ -3739,7 +3739,7 @@ async def on_refunded_payment(message: Message) -> None:
 
     place_id = int(outcome.get("place_id") or 0)
     logger.info(
-        "Applied refunded_payment update chat_id=%s user_id=%s place_id=%s duplicate=%s",
+        "Applied refunded_payment update chat_id=%s user_id=%s place=%s duplicate=%s",
         message.chat.id,
         tg_user_id,
         place_id,
