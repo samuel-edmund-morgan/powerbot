@@ -3702,13 +3702,25 @@ async def on_refunded_payment(message: Message) -> None:
         raw_payload_json = None
 
     try:
+        telegram_charge_id = str(getattr(refunded, "telegram_payment_charge_id", "") or "")
+        provider_charge_id = str(getattr(refunded, "provider_payment_charge_id", "") or "")
+        logger.info(
+            "Received refunded_payment update chat_id=%s user_id=%s amount=%s %s tg_charge=%s provider_charge=%s payload_len=%s",
+            message.chat.id,
+            tg_user_id,
+            int(getattr(refunded, "total_amount", 0) or 0),
+            str(getattr(refunded, "currency", "") or ""),
+            telegram_charge_id[:20] + ("..." if len(telegram_charge_id) > 20 else ""),
+            provider_charge_id[:20] + ("..." if len(provider_charge_id) > 20 else ""),
+            len(str(getattr(refunded, "invoice_payload", "") or "")),
+        )
         outcome = await cabinet_service.apply_telegram_stars_refund_update(
             tg_user_id=int(tg_user_id),
             invoice_payload=str(getattr(refunded, "invoice_payload", "") or ""),
             total_amount=int(getattr(refunded, "total_amount", 0) or 0),
             currency=str(getattr(refunded, "currency", "") or ""),
-            telegram_payment_charge_id=str(getattr(refunded, "telegram_payment_charge_id", "") or ""),
-            provider_payment_charge_id=str(getattr(refunded, "provider_payment_charge_id", "") or ""),
+            telegram_payment_charge_id=telegram_charge_id,
+            provider_payment_charge_id=provider_charge_id,
             raw_payload_json=raw_payload_json,
         )
     except (ValidationError, AccessDeniedError, NotFoundError) as error:
@@ -3726,6 +3738,13 @@ async def on_refunded_payment(message: Message) -> None:
         return
 
     place_id = int(outcome.get("place_id") or 0)
+    logger.info(
+        "Applied refunded_payment update chat_id=%s user_id=%s place_id=%s duplicate=%s",
+        message.chat.id,
+        tg_user_id,
+        place_id,
+        bool(outcome.get("duplicate")),
+    )
     rows = await cabinet_service.list_user_businesses(int(tg_user_id))
     item = next((row for row in rows if int(row.get("place_id") or 0) == place_id), None)
     place_name = html.escape(str(item.get("place_name") if item else "вашого закладу"))
