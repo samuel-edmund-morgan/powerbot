@@ -4167,7 +4167,7 @@ async def inline_search(inline_query: InlineQuery):
     await inline_query.answer(results=articles, cache_time=60)
 
 
-@router.message(Command("adbot"))
+@router.message(F.text.regexp(r"^/adbot(?:@[A-Za-z0-9_]{5,})?(?:\s+.*)?$"))
 async def handle_adbot_internal_command(message: Message):
     """Internal command for adbot pipeline fallback (admin-only)."""
     user_id = int(message.from_user.id) if message.from_user else 0
