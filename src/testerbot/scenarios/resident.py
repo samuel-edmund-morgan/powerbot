@@ -110,7 +110,7 @@ async def run(ctx) -> ScenarioResult:
         deadline = time.monotonic() + ctx.cfg.timeout_sec
         last_text = ""
         while time.monotonic() < deadline:
-            msgs = await ctx.client.get_messages(target, limit=10)
+            msgs = await ctx.client.get_messages(target, limit=8)
             for msg in msgs:
                 if getattr(msg, "out", False):
                     continue
@@ -134,11 +134,11 @@ async def run(ctx) -> ScenarioResult:
                 if predicate(msg, text):
                     ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
                     return msg, text
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(1.2)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
     async def latest_bot_message(ctx_name: str):
-        msgs = await ctx.client.get_messages(target, limit=12)
+        msgs = await ctx.client.get_messages(target, limit=20)
         for msg in msgs:
             if getattr(msg, "out", False):
                 continue
@@ -150,6 +150,21 @@ async def run(ctx) -> ScenarioResult:
             ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
             return msg, text
         raise AssertionError(f"{ctx_name}: no incoming resident-bot message found")
+
+    async def find_main_menu_message(ctx_name: str):
+        msgs = await ctx.client.get_messages(target, limit=40)
+        for msg in msgs:
+            if getattr(msg, "out", False):
+                continue
+            if getattr(msg, "sender_id", None) != bot_id:
+                continue
+            text = extract_text(msg)
+            if not text:
+                continue
+            if ("Головне меню" in text) and _has_button(msg, "Пошук закладу"):
+                ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
+                return msg, text
+        raise AssertionError(f"{ctx_name}: no main-menu message found in recent history")
 
     async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
         current = message
@@ -242,6 +257,12 @@ async def run(ctx) -> ScenarioResult:
         )
 
     async def recover_main_menu(*, ctx_name: str, allow_start_fallback: bool = False):
+        # Best candidate: reuse a known main-menu message from recent history.
+        try:
+            return await find_main_menu_message(f"{ctx_name} history")
+        except Exception:
+            pass
+
         # First, try to recover using the latest bot message without sending new commands.
         try:
             msg, text = await latest_bot_message(f"{ctx_name} latest")
@@ -257,7 +278,7 @@ async def run(ctx) -> ScenarioResult:
                 return msg, text
             # Walk back to a screen that has "Меню", then open main menu.
             current = msg
-            for step in range(6):
+            for step in range(8):
                 if _has_button(current, "Меню"):
                     current, text = await click_and_wait(
                         current,
@@ -280,6 +301,11 @@ async def run(ctx) -> ScenarioResult:
                 )
                 if ("Головне меню" in text) and _has_button(current, "Пошук закладу"):
                     return current, text
+        except Exception:
+            pass
+
+        try:
+            return await find_main_menu_message(f"{ctx_name} history fallback")
         except Exception:
             pass
 
