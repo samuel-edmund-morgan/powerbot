@@ -763,6 +763,10 @@ body::after {
   font-weight: 500;
 }
 
+.toggle[hidden] {
+  display: none !important;
+}
+
 .toggle input {
   accent-color: var(--sage-dark);
   width: 18px;
