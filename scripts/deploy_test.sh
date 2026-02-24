@@ -177,6 +177,17 @@ else
   echo "BUSINESS_MODE=1" >> "${TEST_DIR}/.env"
 fi
 
+# Для adbot E2E у test середовищі примусово вмикаємо префіксний E2E-режим,
+# щоб запити з ADBOT_E2E_PROMPT_PREFIX не блокувались cooldown-ом.
+# Це test-only поведінка (prod не зачіпається).
+if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
+  if grep -q "^ADBOT_ALLOW_SELF_OUTGOING_E2E=" "${TEST_DIR}/.env"; then
+    sed -i -E 's/^ADBOT_ALLOW_SELF_OUTGOING_E2E=.*/ADBOT_ALLOW_SELF_OUTGOING_E2E=1/' "${TEST_DIR}/.env"
+  else
+    echo "ADBOT_ALLOW_SELF_OUTGOING_E2E=1" >> "${TEST_DIR}/.env"
+  fi
+fi
+
 # У test за замовчуванням працюємо через mock-оплати (без реальних списань Stars).
 # Якщо потрібно побачити реальний UI Telegram Stars у test, вистав в /opt/powerbot-test/.env:
 #   BUSINESS_TEST_ALLOW_TELEGRAM_STARS=1
