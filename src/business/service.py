@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from business.guards import is_business_feature_enabled
-from business.plans import PAID_TIERS, PLAN_STARS_PRICES, SUPPORTED_TIERS
+from business.plans import PAID_TIERS, SUPPORTED_TIERS, get_plan_stars_price
 from business.payments import (
     MockPaymentProvider,
     TelegramStarsPaymentProvider,
@@ -332,7 +332,7 @@ class BusinessCabinetService:
         return PAYMENT_PROVIDER_TELEGRAM_STARS
 
     def get_plan_price_stars(self, tier: str) -> int:
-        return int(PLAN_STARS_PRICES.get(str(tier).strip().lower(), 0))
+        return int(get_plan_stars_price(str(tier).strip().lower()))
 
     def _get_payment_provider_impl(self, provider_name: str):
         provider = self._payment_providers.get(str(provider_name).strip().lower())

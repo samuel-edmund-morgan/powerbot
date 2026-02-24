@@ -32,7 +32,7 @@ from business.service import (
     ValidationError,
 )
 from business.payments import SUBSCRIPTION_PERIOD_SECONDS
-from business.plans import PAID_TIERS, PLAN_STARS_PRICES, PLAN_TITLES
+from business.plans import PAID_TIERS, PLAN_TITLES, get_effective_plan_stars_prices
 from business.ui import (
     bind_ui_message_id,
     render as ui_render,
@@ -689,6 +689,7 @@ def build_plan_keyboard(
     back_callback_data: str | None = None,
     source: str | None = None,
 ) -> InlineKeyboardMarkup:
+    stars_prices = get_effective_plan_stars_prices()
     normalized_current = str(current_tier or "").strip().lower() or "free"
     normalized_status = str(current_status or "").strip().lower() or "inactive"
     expires_at = _parse_iso_utc(str(current_expires_at or "").strip() or None)
@@ -724,7 +725,7 @@ def build_plan_keyboard(
             continue
 
         title = PLAN_TITLES[tier]
-        stars = PLAN_STARS_PRICES.get(tier)
+        stars = stars_prices.get(tier)
         if stars:
             title = f"{title} ({stars}⭐)"
         if tier == normalized_current:
@@ -737,7 +738,7 @@ def build_plan_keyboard(
     second_row = []
     for tier in ("pro", "partner"):
         title = PLAN_TITLES[tier]
-        stars = PLAN_STARS_PRICES.get(tier)
+        stars = stars_prices.get(tier)
         if stars:
             title = f"{title} ({stars}⭐)"
         if tier == normalized_current:

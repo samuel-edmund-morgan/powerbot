@@ -762,6 +762,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_l
 echo "Running business plan matrix policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_plan_matrix_policy.py"
 
+# Automated smoke: runtime test-only Stars price overrides contract.
+echo "Running business plan price overrides runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_business_plan_price_overrides_runtime.py"
+
 # Automated smoke: contact value validation policy for business owners.
 echo "Running business contact validation policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_contact_validation_policy.py"
