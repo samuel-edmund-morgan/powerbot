@@ -3693,7 +3693,11 @@ async def on_refunded_payment(message: Message) -> None:
     if not refunded:
         return
     await try_delete_user_message(message)
-    tg_user_id = message.from_user.id if message.from_user else message.chat.id
+    # For service updates (including refunded_payment), from_user can be bot/self.
+    # In private dialogs the payer identifier is the chat id.
+    tg_user_id = int(getattr(message.chat, "id", 0) or 0)
+    if tg_user_id <= 0 and message.from_user:
+        tg_user_id = int(getattr(message.from_user, "id", 0) or 0)
 
     raw_payload_json = None
     try:
