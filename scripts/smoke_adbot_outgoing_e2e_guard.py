@@ -33,6 +33,18 @@ class _FakeInlineProvider:
         return f"inline::{query}"
 
 
+class _FakeInternalPipeline:
+    async def get_via_internal(self, *, query: str, fallback: str, internal_chat_id: int, reply_to_message_id: int | None = None):
+        from adbot.pipeline import InternalReplyResult
+
+        return InternalReplyResult(
+            text=f"internal::{query}",
+            reason=None,
+            internal_message_id=1,
+            via_bot_id=123,
+        )
+
+
 @dataclass
 class _FakeMessage:
     text: str
@@ -65,7 +77,9 @@ async def _run() -> None:
         matcher_min_confidence=120,
         cooldown=CooldownGuard(0),
         pipeline=ResponsePipeline(_FakeInlineProvider(), fallback_ms=300),
+        internal_pipeline=_FakeInternalPipeline(),
         internal_chat_id=None,
+        require_real_internal_reply=False,
     )
     evt_default = _FakeEvent(text="[E2E] Дайте номер електрика", msg_id=1)
     handled_default = await listener_default.process(evt_default, source_chat_id=evt_default.chat_id)
@@ -79,7 +93,9 @@ async def _run() -> None:
         matcher_min_confidence=120,
         cooldown=CooldownGuard(0),
         pipeline=ResponsePipeline(_FakeInlineProvider(), fallback_ms=300),
+        internal_pipeline=_FakeInternalPipeline(),
         internal_chat_id=None,
+        require_real_internal_reply=False,
         allow_self_outgoing_e2e=True,
         self_user_id=1001,
         self_outgoing_prefix="[E2E]",

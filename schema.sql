@@ -168,6 +168,32 @@ CREATE TABLE IF NOT EXISTS business_claim_tokens (
     FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
 );
 
+-- Анонімні сигнатури запитів adbot (без raw text/user id)
+CREATE TABLE IF NOT EXISTS adbot_pattern_signatures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    intent TEXT NOT NULL,                    -- Код intent
+    pattern TEXT NOT NULL,                   -- Нормалізована сигнатура/патерн
+    weight REAL NOT NULL DEFAULT 1.0,        -- Вага патерна
+    lang TEXT DEFAULT NULL,                  -- Мова (uk/ru/...)
+    confidence_floor INTEGER NOT NULL DEFAULT 0,
+    source_chat_tag TEXT DEFAULT NULL,       -- Анонімний тег чату (без chat_id/user_id)
+    stats_count INTEGER NOT NULL DEFAULT 0,  -- Скільки разів патерн зустрічався
+    updated_at TEXT NOT NULL,                -- Час оновлення (ISO 8601)
+    UNIQUE(intent, pattern, source_chat_tag)
+);
+
+-- Агрегована щоденна статистика для adbot-патернів
+CREATE TABLE IF NOT EXISTS adbot_pattern_stats_daily (
+    date TEXT NOT NULL,                      -- YYYY-MM-DD (UTC)
+    chat_tag TEXT NOT NULL,                  -- Анонімний тег чату
+    intent TEXT NOT NULL,                    -- Код intent
+    matched INTEGER NOT NULL DEFAULT 0,
+    unmatched INTEGER NOT NULL DEFAULT 0,
+    fp_flags INTEGER NOT NULL DEFAULT 0,     -- Кількість false-positive прапорців
+    updated_at TEXT NOT NULL,                -- Час оновлення (ISO 8601)
+    PRIMARY KEY (date, chat_tag, intent)
+);
+
 -- Укриття (спрощений список місць)
 CREATE TABLE IF NOT EXISTS shelter_places (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -441,6 +467,15 @@ CREATE INDEX IF NOT EXISTS idx_business_claim_token_place_status
 
 CREATE INDEX IF NOT EXISTS idx_business_claim_token_status_expires
     ON business_claim_tokens (status, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_adbot_pattern_signatures_intent
+    ON adbot_pattern_signatures (intent);
+
+CREATE INDEX IF NOT EXISTS idx_adbot_pattern_signatures_chat_tag
+    ON adbot_pattern_signatures (source_chat_tag);
+
+CREATE INDEX IF NOT EXISTS idx_adbot_pattern_stats_daily_chat_intent
+    ON adbot_pattern_stats_daily (chat_tag, intent, date);
 
 -- =============================================================================
 -- Початкові дані (приклад - замініть на реальні)

@@ -350,6 +350,7 @@ async def run(ctx) -> ScenarioResult:
             raise AssertionError(f"{ctx_name}: unable to recover main menu without /start fallback")
 
         try:
+            ctx.record_input_flow("resident", "command:/start")
             await ctx.client.send_message(target, "/start")
         except FloodWaitError as exc:
             raise AssertionError(f"{ctx_name}: flood-wait on /start recovery ({exc})") from exc
@@ -712,6 +713,7 @@ async def run(ctx) -> ScenarioResult:
     )
     assert_contains(text, ("Пошук закладів",), ctx="resident search menu")
 
+    ctx.record_input_flow("resident", "text:search_keyword")
     await ctx.client.send_message(target, "сирники")
     _, text = await wait_bot_message(
         predicate=lambda _m, t: (

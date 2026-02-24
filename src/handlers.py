@@ -6,6 +6,7 @@ from aiogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     FSInputFile, User
 )
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
@@ -106,6 +107,99 @@ async def safe_callback_answer(callback: CallbackQuery, *args, **kwargs) -> None
         raise
 
 
+def _ui_last_message_key(chat_id: int, context_key: str) -> str:
+    return f"ui:last_msg_id:{int(chat_id)}:{str(context_key or 'default').strip()}"
+
+
+async def _ui_get_last_message_id(chat_id: int, context_key: str) -> int | None:
+    raw = await db_get(_ui_last_message_key(chat_id, context_key))
+    if not raw:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+async def _ui_set_last_message_id(chat_id: int, context_key: str, message_id: int) -> None:
+    if not chat_id or not message_id:
+        return
+    await db_set(_ui_last_message_key(chat_id, context_key), str(int(message_id)))
+
+
+def _edit_error_reason(exc: Exception) -> str:
+    msg = str(exc).lower()
+    if "message to edit not found" in msg:
+        return "message_deleted"
+    if "message can't be edited" in msg:
+        return "not_editable"
+    return "edit_failed"
+
+
+async def render_or_edit(
+    *,
+    bot,
+    chat_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+    context_key: str,
+    prefer_message_id: int | None = None,
+    disable_web_page_preview: bool = True,
+    force_new_message: bool = False,
+) -> int:
+    """Render resident interactive UI via edit-first strategy with one fallback send."""
+    if not chat_id:
+        raise ValueError("chat_id is required")
+
+    stored_id = await _ui_get_last_message_id(chat_id, context_key)
+    candidates: list[int] = []
+    if prefer_message_id and int(prefer_message_id) > 0:
+        candidates.append(int(prefer_message_id))
+    if stored_id and int(stored_id) > 0 and int(stored_id) not in candidates:
+        candidates.append(int(stored_id))
+
+    last_reason = "race_recovered"
+    if not force_new_message:
+        for message_id in candidates:
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=disable_web_page_preview,
+                )
+                await _ui_set_last_message_id(chat_id, context_key, message_id)
+                await save_last_bot_message(chat_id, message_id)
+                return int(message_id)
+            except TelegramBadRequest as exc:
+                if "message is not modified" in str(exc).lower():
+                    await _ui_set_last_message_id(chat_id, context_key, message_id)
+                    await save_last_bot_message(chat_id, message_id)
+                    return int(message_id)
+                last_reason = _edit_error_reason(exc)
+            except Exception as exc:
+                last_reason = _edit_error_reason(exc)
+
+    sent = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        disable_web_page_preview=disable_web_page_preview,
+    )
+    await _ui_set_last_message_id(chat_id, context_key, int(sent.message_id))
+    await save_last_bot_message(chat_id, int(sent.message_id))
+    logger.info(
+        "resident_ui render_or_edit fallback: reason=%s chat_id=%s context=%s message_id=%s",
+        last_reason,
+        chat_id,
+        context_key,
+        int(sent.message_id),
+    )
+    return int(sent.message_id)
+
+
 class ReplyKeyboardAutoClearMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -184,11 +278,13 @@ async def handle_webapp_reply_keyboard(message: Message) -> bool:
     building_text = await get_user_building_text(message.chat.id)
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
-    menu_msg = await message.answer(
-        f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
         reply_markup=await get_main_keyboard_for_user(message.chat.id),
+        context_key="main_menu",
     )
-    await save_last_bot_message(message.chat.id, menu_msg.message_id)
     return True
 
 
@@ -472,6 +568,9 @@ async def get_main_keyboard_for_user(chat_id: int) -> InlineKeyboardMarkup:
     base_rows = [list(row) for row in get_main_keyboard().inline_keyboard]
 
     try:
+        if not await _is_business_offers_ui_visible():
+            return InlineKeyboardMarkup(inline_keyboard=base_rows)
+
         if not await _is_sponsored_offers_enabled(chat_id):
             return InlineKeyboardMarkup(inline_keyboard=base_rows)
 
@@ -689,10 +788,15 @@ async def reply_select_building(message: Message):
             else:
                 current_text = f"\n\n📍 Ваш поточний будинок: <b>{building['name']} ({building['address']})</b>"
     
-    await message.answer(
-        f"🏠 <b>Оберіть свій будинок</b>{current_text}\n\n"
-        "Обравши будинок, ви будете отримувати сповіщення про світло саме по вашому будинку:",
-        reply_markup=get_buildings_keyboard()
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=(
+            f"🏠 <b>Оберіть свій будинок</b>{current_text}\n\n"
+            "Обравши будинок, ви будете отримувати сповіщення про світло саме по вашому будинку:"
+        ),
+        reply_markup=get_buildings_keyboard(),
+        context_key="building_select",
     )
 
 
@@ -714,10 +818,16 @@ async def cb_select_building(callback: CallbackQuery):
             else:
                 current_text = f"\n\n📍 Ваш поточний будинок: <b>{building['name']} ({building['address']})</b>"
     
-    await callback.message.edit_text(
-        f"🏠 <b>Оберіть свій будинок</b>{current_text}\n\n"
-        "Обравши будинок, ви будете отримувати сповіщення про світло саме по вашому будинку:",
-        reply_markup=get_buildings_keyboard()
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=(
+            f"🏠 <b>Оберіть свій будинок</b>{current_text}\n\n"
+            "Обравши будинок, ви будете отримувати сповіщення про світло саме по вашому будинку:"
+        ),
+        reply_markup=get_buildings_keyboard(),
+        context_key="building_select",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
     )
     await safe_callback_answer(callback)
 
@@ -763,9 +873,13 @@ async def cb_building_selected(callback: CallbackQuery):
         f"🏠 <b>Будинок: {display_name}</b>\n\n"
         "Тепер оберіть вашу секцію, щоб отримувати точні сповіщення саме по ній:"
     )
-    await callback.message.edit_text(
-        text,
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
         reply_markup=get_sections_keyboard(building_id, current_section=current_section),
+        context_key="building_select",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
     )
     await safe_callback_answer(callback)
 
@@ -818,7 +932,14 @@ async def cb_section_selected(callback: CallbackQuery):
         [InlineKeyboardButton(text="☀️ Перевірити світло", callback_data="status")],
         [InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu")],
     ])
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=keyboard,
+        context_key="building_select",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
+    )
     await safe_callback_answer(callback)
 
 
@@ -854,11 +975,13 @@ async def cmd_start(message: Message):
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
     await remove_reply_keyboard(message)
-    menu_msg = await message.answer(
-        f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
-        reply_markup=await get_main_keyboard_for_user(message.chat.id)
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
+        reply_markup=await get_main_keyboard_for_user(message.chat.id),
+        context_key="main_menu",
     )
-    await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
 @router.message(Command("menu"))
@@ -870,11 +993,13 @@ async def cmd_menu(message: Message):
     light_status = await get_light_status_text(message.chat.id)
     alert_status = await get_alert_status_text()
     await remove_reply_keyboard(message)
-    menu_msg = await message.answer(
-        f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
-        reply_markup=await get_main_keyboard_for_user(message.chat.id)
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=f"{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:",
+        reply_markup=await get_main_keyboard_for_user(message.chat.id),
+        context_key="main_menu",
     )
-    await save_last_bot_message(message.chat.id, menu_msg.message_id)
 
 
 @router.message(Command("unsubscribe"))
@@ -992,23 +1117,15 @@ async def cb_menu(callback: CallbackQuery):
     text = f"🏠 <b>Головне меню</b>\n{building_text}\n{light_status}\n{alert_status}\n\nОберіть дію:"
     main_keyboard = await get_main_keyboard_for_user(callback.message.chat.id)
     
-    # Якщо повідомлення має фото - видаляємо і відправляємо нове
-    menu_msg = None
-    if callback.message.photo:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        menu_msg = await callback.message.answer(text, reply_markup=main_keyboard)
-    else:
-        try:
-            await callback.message.edit_text(text, reply_markup=main_keyboard)
-            menu_msg = callback.message
-        except Exception:
-            # Якщо не вдалось редагувати - надсилаємо нове
-            menu_msg = await callback.message.answer(text, reply_markup=main_keyboard)
-    if menu_msg:
-        await save_last_bot_message(callback.message.chat.id, menu_msg.message_id)
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=main_keyboard,
+        context_key="main_menu",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
+        force_new_message=bool(getattr(callback.message, "photo", None)),
+    )
     await safe_callback_answer(callback)
 
 
@@ -1025,7 +1142,14 @@ async def cb_utilities_menu(callback: CallbackQuery):
         [InlineKeyboardButton(text="« Меню", callback_data="menu")],
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=keyboard,
+        context_key="utilities_menu",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
+    )
     await safe_callback_answer(callback)
 
 
@@ -1046,7 +1170,14 @@ async def cb_alerts_menu(callback: CallbackQuery):
             InlineKeyboardButton(text="« Меню", callback_data="menu"),
         ],
     ])
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=keyboard,
+        context_key="alerts_menu",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
+    )
     await safe_callback_answer(callback)
 
 
@@ -1079,10 +1210,14 @@ async def cb_alert_status(callback: CallbackQuery):
             InlineKeyboardButton(text="« Назад", callback_data="alerts_menu"),
         ],
     ])
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard)
-    except Exception:
-        pass  # Якщо повідомлення не змінилось - ігноруємо
+    await render_or_edit(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=keyboard,
+        context_key="alerts_menu",
+        prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
+    )
     await safe_callback_answer(callback)
 
 
@@ -1120,9 +1255,23 @@ async def cb_shelters(callback: CallbackQuery):
             await callback.message.delete()
         except Exception:
             pass
-        await callback.message.answer(text, reply_markup=keyboard)
+        await render_or_edit(
+            bot=callback.bot,
+            chat_id=callback.message.chat.id,
+            text=text,
+            reply_markup=keyboard,
+            context_key="shelters_menu",
+            force_new_message=True,
+        )
     else:
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await render_or_edit(
+            bot=callback.bot,
+            chat_id=callback.message.chat.id,
+            text=text,
+            reply_markup=keyboard,
+            context_key="shelters_menu",
+            prefer_message_id=int(getattr(callback.message, "message_id", 0) or 0),
+        )
     await safe_callback_answer(callback)
 
 
@@ -1613,7 +1762,13 @@ async def reply_utilities(message: Message):
         [InlineKeyboardButton(text="« Меню", callback_data="menu")],
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await message.answer(text, reply_markup=keyboard)
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=keyboard,
+        context_key="main_menu",
+    )
 
 
 @router.message(F.text == "🚨 Тривоги та укриття")
@@ -1640,7 +1795,13 @@ async def reply_alerts(message: Message):
             InlineKeyboardButton(text="« Меню", callback_data="menu"),
         ],
     ])
-    await message.answer(text, reply_markup=keyboard)
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=keyboard,
+        context_key="main_menu",
+    )
 
 
 @router.message(F.text == "🔔 Сповіщення та тихі години")
@@ -1670,7 +1831,13 @@ async def reply_notifications(message: Message):
     else:
         text += "\n⏰ <b>Тихі години:</b> вимкнено"
     
-    await message.answer(text, reply_markup=await get_notifications_keyboard(chat_id))
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=await get_notifications_keyboard(chat_id),
+        context_key="main_menu",
+    )
 
 
 @router.message(F.text == "🌙 Тихі години")
@@ -1740,9 +1907,12 @@ async def reply_light_old(message: Message):
     text = await format_light_status(message.chat.id, include_vote_prompt=False)
     buttons = [[InlineKeyboardButton(text="🔄 Оновити", callback_data="status")]]
     buttons.append([InlineKeyboardButton(text="« Назад", callback_data="utilities_menu")])
-    await message.answer(
-        text,
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        context_key="main_menu",
     )
 
 
@@ -1761,7 +1931,13 @@ async def reply_heating_old(message: Message):
     from database import get_user_vote
     user_vote = await get_user_vote(message.chat.id, "heating")
     text = await format_heating_status(message.chat.id)
-    await message.answer(text, reply_markup=get_heating_vote_keyboard(user_vote))
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=get_heating_vote_keyboard(user_vote),
+        context_key="main_menu",
+    )
 
 
 @router.message(F.text == "💧 Вода")
@@ -1779,7 +1955,13 @@ async def reply_water_old(message: Message):
     from database import get_user_vote
     user_vote = await get_user_vote(message.chat.id, "water")
     text = await format_water_status(message.chat.id)
-    await message.answer(text, reply_markup=get_water_vote_keyboard(user_vote))
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=get_water_vote_keyboard(user_vote),
+        context_key="main_menu",
+    )
 
 
 @router.message(F.text == "🔔 Сповіщення")
@@ -1805,11 +1987,14 @@ async def reply_search_old(message: Message):
         pass
     await remove_reply_keyboard(message)
     # Показуємо пошук
-    await message.answer(
-        "🔍 <b>Пошук закладу</b>\n\nВведіть назву або ключове слово для пошуку:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")]
-        ])
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text="🔍 <b>Пошук закладу</b>\n\nВведіть назву або ключове слово для пошуку:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="« Меню", callback_data="menu")]]
+        ),
+        context_key="search_menu",
     )
 
 
@@ -1843,12 +2028,17 @@ async def reply_service(message: Message):
     except Exception:
         pass
     
-    await message.answer(
-        "📞 <b>Сервісна служба</b>\n\n"
-        "🕘 Нова Англія сервіс, працює з понеділка по п'ятницю з 9:00 - 18:00, "
-        "субота з 10:00 - 16:00.\n\n"
-        "Оберіть службу для отримання контактного телефону:",
-        reply_markup=get_service_keyboard()
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=(
+            "📞 <b>Сервісна служба</b>\n\n"
+            "🕘 Нова Англія сервіс, працює з понеділка по п'ятницю з 9:00 - 18:00, "
+            "субота з 10:00 - 16:00.\n\n"
+            "Оберіть службу для отримання контактного телефону:"
+        ),
+        reply_markup=get_service_keyboard(),
+        context_key="main_menu",
     )
 
 
@@ -2049,19 +2239,32 @@ async def reply_places(message: Message):
     
     if not services:
         admin_tag = CFG.admin_tag or "адміністратору"
-        await message.answer(
-            "🏢 <b>Заклади в ЖК</b>\n\n"
-            "Поки що категорій немає.\n\n"
-            f"💬 Хочете додати категорію? Пишіть {admin_tag}",
+        await render_or_edit(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            text=(
+                "🏢 <b>Заклади в ЖК</b>\n\n"
+                "Поки що категорій немає.\n\n"
+                f"💬 Хочете додати категорію? Пишіть {admin_tag}"
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="« Меню", callback_data="menu")]]
+            ),
+            context_key="places_menu",
         )
         return
     
     admin_tag = CFG.admin_tag or "адміністратору"
-    await message.answer(
-        "🏢 <b>Заклади в ЖК</b>\n\n"
-        f"Оберіть категорію:\n\n"
-        f"💬 Хочете додати категорію? Пишіть {admin_tag}",
-        reply_markup=await get_places_keyboard()
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=(
+            "🏢 <b>Заклади в ЖК</b>\n\n"
+            f"Оберіть категорію:\n\n"
+            f"💬 Хочете додати категорію? Пишіть {admin_tag}"
+        ),
+        reply_markup=await get_places_keyboard(),
+        context_key="places_menu",
     )
 
 
@@ -3720,16 +3923,21 @@ async def reply_search(message: Message):
         pass
     
     search_waiting_users.add(message.chat.id)
-    await message.answer(
-        "🔍 <b>Пошук закладів</b>\n\n"
-        "Введіть назву, опис або ключове слово для пошуку.\n"
-        "Наприклад: <i>сирники</i>, <i>кава</i>, <i>аптека</i>\n\n"
-        "💡 Також можете шукати в будь-якому чаті через inline-режим:\n"
-        f"<code>@{CFG.bot_username} сирники</code>\n\n"
-        "⚡ Якщо напишете слово <b>світло</b>, бот покаже поточний статус електрики.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Скасувати", callback_data="menu")],
-        ])
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=(
+            "🔍 <b>Пошук закладів</b>\n\n"
+            "Введіть назву, опис або ключове слово для пошуку.\n"
+            "Наприклад: <i>сирники</i>, <i>кава</i>, <i>аптека</i>\n\n"
+            "💡 Також можете шукати в будь-якому чаті через inline-режим:\n"
+            f"<code>@{CFG.bot_username} сирники</code>\n\n"
+            "⚡ Якщо напишете слово <b>світло</b>, бот покаже поточний статус електрики."
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="❌ Скасувати", callback_data="menu")]]
+        ),
+        context_key="search_menu",
     )
 
 
@@ -3959,10 +4167,15 @@ async def handle_search_query(message: Message):
     query = message.text.strip()
     text = await do_search(query, user_id=message.chat.id)
     
-    await message.answer(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Новий пошук", callback_data="search_menu")],
-            [InlineKeyboardButton(text="« Меню", callback_data="menu")],
-        ])
+    await render_or_edit(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔍 Новий пошук", callback_data="search_menu")],
+                [InlineKeyboardButton(text="« Меню", callback_data="menu")],
+            ]
+        ),
+        context_key="search_menu",
     )

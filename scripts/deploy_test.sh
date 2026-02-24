@@ -268,6 +268,9 @@ if should_enable_testerbot "${TEST_DIR}/.env"; then
     --min-admin-clicked 18 \
     --min-resident-clicked 20 \
     --min-business-clicked 10
+  echo "Running testerbot full coverage runtime smoke test..."
+  python3 "${REPO_DIR}/scripts/smoke_testerbot_full_coverage_runtime.py" \
+    --coverage-file "${TEST_DIR}/logs/testerbot_full_coverage.json"
 else
   echo "Testerbot disabled (TESTERBOT_ENABLED!=1)."
 fi
@@ -295,6 +298,14 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_chat_bootstrap_policy.py"
 # Automated smoke: adbot chat-analysis tool must stay runnable in container and via script wrapper.
 echo "Running adbot chat-analysis tool policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_chat_analysis_tool_policy.py"
+
+# Automated smoke: adbot anonymized pattern-storage privacy policy.
+echo "Running adbot pattern privacy policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_pattern_privacy_policy.py"
+
+# Automated smoke: adbot anonymized pattern import + review report runtime.
+echo "Running adbot pattern import runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_pattern_import_runtime.py"
 
 # Automated smoke: adbot cooldown contract (per chat+intent + dedupe behavior).
 echo "Running adbot cooldown contract smoke test..."
@@ -398,6 +409,9 @@ python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_strict_policy.py"
 
 echo "Running testerbot callback contract policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_contract_policy.py"
+
+echo "Running testerbot full coverage policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_full_coverage_policy.py"
 
 # Automated smoke: every admin/business callback must be explicitly classified (include or exclude).
 echo "Running testerbot callback partition policy smoke test..."
@@ -820,6 +834,10 @@ docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_business_v
 echo "Running business single-message policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_single_message_policy.py"
 
+# Automated smoke: resident single-message interactive contract.
+echo "Running resident single-message interactive runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_single_message_interactive_runtime.py"
+
 # Automated smoke: transaction/network boundary policy for business layer.
 echo "Running business transaction boundary policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_transaction_boundary_policy.py"
@@ -855,6 +873,14 @@ python3 "${REPO_DIR}/scripts/smoke_business_subscription_maintenance_policy.py"
 # Automated smoke: resident places UI policy for BUSINESS_MODE on/off.
 echo "Running business mode UI policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
+
+# Automated smoke: when verified_count=0 resident UI must not expose monetization hints.
+echo "Running no-monetization-when-no-verified smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_no_monetization_when_no_verified.py"
+
+# Pre-prod style checklist snapshot (test DB): revision/hash + verified_count + stealth guard.
+echo "Running pre-prod resident UI checklist (test DB snapshot)..."
+python3 "${REPO_DIR}/scripts/preprod_resident_ui_checklist.py" --db-path "${TEST_DIR}/state.db"
 
 # Automated smoke: resident place-card CTA contract for BUSINESS_MODE OFF vs ON.
 echo "Running business mode place-card compare smoke test in test container..."

@@ -63,6 +63,32 @@ class _FakeForwarder:
         self.sent.append((int(chat_id), str(text)))
 
 
+class _FakeInternalPipeline:
+    def __init__(self, results: dict[str, tuple[str | None, str | None]]):
+        # query -> (text, reason)
+        self._results = results
+        self.calls: list[tuple[str, int, int | None]] = []
+
+    async def get_via_internal(
+        self,
+        *,
+        query: str,
+        fallback: str,
+        internal_chat_id: int,
+        reply_to_message_id: int | None = None,
+    ):
+        from adbot.pipeline import InternalReplyResult
+
+        self.calls.append((query, int(internal_chat_id), reply_to_message_id))
+        text, reason = self._results.get(query, (fallback, None))
+        return InternalReplyResult(
+            text=text,
+            reason=reason,
+            internal_message_id=900001,
+            via_bot_id=123456,
+        )
+
+
 @dataclass
 class _FakeMessage:
     text: str
@@ -113,6 +139,14 @@ async def _run() -> None:
     )
     provider = PowerbotInlineClient(fake_inline, "powerbot")
     pipeline = ResponsePipeline(provider, fallback_ms=500)
+    internal_pipeline = _FakeInternalPipeline(
+        {
+            "електрик": ("⚡ Електрик\n📞 067-576-22-42", None),
+            "сантехнік": ("🔧 Сантехнік\n📞 067-000-00-00", None),
+            "диспетчер ліфтів": ("🛗 Ліфти\n📞 2 контакти", None),
+            "перепустка авто": ("🚗 Перепустка авто\nОформлення через сервісну службу", None),
+        }
+    )
     cooldown = CooldownGuard(3600)
     forwarder = _FakeForwarder()
     listener = AdbotListener(
@@ -121,7 +155,9 @@ async def _run() -> None:
         matcher_min_confidence=120,
         cooldown=cooldown,
         pipeline=pipeline,
+        internal_pipeline=internal_pipeline,
         internal_chat_id=777001,
+        require_real_internal_reply=True,
     )
 
     evt_ok = _FakeEvent(
@@ -192,13 +228,18 @@ async def _run() -> None:
     # when adbot E2E suite runs repeatedly.
     e2e_forwarder = _FakeForwarder()
     e2e_pipeline = ResponsePipeline(provider, fallback_ms=500)
+    e2e_internal_pipeline = _FakeInternalPipeline(
+        {"електрик": ("⚡ Електрик\n📞 067-576-22-42", None)}
+    )
     e2e_listener = AdbotListener(
         matcher_min_len=10,
         matcher_max_len=280,
         matcher_min_confidence=120,
         cooldown=CooldownGuard(3600),
         pipeline=e2e_pipeline,
+        internal_pipeline=e2e_internal_pipeline,
         internal_chat_id=None,
+        require_real_internal_reply=False,
         allow_self_outgoing_e2e=True,
         self_user_id=5555,
         self_outgoing_prefix="[E2E]",
@@ -224,7 +265,7 @@ async def _run() -> None:
     _assert(handled_e2e_1 is True and handled_e2e_2 is True, "expected E2E-prefixed probes to bypass cooldown")
     _assert(len(evt_e2e_1.responses) == 1 and len(evt_e2e_2.responses) == 1, "expected both E2E probes to reply")
 
-    # Fallback flow: matched intent with empty inline result must return fallback text.
+    # Fallback-like flow via internal pipeline: when internal text exists, it is used.
     evt_fallback = _FakeEvent(
         text="Дайте номер сантехніка будь ласка",
         chat_id=-100124,
@@ -234,7 +275,7 @@ async def _run() -> None:
     handled_fb = await listener.process(evt_fallback, source_chat_id=evt_fallback.chat_id)
     _assert(handled_fb is True, "fallback flow should still be handled")
     _assert(len(evt_fallback.responses) == 1, "fallback should send one response")
-    _assert("сантехніка" in evt_fallback.responses[0][0].lower(), f"unexpected fallback response: {evt_fallback.responses}")
+    _assert("сантехнік" in evt_fallback.responses[0][0].lower(), f"unexpected fallback response: {evt_fallback.responses}")
 
     # Non-matching text should be ignored.
     evt_skip = _FakeEvent(

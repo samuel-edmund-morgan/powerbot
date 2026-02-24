@@ -62,6 +62,10 @@ def _base_env() -> dict[str, str]:
         "ADBOT_MAX_MESSAGE_LEN": "280",
         "ADBOT_MIN_CONFIDENCE": "120",
         "ADBOT_PIPELINE_TIMEOUT_MS": "5000",
+        "ADBOT_INTERNAL_REPLY_TIMEOUT_SEC": "8",
+        "ADBOT_INTERNAL_MIN_NONEMPTY_LEN": "10",
+        "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY": "1",
+        "ADBOT_INTERNAL_ALLOWED_RESIDENT_BOT_IDS": "12345 67890",
     }
 
 
@@ -84,6 +88,13 @@ def main() -> None:
         _assert(cfg.allow_self_outgoing_e2e is False, "self-outgoing e2e must be disabled by default")
         _assert(cfg.self_outgoing_prefix == "[E2E]", "unexpected default self-outgoing prefix")
         _assert(abs(cfg.self_outgoing_poll_sec - 1.5) < 1e-9, "unexpected default self-outgoing poll interval")
+        _assert(cfg.internal_reply_timeout_sec == 8, "unexpected internal reply timeout")
+        _assert(cfg.internal_min_nonempty_len == 10, "unexpected internal min nonempty len")
+        _assert(cfg.internal_require_real_bot_reply is True, "internal real reply must default true")
+        _assert(
+            cfg.internal_allowed_resident_bot_ids == (12345, 67890),
+            f"unexpected internal allowed bot ids: {cfg.internal_allowed_resident_bot_ids}",
+        )
 
     # Username should be sanitized from leading @.
     with _patched_env(**{**_base_env(), "ADBOT_TARGET_POWERBOT_USERNAME": "@TestNaButlerBot"}):

@@ -17,6 +17,7 @@ from pathlib import Path
 from logging_setup import configure_logging
 from testerbot.client import TesterbotConfig, build_telethon_client, ensure_enabled
 from testerbot.callbacks import filter_read_only_inventory, parse_callback_inventory
+from testerbot.input_contract import REQUIRED_INPUT_FLOWS
 from testerbot.reporting import (
     ScenarioReport,
     TesterbotRunReport,
@@ -46,6 +47,7 @@ class TesterContext:
     active_scenario_labels: dict[str, str] = field(default_factory=dict)
     seen_callback_scenarios: dict[str, dict[str, set[str]]] = field(default_factory=dict)
     clicked_callback_scenarios: dict[str, dict[str, set[str]]] = field(default_factory=dict)
+    input_flows: dict[str, set[str]] = field(default_factory=dict)
 
 
     async def wait_msg(self, conv):
@@ -99,6 +101,13 @@ class TesterContext:
             bot_name,
             value,
         )
+
+    def record_input_flow(self, bot_name: str, flow_key: str | None) -> None:
+        value = str(flow_key or "").strip()
+        if not value:
+            return
+        bucket = self.input_flows.setdefault(bot_name, set())
+        bucket.add(value)
 
 
 async def _wait_for_bot_update(conv, timeout_sec: int):
@@ -262,6 +271,59 @@ def _write_callback_coverage_report(path_value: str, payload: dict) -> None:
     )
 
 
+def _write_text_report(path_value: str, text: str) -> None:
+    path = Path(path_value).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _build_gap_report_md(payload: dict) -> str:
+    bots = payload.get("bots") or {}
+    lines: list[str] = [
+        "# Testerbot Gap Report",
+        "",
+        f"- generated_at: `{payload.get('generated_at', '')}`",
+        f"- strict_mode: `{payload.get('strict_mode', False)}`",
+        f"- callback_inventory_total: `{payload.get('callback_inventory_total', 0)}`",
+        f"- callback_uncovered_total: `{payload.get('callback_uncovered_total', 0)}`",
+        f"- input_flows_total: `{payload.get('input_flows_total', 0)}`",
+        f"- input_flows_missing_total: `{payload.get('input_flows_missing_total', 0)}`",
+        "",
+    ]
+
+    for bot_name in ("resident", "admin", "business"):
+        bot_payload = bots.get(bot_name) or {}
+        missing = bot_payload.get("missing") or {}
+        input_payload = bot_payload.get("input_flows") or {}
+        lines.append(f"## {bot_name}")
+        lines.append("")
+        lines.append(
+            f"- callbacks missing: eq={len(missing.get('eq') or [])}, "
+            f"startswith={len(missing.get('startswith') or [])}, "
+            f"regexp={len(missing.get('regexp') or [])}"
+        )
+        lines.append(
+            f"- input missing: {len(input_payload.get('missing') or [])} / "
+            f"{len(input_payload.get('required') or [])}"
+        )
+
+        eq_missing = [str(v) for v in (missing.get("eq") or [])]
+        sw_missing = [str(v) for v in (missing.get("startswith") or [])]
+        rg_missing = [str(v) for v in (missing.get("regexp") or [])]
+        input_missing = [str(v) for v in (input_payload.get("missing") or [])]
+        if eq_missing:
+            lines.append(f"- missing eq: `{', '.join(eq_missing)}`")
+        if sw_missing:
+            lines.append(f"- missing startswith: `{', '.join(sw_missing)}`")
+        if rg_missing:
+            lines.append(f"- missing regexp: `{', '.join(rg_missing)}`")
+        if input_missing:
+            lines.append(f"- missing input flows: `{', '.join(input_missing)}`")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 async def main() -> int:
     if not ensure_enabled():
         logger.info("TESTERBOT_ENABLED=0, skipping testerbot run.")
@@ -322,17 +384,37 @@ async def main() -> int:
 
             # Callback coverage telemetry (read-only subset for full-click roadmap).
             try:
-                strict = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "1")).strip() == "1"
-                coverage_path = str(
+                strict_default = str(os.getenv("TESTERBOT_CALLBACK_COVERAGE_STRICT", "1")).strip() == "1"
+                strict = str(
+                    os.getenv(
+                        "TESTERBOT_FULL_COVERAGE_STRICT",
+                        "1" if strict_default else "0",
+                    )
+                ).strip() == "1"
+                callback_coverage_path = str(
                     os.getenv(
                         "TESTERBOT_CALLBACK_COVERAGE_PATH",
                         "/data/logs/testerbot_callback_coverage.json",
+                    )
+                ).strip()
+                full_coverage_path = str(
+                    os.getenv(
+                        "TESTERBOT_FULL_COVERAGE_PATH",
+                        "/data/logs/testerbot_full_coverage.json",
+                    )
+                ).strip()
+                gap_report_path = str(
+                    os.getenv(
+                        "TESTERBOT_GAP_REPORT_PATH",
+                        "/data/logs/testerbot_gap_report.md",
                     )
                 ).strip()
                 repo_root = Path(__file__).resolve().parents[1]
                 inventory = filter_read_only_inventory(parse_callback_inventory(repo_root))
                 coverage_lines: list[str] = []
                 coverage_failed = False
+                callback_inventory_total = 0
+                callback_missing_total = 0
                 coverage_payload: dict[str, object] = {
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                     "strict_mode": strict,
@@ -353,6 +435,8 @@ async def main() -> int:
                         + len(missing.get("startswith", set()))
                         + len(missing.get("regexp", set()))
                     )
+                    callback_inventory_total += total_rules
+                    callback_missing_total += missing_total
                     coverage_lines.append(
                         f"{bot_name}: seen={len(seen)} clicked={len(clicked)} inventory={total_rules} missing={missing_total}"
                     )
@@ -400,17 +484,66 @@ async def main() -> int:
                             "missing": missing_total,
                         },
                     }
+
+                # Input-flow coverage (deterministic, read-only scope).
+                input_required_total = 0
+                input_missing_total = 0
+                for bot_name in ("resident", "admin", "business"):
+                    required = set(REQUIRED_INPUT_FLOWS.get(bot_name, set()))
+                    observed = set(ctx.input_flows.get(bot_name, set()))
+                    missing_input = sorted(required - observed)
+                    input_required_total += len(required)
+                    input_missing_total += len(missing_input)
+                    bot_payload = coverage_payload["bots"].get(bot_name, {})
+                    if isinstance(bot_payload, dict):
+                        bot_payload["input_flows"] = {
+                            "required": sorted(required),
+                            "observed": sorted(observed),
+                            "missing": missing_input,
+                            "coverage_percent": (
+                                100.0 if not required else round((len(required) - len(missing_input)) * 100.0 / len(required), 2)
+                            ),
+                        }
+                        coverage_payload["bots"][bot_name] = bot_payload
+                    if strict and missing_input:
+                        coverage_failed = True
+                        logger.error("input-flow coverage strict fail for %s: missing=%s", bot_name, missing_input)
+
+                callback_covered_total = max(callback_inventory_total - callback_missing_total, 0)
+                input_covered_total = max(input_required_total - input_missing_total, 0)
+                coverage_payload["callback_inventory_total"] = callback_inventory_total
+                coverage_payload["callback_covered_total"] = callback_covered_total
+                coverage_payload["callback_uncovered_total"] = callback_missing_total
+                coverage_payload["input_flows_total"] = input_required_total
+                coverage_payload["input_flows_covered"] = input_covered_total
+                coverage_payload["input_flows_missing_total"] = input_missing_total
+                coverage_payload["input_flows_coverage_percent"] = (
+                    100.0
+                    if input_required_total == 0
+                    else round(input_covered_total * 100.0 / input_required_total, 2)
+                )
+
                 logger.info("testerbot callback coverage (read-only): %s", " | ".join(coverage_lines))
-                if coverage_path:
-                    _write_callback_coverage_report(coverage_path, coverage_payload)
-                    logger.info("testerbot callback coverage report written: %s", coverage_path)
+                if callback_coverage_path:
+                    _write_callback_coverage_report(callback_coverage_path, coverage_payload)
+                    logger.info("testerbot callback coverage report written: %s", callback_coverage_path)
+                if full_coverage_path:
+                    _write_callback_coverage_report(full_coverage_path, coverage_payload)
+                    logger.info("testerbot full coverage report written: %s", full_coverage_path)
+                if gap_report_path:
+                    _write_text_report(gap_report_path, _build_gap_report_md(coverage_payload))
+                    logger.info("testerbot gap report written: %s", gap_report_path)
                 if strict and coverage_failed:
                     scenario_results.append(
                         ScenarioReport(
-                            name="callback_coverage_strict",
+                            name="testerbot_full_coverage_strict",
                             status="error",
                             duration_ms=0,
-                            message="missing callback coverage in strict mode",
+                            message=(
+                                "missing full coverage in strict mode: "
+                                f"callbacks_uncovered={callback_missing_total}, "
+                                f"input_missing={input_missing_total}"
+                            ),
                         )
                     )
                     report = mark_finished(report, scenario_results)

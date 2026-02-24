@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from adbot.cooldown import CooldownGuard
 from adbot.listener import AdbotListener
-from adbot.pipeline import PowerbotInlineClient, ResponsePipeline
+from adbot.pipeline import InternalReplyPipeline, PowerbotInlineClient, ResponsePipeline
 from adbot.audit import build_decision_payload, configure_decision_logging, log_decision
 from adbot_main_config import AdbotConfig, build_config
 
@@ -217,6 +217,14 @@ async def _run(config: AdbotConfig) -> None:
         answer_provider=powerbot_inline,
         fallback_ms=config.pipeline_timeout_ms,
     )
+    internal_pipeline = InternalReplyPipeline(
+        tg_client=client,
+        target_powerbot_username=config.target_powerbot_username,
+        timeout_sec=config.internal_reply_timeout_sec,
+        min_nonempty_len=config.internal_min_nonempty_len,
+        require_real=config.internal_require_real_bot_reply,
+        allowed_resident_bot_ids=config.internal_allowed_resident_bot_ids,
+    )
     cooldown = CooldownGuard(config.reply_cooldown_sec)
     listener = AdbotListener(
         matcher_min_len=config.min_message_len,
@@ -224,7 +232,9 @@ async def _run(config: AdbotConfig) -> None:
         matcher_min_confidence=config.min_confidence,
         cooldown=cooldown,
         pipeline=pipeline,
+        internal_pipeline=internal_pipeline,
         internal_chat_id=config.internal_chat_id,
+        require_real_internal_reply=config.internal_require_real_bot_reply,
         allow_self_outgoing_e2e=config.allow_self_outgoing_e2e,
         self_user_id=self_user_id,
         self_outgoing_prefix=config.self_outgoing_prefix,

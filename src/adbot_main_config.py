@@ -45,6 +45,10 @@ class AdbotConfig:
     max_message_len: int
     min_confidence: int
     pipeline_timeout_ms: int
+    internal_reply_timeout_sec: int
+    internal_min_nonempty_len: int
+    internal_require_real_bot_reply: bool
+    internal_allowed_resident_bot_ids: tuple[int, ...]
     allow_self_outgoing_e2e: bool
     self_outgoing_prefix: str
     self_outgoing_poll_sec: float
@@ -80,6 +84,8 @@ def build_config() -> AdbotConfig:
     if internal_chat_id is None and not test_mode:
         raise ValueError("ADBOT_INTERNAL_CHAT_ID is required (non-test mode)")
 
+    allowed_resident_bot_ids = parse_chat_ids(os.getenv("ADBOT_INTERNAL_ALLOWED_RESIDENT_BOT_IDS", ""))
+
     allow_self_outgoing_e2e = parse_bool(
         os.getenv("ADBOT_ALLOW_SELF_OUTGOING_E2E", "0"),
         default=False,
@@ -105,6 +111,13 @@ def build_config() -> AdbotConfig:
         max_message_len=int(os.getenv("ADBOT_MAX_MESSAGE_LEN", "280")),
         min_confidence=int(os.getenv("ADBOT_MIN_CONFIDENCE", "120")),
         pipeline_timeout_ms=int(os.getenv("ADBOT_PIPELINE_TIMEOUT_MS", "5000")),
+        internal_reply_timeout_sec=int(os.getenv("ADBOT_INTERNAL_REPLY_TIMEOUT_SEC", "8")),
+        internal_min_nonempty_len=int(os.getenv("ADBOT_INTERNAL_MIN_NONEMPTY_LEN", "10")),
+        internal_require_real_bot_reply=parse_bool(
+            os.getenv("ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY", "1"),
+            default=True,
+        ),
+        internal_allowed_resident_bot_ids=allowed_resident_bot_ids,
         allow_self_outgoing_e2e=allow_self_outgoing_e2e,
         self_outgoing_prefix=self_outgoing_prefix,
         self_outgoing_poll_sec=max(self_outgoing_poll_sec, 0.5),

@@ -921,6 +921,43 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_business_claim_token_status_expires ON business_claim_tokens (status, expires_at)"
         )
+
+        # === ADBOT: анонімні сигнатури запитів з чатів (без raw-text/user-id) ===
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS adbot_pattern_signatures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intent TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                weight REAL NOT NULL DEFAULT 1.0,
+                lang TEXT DEFAULT NULL,
+                confidence_floor INTEGER NOT NULL DEFAULT 0,
+                source_chat_tag TEXT DEFAULT NULL,
+                stats_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                UNIQUE(intent, pattern, source_chat_tag)
+            )"""
+        )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS adbot_pattern_stats_daily (
+                date TEXT NOT NULL,
+                chat_tag TEXT NOT NULL,
+                intent TEXT NOT NULL,
+                matched INTEGER NOT NULL DEFAULT 0,
+                unmatched INTEGER NOT NULL DEFAULT 0,
+                fp_flags INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (date, chat_tag, intent)
+            )"""
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_adbot_pattern_signatures_intent ON adbot_pattern_signatures (intent)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_adbot_pattern_signatures_chat_tag ON adbot_pattern_signatures (source_chat_tag)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_adbot_pattern_stats_daily_chat_intent ON adbot_pattern_stats_daily (chat_tag, intent, date)"
+        )
         
         # buildings.has_sensor / buildings.sensor_count мають бути похідними
         # від активних записів sensors, а не "ручним" статичним станом.
@@ -951,6 +988,91 @@ async def db_get(k: str) -> str | None:
         async with db.execute("SELECT v FROM kv WHERE k=?", (k,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
+
+
+async def upsert_adbot_pattern_signature(
+    *,
+    intent: str,
+    pattern: str,
+    weight: float = 1.0,
+    lang: str | None = None,
+    confidence_floor: int = 0,
+    source_chat_tag: str | None = None,
+    stats_count_increment: int = 1,
+) -> None:
+    """Upsert anonymized adbot signature row (no raw message/user identifiers)."""
+    now_iso = datetime.now().isoformat()
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                """
+                INSERT INTO adbot_pattern_signatures(
+                    intent, pattern, weight, lang, confidence_floor, source_chat_tag, stats_count, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(intent, pattern, source_chat_tag)
+                DO UPDATE SET
+                    weight=excluded.weight,
+                    lang=excluded.lang,
+                    confidence_floor=excluded.confidence_floor,
+                    stats_count=adbot_pattern_signatures.stats_count + excluded.stats_count,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    str(intent or "").strip(),
+                    str(pattern or "").strip(),
+                    float(weight),
+                    str(lang or "").strip() or None,
+                    int(confidence_floor or 0),
+                    str(source_chat_tag or "").strip() or None,
+                    max(int(stats_count_increment or 0), 0),
+                    now_iso,
+                ),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
+
+
+async def upsert_adbot_pattern_stats_daily(
+    *,
+    date: str,
+    chat_tag: str,
+    intent: str,
+    matched_inc: int = 0,
+    unmatched_inc: int = 0,
+    fp_flags_inc: int = 0,
+) -> None:
+    """Upsert anonymized daily stats for adbot pattern mining."""
+    now_iso = datetime.now().isoformat()
+
+    async def _op() -> None:
+        async with open_db() as db:
+            await db.execute(
+                """
+                INSERT INTO adbot_pattern_stats_daily(
+                    date, chat_tag, intent, matched, unmatched, fp_flags, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(date, chat_tag, intent)
+                DO UPDATE SET
+                    matched=adbot_pattern_stats_daily.matched + excluded.matched,
+                    unmatched=adbot_pattern_stats_daily.unmatched + excluded.unmatched,
+                    fp_flags=adbot_pattern_stats_daily.fp_flags + excluded.fp_flags,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    str(date or "").strip(),
+                    str(chat_tag or "").strip(),
+                    str(intent or "").strip(),
+                    max(int(matched_inc or 0), 0),
+                    max(int(unmatched_inc or 0), 0),
+                    max(int(fp_flags_inc or 0), 0),
+                    now_iso,
+                ),
+            )
+            await db.commit()
+
+    await _with_sqlite_retry(_op)
 
 
 def sponsored_offers_enabled_key(chat_id: int) -> str:

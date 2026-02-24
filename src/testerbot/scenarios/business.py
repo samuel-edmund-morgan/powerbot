@@ -170,6 +170,7 @@ async def run(ctx) -> ScenarioResult:
         last_error: Exception | None = None
         timeout_sec = max(ctx.cfg.timeout_sec * 2, 45)
         for attempt in range(2):
+            ctx.record_input_flow("business", "command:/start")
             sent = await ctx.client.send_message(ctx.cfg.targets.businessbot, "/start")
             sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
             try:
@@ -360,6 +361,7 @@ async def run(ctx) -> ScenarioResult:
             last_error: Exception | None = None
             for command in commands:
                 try:
+                    ctx.record_input_flow("business", f"command:{command}")
                     sent = await ctx.client.send_message(target, command)
                     sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
                     return await wait_bot_message(

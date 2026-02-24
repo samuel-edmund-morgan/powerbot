@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 
 from adbot.audit import build_audit_payload, build_decision_payload, log_decision, log_match
 from adbot.cooldown import CooldownGuard
 from adbot.matcher import analyze_intent_match
-from adbot.pipeline import ResponsePipeline
+from adbot.pipeline import InternalReplyPipeline, ResponsePipeline
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CorrelationRecord:
+    source_chat_id: int
+    source_message_id: int
+    internal_forwarded_message_id: int | None
+    internal_reply_message_id: int | None
+    created_at_ts: float
 
 
 class AdbotListener:
@@ -22,7 +32,9 @@ class AdbotListener:
         matcher_min_confidence: int,
         cooldown: CooldownGuard,
         pipeline: ResponsePipeline,
+        internal_pipeline: InternalReplyPipeline,
         internal_chat_id: int | None = None,
+        require_real_internal_reply: bool = True,
         allow_self_outgoing_e2e: bool = False,
         self_user_id: int | None = None,
         self_outgoing_prefix: str = "[E2E]",
@@ -32,7 +44,9 @@ class AdbotListener:
         self._matcher_min_confidence = matcher_min_confidence
         self._cooldown = cooldown
         self._pipeline = pipeline
+        self._internal_pipeline = internal_pipeline
         self._internal_chat_id = internal_chat_id
+        self._require_real_internal_reply = bool(require_real_internal_reply)
         self._allow_self_outgoing_e2e = bool(allow_self_outgoing_e2e)
         self._self_user_id = int(self_user_id) if self_user_id else None
         self._self_outgoing_prefix = str(self_outgoing_prefix or "[E2E]").strip() or "[E2E]"
@@ -40,6 +54,9 @@ class AdbotListener:
         # (e.g. NewMessage + self-outgoing poll fallback race).
         self._seen_message_events: dict[str, float] = {}
         self._seen_message_ttl_sec = 900
+        # Correlation map for source -> internal flow.
+        self._correlations: dict[str, CorrelationRecord] = {}
+        self._correlation_ttl_sec = 6 * 3600
 
     def _dedupe_event_key(self, chat_id: int, message_id: int) -> str:
         return f"{int(chat_id)}:{int(message_id)}"
@@ -61,6 +78,29 @@ class AdbotListener:
                 k: v for k, v in self._seen_message_events.items() if v >= cutoff
             }
         return False
+
+    def _add_correlation(
+        self,
+        *,
+        source_chat_id: int,
+        source_message_id: int,
+        internal_forwarded_message_id: int | None,
+        internal_reply_message_id: int | None,
+    ) -> None:
+        key = self._dedupe_event_key(source_chat_id, source_message_id)
+        now = time.time()
+        self._correlations[key] = CorrelationRecord(
+            source_chat_id=int(source_chat_id),
+            source_message_id=int(source_message_id),
+            internal_forwarded_message_id=internal_forwarded_message_id,
+            internal_reply_message_id=internal_reply_message_id,
+            created_at_ts=now,
+        )
+        if len(self._correlations) > 10_000:
+            cutoff = now - self._correlation_ttl_sec
+            self._correlations = {
+                k: v for k, v in self._correlations.items() if v.created_at_ts >= cutoff
+            }
 
     async def process(self, event, *, source_chat_id: int) -> bool:
         """
@@ -175,21 +215,76 @@ class AdbotListener:
             )
             return False
 
-        response_text = await self._pipeline.answer(intent.inline_query, intent.fallback_reply)
+        # Keep old pipeline call for telemetry parity / fallback mode support.
+        _ = await self._pipeline.answer(intent.inline_query, intent.fallback_reply)
         payload = build_audit_payload(
             chat_id=source_chat_id,
             user_id=int(sender_id),
             intent_code=intent.code,
             message_text=text,
         )
+        forwarded_message_id: int | None = None
         # Forward audit log (non-blocking on failures).
         if self._internal_chat_id:
-            await log_match(
+            audit_meta = await log_match(
                 payload,
                 internal_chat_id=self._internal_chat_id,
                 forwarder=event.client,
                 original_message=message_obj,
             )
+            if isinstance(audit_meta, dict):
+                raw = audit_meta.get("forwarded_message_id")
+                try:
+                    forwarded_message_id = int(raw) if raw is not None else None
+                except Exception:
+                    forwarded_message_id = None
+
+        internal_result = await self._internal_pipeline.get_via_internal(
+            query=intent.inline_query,
+            fallback=intent.fallback_reply,
+            internal_chat_id=int(self._internal_chat_id or 0),
+            reply_to_message_id=forwarded_message_id,
+        )
+        if internal_result.reason:
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=int(sender_id),
+                    reason=str(internal_result.reason),
+                    message_text=text,
+                    intent_code=intent.code,
+                    meta={
+                        "match_reason": analysis.reason,
+                        "best_confidence": analysis.best_confidence,
+                        "internal_chat_id": int(self._internal_chat_id or 0),
+                        "forwarded_message_id": forwarded_message_id or 0,
+                        "internal_reply_message_id": int(internal_result.internal_message_id or 0),
+                        "require_real": self._require_real_internal_reply,
+                        "via_bot_id": int(internal_result.via_bot_id or 0),
+                    },
+                )
+            )
+            return False
+
+        response_text = str(internal_result.text or "").strip()
+        if not response_text:
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=int(sender_id),
+                    reason="resident_no_reply",
+                    message_text=text,
+                    intent_code=intent.code,
+                    meta={
+                        "match_reason": analysis.reason,
+                        "best_confidence": analysis.best_confidence,
+                        "internal_chat_id": int(self._internal_chat_id or 0),
+                        "forwarded_message_id": forwarded_message_id or 0,
+                        "internal_reply_message_id": int(internal_result.internal_message_id or 0),
+                    },
+                )
+            )
+            return False
 
         try:
             await event.respond(response_text, reply_to=message_obj.id)
@@ -205,10 +300,20 @@ class AdbotListener:
                     meta={
                         "match_reason": analysis.reason,
                         "best_confidence": analysis.best_confidence,
+                        "internal_chat_id": int(self._internal_chat_id or 0),
+                        "forwarded_message_id": forwarded_message_id or 0,
+                        "internal_reply_message_id": int(internal_result.internal_message_id or 0),
                     },
                 )
             )
             return False
+
+        self._add_correlation(
+            source_chat_id=source_chat_id,
+            source_message_id=int(message_id or 0),
+            internal_forwarded_message_id=forwarded_message_id,
+            internal_reply_message_id=int(internal_result.internal_message_id or 0),
+        )
         log_decision(
             build_decision_payload(
                 chat_id=source_chat_id,
@@ -219,6 +324,9 @@ class AdbotListener:
                 meta={
                     "match_reason": analysis.reason,
                     "best_confidence": analysis.best_confidence,
+                    "internal_chat_id": int(self._internal_chat_id or 0),
+                    "forwarded_message_id": forwarded_message_id or 0,
+                    "internal_reply_message_id": int(internal_result.internal_message_id or 0),
                 },
             )
         )

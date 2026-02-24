@@ -143,13 +143,22 @@ async def log_match(
     internal_chat_id: int | None = None,
     forwarder,
     original_message=None,
-) -> None:
+) -> dict[str, int] | None:
     logger.info("adbot match: %s", json.dumps(payload, ensure_ascii=False))
+    forwarded_message_id: int | None = None
+    summary_message_id: int | None = None
     if internal_chat_id and forwarder:
         try:
             # Forward the original user message first to keep audit context native.
             if original_message is not None and hasattr(forwarder, "forward_messages"):
-                await forwarder.forward_messages(internal_chat_id, original_message)
+                forwarded = await forwarder.forward_messages(internal_chat_id, original_message)
+                try:
+                    if isinstance(forwarded, list) and forwarded:
+                        forwarded_message_id = int(getattr(forwarded[0], "id", 0) or 0) or None
+                    else:
+                        forwarded_message_id = int(getattr(forwarded, "id", 0) or 0) or None
+                except Exception:
+                    forwarded_message_id = None
 
             text = (
                 "🔎 <b>adbot match</b>\n"
@@ -158,6 +167,17 @@ async def log_match(
                 f"intent: <code>{payload.get('intent')}</code>\n"
                 f"message: {payload.get('message')}"
             )
-            await forwarder.send_message(internal_chat_id, text)
+            summary = await forwarder.send_message(internal_chat_id, text)
+            try:
+                summary_message_id = int(getattr(summary, "id", 0) or 0) or None
+            except Exception:
+                summary_message_id = None
         except Exception:
             logger.exception("failed to forward audit message to internal chat")
+            return None
+    if forwarded_message_id is None and summary_message_id is None:
+        return None
+    return {
+        "forwarded_message_id": int(forwarded_message_id or 0),
+        "summary_message_id": int(summary_message_id or 0),
+    }

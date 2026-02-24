@@ -534,6 +534,7 @@ async def run(ctx) -> ScenarioResult:
         current, _ = await ensure_main_menu(current)
         return current, text
 
+    ctx.record_input_flow("admin", "command:/start")
     sent_start = await ctx.client.send_message(target, "/start")
     sent_start_utc = _to_utc(getattr(sent_start, "date", None)) or scenario_started_utc
     try:
