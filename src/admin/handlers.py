@@ -1302,25 +1302,6 @@ async def _render_business_subscriptions(
         lines.append("")
 
     kb_rows: list[list[InlineKeyboardButton]] = []
-    # Admin fallback: allow marking successful payments as refunded (revokes entitlements).
-    for row in rows:
-        try:
-            event_id = int(row.get("id") or 0)
-        except Exception:
-            continue
-        if event_id <= 0:
-            continue
-        event_type = str(row.get("event_type") or "").strip().lower()
-        provider = str(row.get("provider") or "").strip().lower()
-        if event_type == "payment_succeeded" and provider == "telegram_stars":
-            kb_rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"↩️ Refund #{event_id}",
-                        callback_data=f"{CB_BIZ_PAY_REFUND_PREFIX}{event_id}|{safe_page}",
-                    )
-                ]
-            )
     if total_pages > 1:
         nav: list[InlineKeyboardButton] = []
         if safe_page > 0:
@@ -1535,6 +1516,25 @@ async def _render_business_payments(
         lines.append("")
 
     kb_rows: list[list[InlineKeyboardButton]] = []
+    # Admin fallback: allow marking successful Telegram Stars payments as refunded.
+    for row in rows:
+        try:
+            event_id = int(row.get("id") or 0)
+        except Exception:
+            continue
+        if event_id <= 0:
+            continue
+        event_type = str(row.get("event_type") or "").strip().lower()
+        provider = str(row.get("provider") or "").strip().lower()
+        if event_type == "payment_succeeded" and provider == "telegram_stars":
+            kb_rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"↩️ Refund #{event_id}",
+                        callback_data=f"{CB_BIZ_PAY_REFUND_PREFIX}{event_id}|{safe_page}",
+                    )
+                ]
+            )
     if total_pages > 1:
         nav: list[InlineKeyboardButton] = []
         if safe_page > 0:
