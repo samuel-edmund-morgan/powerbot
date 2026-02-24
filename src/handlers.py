@@ -58,6 +58,37 @@ def _parse_int_env(name: str) -> int | None:
 ADBOT_INTERNAL_CHAT_ID = _parse_int_env("ADBOT_INTERNAL_CHAT_ID")
 
 
+def _chat_id_variants(chat_id: int) -> set[int]:
+    """
+    Return known equivalent chat-id representations between Bot API and Telethon:
+    - Bot API supergroup/channel: -100XXXXXXXXXX
+    - Telethon peer id:           -XXXXXXXXXX
+    """
+    value = int(chat_id or 0)
+    variants: set[int] = {value}
+    if value == 0:
+        return variants
+
+    abs_value = abs(value)
+    raw = str(abs_value)
+
+    # Bot API -> Telethon
+    if value < 0 and raw.startswith("100") and len(raw) > 3:
+        try:
+            variants.add(-int(raw[3:]))
+        except Exception:
+            pass
+        return variants
+
+    # Telethon -> Bot API
+    if value < 0:
+        try:
+            variants.add(-int(f"100{abs_value}"))
+        except Exception:
+            pass
+    return variants
+
+
 def _resident_verified_tier_title(raw_tier: str | None) -> str:
     normalized = str(raw_tier or "").strip().lower()
     return RESIDENT_VERIFIED_TIER_TITLES.get(normalized, normalized.upper())
@@ -4145,7 +4176,7 @@ async def handle_adbot_internal_command(message: Message):
     is_adbot_internal_chat = (
         ADBOT_INTERNAL_CHAT_ID is not None
         and chat_id != 0
-        and chat_id == int(ADBOT_INTERNAL_CHAT_ID)
+        and int(ADBOT_INTERNAL_CHAT_ID) in _chat_id_variants(chat_id)
     )
     if not is_admin and not is_adbot_internal_chat:
         return
