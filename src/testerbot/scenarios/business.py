@@ -70,6 +70,16 @@ async def run(ctx) -> ScenarioResult:
     target = ctx.cfg.targets.businessbot
     bot_id = await ctx.client.get_peer_id(target)
     scenario_started_utc = datetime.now(timezone.utc)
+    click_min_interval_sec = 1.2
+    last_click_monotonic = 0.0
+
+    async def throttle_click() -> None:
+        nonlocal last_click_monotonic
+        now = time.monotonic()
+        wait_for = click_min_interval_sec - (now - last_click_monotonic)
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        last_click_monotonic = time.monotonic()
     me = await ctx.client.get_me()
     actor_tg_user_id = int(getattr(me, "id", 0) or 0)
 
@@ -212,6 +222,7 @@ async def run(ctx) -> ScenarioResult:
                     extract_text(current),
                     _to_utc(getattr(current, "edit_date", None)),
                 )
+                await throttle_click()
                 await current.click(i, j)
                 try:
                     msg, text = await wait_bot_message(
@@ -246,6 +257,7 @@ async def run(ctx) -> ScenarioResult:
                         continue
                     try:
                         ctx.record_clicked_callback("business", callback_at(current, row_idx, btn_idx))
+                        await throttle_click()
                         await current.click(row_idx, btn_idx)
                     except (MessageIdInvalidError, DataInvalidError):
                         current, _ = await wait_bot_message(
@@ -293,6 +305,7 @@ async def run(ctx) -> ScenarioResult:
                     extract_text(current),
                     _to_utc(getattr(current, "edit_date", None)),
                 )
+                await throttle_click()
                 await current.click(i, j)
                 msg, text = await wait_bot_message(
                     predicate=predicate,

@@ -94,6 +94,16 @@ async def run(ctx) -> ScenarioResult:
     bot_id = await ctx.client.get_peer_id(target)
     scenario_started_utc = datetime.now(timezone.utc)
     now_iso = datetime.now(timezone.utc).isoformat()
+    click_min_interval_sec = 1.2
+    last_click_monotonic = 0.0
+
+    async def throttle_click() -> None:
+        nonlocal last_click_monotonic
+        now = time.monotonic()
+        wait_for = click_min_interval_sec - (now - last_click_monotonic)
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        last_click_monotonic = time.monotonic()
 
     def _load_places_with_active_claim_token() -> set[int]:
         db_path = str(getattr(ctx.cfg, "db_path", "") or "").strip()
@@ -193,6 +203,7 @@ async def run(ctx) -> ScenarioResult:
             )
             try:
                 ctx.record_clicked_callback("admin", callback_at(current, i, j))
+                await throttle_click()
                 await current.click(i, j)
             except MessageIdInvalidError:
                 current, _ = await wait_bot_message(
@@ -227,6 +238,7 @@ async def run(ctx) -> ScenarioResult:
 
             try:
                 ctx.record_clicked_callback("admin", callback_at(current, i, j))
+                await throttle_click()
                 await current.click(i, j)
             except MessageIdInvalidError:
                 current, _ = await wait_bot_message(
@@ -260,6 +272,7 @@ async def run(ctx) -> ScenarioResult:
                     )
                     try:
                         ctx.record_clicked_callback("admin", callback_at(current, row_idx, btn_idx))
+                        await throttle_click()
                         await current.click(row_idx, btn_idx)
                     except MessageIdInvalidError:
                         current, _ = await wait_bot_message(
@@ -342,6 +355,7 @@ async def run(ctx) -> ScenarioResult:
             )
             try:
                 ctx.record_clicked_callback("admin", callback_data)
+                await throttle_click()
                 await current.click(i, j)
             except MessageIdInvalidError:
                 current, _ = await wait_bot_message(

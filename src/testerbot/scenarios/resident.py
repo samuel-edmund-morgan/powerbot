@@ -126,6 +126,16 @@ async def run(ctx) -> ScenarioResult:
     target = ctx.cfg.targets.powerbot
     bot_id = await ctx.client.get_peer_id(target)
     scenario_started_utc = datetime.now(timezone.utc)
+    click_min_interval_sec = 1.2
+    last_click_monotonic = 0.0
+
+    async def throttle_click() -> None:
+        nonlocal last_click_monotonic
+        now = time.monotonic()
+        wait_for = click_min_interval_sec - (now - last_click_monotonic)
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        last_click_monotonic = time.monotonic()
 
     async def wait_bot_message(*, predicate, ctx_name: str, previous_snapshot: tuple[int | None, str, datetime | None] | None = None):
         deadline = time.monotonic() + ctx.cfg.timeout_sec
@@ -210,6 +220,7 @@ async def run(ctx) -> ScenarioResult:
             )
             try:
                 ctx.record_clicked_callback("resident", callback_at(current, i, j))
+                await throttle_click()
                 await current.click(i, j)
             except (MessageIdInvalidError, DataInvalidError):
                 current, _ = await wait_bot_message(
@@ -248,6 +259,7 @@ async def run(ctx) -> ScenarioResult:
                     )
                     try:
                         ctx.record_clicked_callback("resident", callback_at(current, row_idx, btn_idx))
+                        await throttle_click()
                         await current.click(row_idx, btn_idx)
                     except (MessageIdInvalidError, DataInvalidError):
                         current, _ = await wait_bot_message(
