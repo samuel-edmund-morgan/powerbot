@@ -64,8 +64,16 @@ async def _click_by_label(message, needle: str) -> bool:
         for j, btn in enumerate(row):
             label = str(getattr(btn, "text", "") or "")
             if needle.casefold() in label.casefold():
-                await message.click(i, j)
-                return True
+                try:
+                    await message.click(i, j)
+                    return True
+                except Exception as exc:
+                    # Callback payload may become stale during rapid single-message edits.
+                    # Treat these errors as a soft miss and let caller recover with /start.
+                    if exc.__class__.__name__ in {"DataInvalidError", "MessageIdInvalidError"}:
+                        await asyncio.sleep(0.25)
+                        return False
+                    raise
     return False
 
 
