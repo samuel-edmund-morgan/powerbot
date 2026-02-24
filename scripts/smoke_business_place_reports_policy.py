@@ -11,6 +11,7 @@ Policy:
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 def _read(path: Path) -> str:
@@ -29,6 +30,12 @@ def _must_contain_any(text: str, tokens: list[str], *, file_label: str, errors: 
         return
     joined = " OR ".join(f"`{token}`" for token in tokens)
     errors.append(f"{file_label}: missing {label} token ({joined})")
+
+
+def _must_match_regex(text: str, pattern: str, *, file_label: str, errors: list[str], label: str) -> None:
+    if re.search(pattern, text, flags=re.DOTALL):
+        return
+    errors.append(f"{file_label}: missing {label} (regex `{pattern}`)")
 
 
 def main() -> None:
@@ -65,6 +72,13 @@ def main() -> None:
         file_label="src/handlers.py",
         errors=errors,
         label="generic text fallback",
+    )
+    _must_match_regex(
+        handlers_text,
+        r"@router\.message\(\s*StateFilter\(None\),\s*F\.text(?:\s*&\s*~F\.text\.startswith\(\"/\"\))?,\s*lambda message: message\.chat\.id not in search_waiting_users,?\s*\)",
+        file_label="src/handlers.py",
+        errors=errors,
+        label="search-safe generic text fallback decorator",
     )
 
     # Worker flow.

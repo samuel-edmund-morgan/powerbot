@@ -11,6 +11,7 @@ Policy:
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 def _assert(cond: bool, msg: str) -> None:
@@ -23,14 +24,12 @@ def main() -> None:
     handlers_file = repo_root / "src" / "handlers.py"
     text = handlers_file.read_text(encoding="utf-8")
 
-    fallback_tokens = (
-        "@router.message(StateFilter(None), F.text, lambda message: message.chat.id not in search_waiting_users)",
-        "@router.message(StateFilter(None), F.text & ~F.text.startswith(\"/\"), lambda message: message.chat.id not in search_waiting_users)",
+    fallback_match = re.search(
+        r"@router\.message\(\s*StateFilter\(None\),\s*F\.text(?:\s*&\s*~F\.text\.startswith\(\"/\"\))?,\s*lambda message: message\.chat\.id not in search_waiting_users,?\s*\)",
+        text,
+        flags=re.DOTALL,
     )
-    _assert(
-        any(token in text for token in fallback_tokens),
-        "Generic text fallback must skip users in search_waiting_users.",
-    )
+    _assert(bool(fallback_match), "Generic text fallback must skip users in search_waiting_users.")
     _assert(
         "async def handle_search_query(message: Message):" in text,
         "Search query handler is missing.",
