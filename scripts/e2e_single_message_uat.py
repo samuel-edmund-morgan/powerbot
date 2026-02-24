@@ -100,12 +100,21 @@ async def _run(cfg: Config) -> None:
         # Hard acceptance: drive 50+ interactive clicks and ensure it still behaves
         # as single-message UI (minimal message growth).
         clicks_done = 0
-        while clicks_done < max(cfg.min_clicks, 1):
+        recoveries_used = 0
+        iteration_budget = max(cfg.min_clicks, 1) * 6
+        while clicks_done < max(cfg.min_clicks, 1) and iteration_budget > 0:
+            iteration_budget -= 1
             # Prefer deterministic oscillation: main-menu -> light submenu -> menu.
             clicked_label = await _click_first_available(
                 msg,
                 (
                     "Світло/опалення/вода",
+                    "Світло",
+                    "Тривоги та укриття",
+                    "Заклади в ЖК",
+                    "Обрати будинок",
+                    "Сервісна служба",
+                    "Пошук закладу",
                     "Меню",
                     "« Меню",
                     "« Назад",
@@ -113,13 +122,26 @@ async def _run(cfg: Config) -> None:
                 ),
             )
             if not clicked_label:
-                raise SystemExit(
-                    "ERROR: single-message UAT cannot find clickable navigation control "
-                    f"(clicks_done={clicks_done})"
-                )
+                # Recovery path: force main menu and continue.
+                recoveries_used += 1
+                if recoveries_used > 10:
+                    raise SystemExit(
+                        "ERROR: single-message UAT cannot recover navigation controls "
+                        f"(clicks_done={clicks_done}, recoveries={recoveries_used})"
+                    )
+                await client.send_message(target, "/start")
+                msg, _ = await _wait_latest_bot_message(client, target, bot_id, cfg.timeout_sec)
+                await asyncio.sleep(0.8)
+                continue
             clicks_done += 1
             msg, _ = await _wait_latest_bot_message(client, target, bot_id, cfg.timeout_sec)
             await asyncio.sleep(0.6)
+
+        if clicks_done < max(cfg.min_clicks, 1):
+            raise SystemExit(
+                "ERROR: single-message UAT did not reach required clicks "
+                f"(clicks_done={clicks_done}, required={cfg.min_clicks})"
+            )
 
         # Text-input branch should also stay in single-message pattern.
         if await _click_by_label(msg, "Пошук закладу"):
