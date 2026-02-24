@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -48,6 +49,58 @@ async def _pick_service_id(repository: BusinessRepository) -> int:
     if services:
         return int(services[0]["id"])
     return await repository.get_or_create_service_id("__smoke_mainbot_verified__")
+
+
+async def _apply_success_payment(
+    *,
+    service: BusinessCabinetService,
+    tg_user_id: int,
+    place_id: int,
+    tier: str,
+) -> dict:
+    intent = await service.create_payment_intent(
+        tg_user_id=int(tg_user_id),
+        place_id=int(place_id),
+        tier=str(tier),
+        source="plans",
+    )
+    provider = str(intent.get("provider") or "")
+    if provider == "mock":
+        ext_payment_id = str(intent.get("external_payment_id") or "")
+        _assert(ext_payment_id != "", "mock intent must have external_payment_id")
+        return await service.apply_mock_payment_result(
+            tg_user_id=int(tg_user_id),
+            place_id=int(place_id),
+            tier=str(tier),
+            external_payment_id=ext_payment_id,
+            result="success",
+        )
+    if provider == "telegram_stars":
+        invoice_payload = str(intent.get("invoice_payload") or "")
+        _assert(invoice_payload != "", "telegram stars intent must have invoice_payload")
+        amount_stars = int(intent.get("amount_stars") or service.get_plan_price_stars(str(tier)))
+        _assert(amount_stars > 0, "telegram stars intent must have positive amount")
+        await service.validate_telegram_stars_pre_checkout(
+            tg_user_id=int(tg_user_id),
+            invoice_payload=invoice_payload,
+            total_amount=int(amount_stars),
+            currency="XTR",
+            pre_checkout_query_id=f"smoke-mainbot-pre-{int(time.time() * 1000)}",
+        )
+        expiration_unix = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
+        return await service.apply_telegram_stars_successful_payment(
+            tg_user_id=int(tg_user_id),
+            invoice_payload=invoice_payload,
+            total_amount=int(amount_stars),
+            currency="XTR",
+            subscription_expiration_date=expiration_unix,
+            is_recurring=True,
+            is_first_recurring=True,
+            telegram_payment_charge_id=f"tg_smoke_mainbot_{int(time.time() * 1000)}_{int(place_id)}",
+            provider_payment_charge_id=f"provider_smoke_mainbot_{int(place_id)}",
+            raw_payload_json=None,
+        )
+    raise AssertionError(f"unsupported payment provider in smoke: {provider}")
 
 
 async def main() -> None:
@@ -88,24 +141,13 @@ async def main() -> None:
         _assert(int(place_after_approve.get("is_published") or 0) == 1, "approved place must be published")
         _assert(int(place_after_approve.get("is_verified") or 0) == 0, "place must not be verified before payment")
 
-        # Mock payment success for approved owner.
-        intent = await service.create_mock_payment_intent(
+        outcome = await _apply_success_payment(
+            service=service,
             tg_user_id=int(owner_tg_user_id),
             place_id=int(place_id),
             tier="light",
-            source="plans",
         )
-        ext_payment_id = str(intent.get("external_payment_id") or "")
-        _assert(ext_payment_id, "mock intent must have external_payment_id")
-
-        outcome = await service.apply_mock_payment_result(
-            tg_user_id=int(owner_tg_user_id),
-            place_id=int(place_id),
-            tier="light",
-            external_payment_id=ext_payment_id,
-            result="success",
-        )
-        _assert(bool(outcome.get("applied")), "mock success payment must be applied")
+        _assert(bool(outcome.get("applied")), "success payment must be applied")
 
         place_after_payment = await repository.get_place(int(place_id))
         _assert(place_after_payment is not None, "paid place must exist")
