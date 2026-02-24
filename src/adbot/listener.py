@@ -89,7 +89,7 @@ class AdbotListener:
                 return len(value) > 0
             return True
 
-        has_forward_context = internal_chat_id > 0 and int(internal_reply_message_id or 0) > 0
+        has_forward_context = int(internal_chat_id or 0) != 0 and int(internal_reply_message_id or 0) > 0
         if self._require_source_forwarded and not has_forward_context:
             return False, "forward_required"
         if has_forward_context:
