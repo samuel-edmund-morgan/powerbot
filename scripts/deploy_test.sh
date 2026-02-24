@@ -379,6 +379,10 @@ python3 "${REPO_DIR}/scripts/smoke_testerbot_idempotence_policy.py"
 echo "Running testerbot callback-coverage strict policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_strict_policy.py"
 
+# Automated smoke: testerbot admin business callbacks contract (payments/audit/export).
+echo "Running testerbot admin business callbacks policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_admin_business_callbacks_policy.py"
+
 # Automated smoke: testerbot admin claim-token open path must stay read-only-safe.
 echo "Running testerbot admin claim-token readonly policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_admin_claim_tokens_readonly_policy.py"
