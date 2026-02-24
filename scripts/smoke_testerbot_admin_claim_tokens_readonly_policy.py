@@ -12,6 +12,15 @@ Goal:
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from testerbot.callback_contract import READ_ONLY_INCLUDE_SW
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -20,11 +29,9 @@ def _assert(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    admin_scenario = (repo_root / "src" / "testerbot" / "scenarios" / "admin.py").read_text(
+    admin_scenario = (REPO_ROOT / "src" / "testerbot" / "scenarios" / "admin.py").read_text(
         encoding="utf-8"
     )
-    callbacks_py = (repo_root / "src" / "testerbot" / "callbacks.py").read_text(encoding="utf-8")
 
     required_tokens = (
         "_load_places_with_active_claim_token",
@@ -46,10 +53,9 @@ def main() -> None:
             f"admin testerbot claim-token readonly policy token is missing: {token}",
         )
 
-    _assert(
-        '"abiz_tokv_o|"' in callbacks_py,
-        "callbacks read-only whitelist must include admin prefix `abiz_tokv_o|`",
-    )
+    admin_sw = READ_ONLY_INCLUDE_SW.get("admin") or set()
+    _assert(admin_sw, "failed to read READ_ONLY_INCLUDE_SW['admin'] from callback_contract.py")
+    _assert("abiz_tokv_o|" in admin_sw, "callbacks read-only whitelist must include admin prefix `abiz_tokv_o|`")
 
     print("OK: testerbot admin claim-token readonly policy smoke passed.")
 
