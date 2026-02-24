@@ -255,6 +255,10 @@ if should_enable_testerbot "${TEST_DIR}/.env"; then
     exit 1
   fi
   docker compose -f docker-compose.yml -f docker-compose.testerbot.yml --profile testerbot run --rm testerbot
+  echo "Running testerbot callback coverage runtime smoke test..."
+  python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_runtime.py" \
+    --coverage-file "${TEST_DIR}/logs/testerbot_callback_coverage.json" \
+    --min-admin-clicked 18
 else
   echo "Testerbot disabled (TESTERBOT_ENABLED!=1)."
 fi
