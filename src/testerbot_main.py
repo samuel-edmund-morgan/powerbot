@@ -43,17 +43,50 @@ class TesterContext:
     timeout_sec: int
     seen_callbacks: dict[str, set[str]] = field(default_factory=dict)
     clicked_callbacks: dict[str, set[str]] = field(default_factory=dict)
+    active_scenario_labels: dict[str, str] = field(default_factory=dict)
+    seen_callback_scenarios: dict[str, dict[str, set[str]]] = field(default_factory=dict)
+    clicked_callback_scenarios: dict[str, dict[str, set[str]]] = field(default_factory=dict)
 
 
     async def wait_msg(self, conv):
         # Wait for edited or new message response.
         return await _wait_for_bot_update(conv, self.timeout_sec)
 
+    def set_active_scenario(self, bot_name: str, scenario_label: str) -> None:
+        value = str(scenario_label or "").strip()
+        if not value:
+            return
+        self.active_scenario_labels[bot_name] = value
+
+    def clear_active_scenario(self, bot_name: str) -> None:
+        self.active_scenario_labels.pop(bot_name, None)
+
+    def _record_callback_scenario(
+        self,
+        mapping: dict[str, dict[str, set[str]]],
+        bot_name: str,
+        callback_data: str,
+    ) -> None:
+        scenario_label = self.active_scenario_labels.get(bot_name)
+        if not scenario_label:
+            return
+        bot_map = mapping.setdefault(bot_name, {})
+        bot_map.setdefault(callback_data, set()).add(scenario_label)
+
     def record_seen_callbacks(self, bot_name: str, callbacks: set[str]) -> None:
         if not callbacks:
             return
         bucket = self.seen_callbacks.setdefault(bot_name, set())
-        bucket.update(callbacks)
+        for value in callbacks:
+            callback_data = str(value or "").strip()
+            if not callback_data:
+                continue
+            bucket.add(callback_data)
+            self._record_callback_scenario(
+                self.seen_callback_scenarios,
+                bot_name,
+                callback_data,
+            )
 
     def record_clicked_callback(self, bot_name: str, callback_data: str | None) -> None:
         value = str(callback_data or "").strip()
@@ -61,6 +94,11 @@ class TesterContext:
             return
         bucket = self.clicked_callbacks.setdefault(bot_name, set())
         bucket.add(value)
+        self._record_callback_scenario(
+            self.clicked_callback_scenarios,
+            bot_name,
+            value,
+        )
 
 
 async def _wait_for_bot_update(conv, timeout_sec: int):
@@ -87,22 +125,26 @@ async def _wait_for_bot_update(conv, timeout_sec: int):
     raise TimeoutError("No bot update received within timeout")
 
 
-async def _run_scenarios(ctx: TesterContext) -> list[ScenarioReport]:
+async def _run_scenarios(ctx: TesterContext) -> tuple[list[ScenarioReport], dict[str, str]]:
     scenarios = [
-        resident_scenario,
-        admin_scenario,
-        business_scenario,
+        ("resident", resident_scenario),
+        ("admin", admin_scenario),
+        ("business", business_scenario),
     ]
 
     results: list[ScenarioReport] = []
-    for scenario in scenarios:
+    scenario_names_by_bot: dict[str, str] = {}
+    for bot_name, scenario in scenarios:
         name = scenario.__name__.replace("_", " ").strip()
+        ctx.set_active_scenario(bot_name, name)
         try:
             result = await scenario.run(ctx)
             scenario_name = result.name  # type: ignore[attr-defined]
             status = result.status  # type: ignore[attr-defined]
             duration_ms = result.duration_ms  # type: ignore[attr-defined]
             message = result.message  # type: ignore[attr-defined]
+            scenario_names_by_bot[bot_name] = str(scenario_name)
+            ctx.set_active_scenario(bot_name, str(scenario_name))
 
             results.append(
                 ScenarioReport(
@@ -118,6 +160,7 @@ async def _run_scenarios(ctx: TesterContext) -> list[ScenarioReport]:
         except Exception as exc:  # pragma: no cover
             logger.exception("scenario %s failed", name)
             reason = f"{name}: {exc.__class__.__name__}: {exc}"
+            scenario_names_by_bot.setdefault(bot_name, name)
             results.append(
                 ScenarioReport(
                     name=name,
@@ -127,7 +170,9 @@ async def _run_scenarios(ctx: TesterContext) -> list[ScenarioReport]:
                 )
             )
             break
-    return results
+        finally:
+            ctx.clear_active_scenario(bot_name)
+    return results, scenario_names_by_bot
 
 
 def _snapshot_table_counts(db_path: str, tables: tuple[str, ...]) -> dict[str, int]:
@@ -254,7 +299,7 @@ async def main() -> int:
 
             ctx = TesterContext(client=client, cfg=cfg, timeout_sec=cfg.timeout_sec)
             baseline_counts = _snapshot_table_counts(cfg.db_path, cfg.idempotence_tables)
-            scenario_results = await _run_scenarios(ctx)
+            scenario_results, scenario_names_by_bot = await _run_scenarios(ctx)
             if baseline_counts:
                 final_counts = _snapshot_table_counts(cfg.db_path, cfg.idempotence_tables)
                 idempotence_error = _idempotence_error(baseline_counts, final_counts)
@@ -322,9 +367,22 @@ async def main() -> int:
                     if strict and missing_total > 0:
                         coverage_failed = True
                         logger.error("callback coverage strict fail for %s", bot_name)
+                    clicked_map = ctx.clicked_callback_scenarios.get(bot_name, {})
+                    seen_map = ctx.seen_callback_scenarios.get(bot_name, {})
                     coverage_payload["bots"][bot_name] = {
+                        "scenario_name": scenario_names_by_bot.get(bot_name, ""),
                         "seen": sorted(seen),
                         "clicked": sorted(clicked),
+                        "callback_to_scenarios": {
+                            "seen": {
+                                key: sorted(values)
+                                for key, values in sorted(seen_map.items())
+                            },
+                            "clicked": {
+                                key: sorted(values)
+                                for key, values in sorted(clicked_map.items())
+                            },
+                        },
                         "inventory": {
                             "eq": sorted(inv.get("eq", set())),
                             "startswith": sorted(inv.get("startswith", set())),

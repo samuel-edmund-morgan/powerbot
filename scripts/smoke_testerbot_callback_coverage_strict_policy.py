@@ -6,6 +6,7 @@ testerbot callback coverage strict-gate must stay ON by default in CI.
 Checks:
 - src/testerbot_main.py uses default "1" for TESTERBOT_CALLBACK_COVERAGE_STRICT
 - src/testerbot_main.py writes callback coverage map to TESTERBOT_CALLBACK_COVERAGE_PATH
+- src/testerbot_main.py includes callback->scenario telemetry (`scenario_name`, `callback_to_scenarios`)
 - .env.example defines TESTERBOT_CALLBACK_COVERAGE_STRICT=1
 - .env.example defines TESTERBOT_CALLBACK_COVERAGE_PATH
 """
@@ -39,6 +40,14 @@ def main() -> None:
     _assert(
         "_write_callback_coverage_report" in testerbot_main,
         "testerbot_main.py must persist callback coverage report via _write_callback_coverage_report",
+    )
+    _assert(
+        '"scenario_name": scenario_names_by_bot.get(bot_name, "")' in testerbot_main,
+        "testerbot_main.py must include per-bot `scenario_name` in coverage payload",
+    )
+    _assert(
+        '"callback_to_scenarios": {' in testerbot_main,
+        "testerbot_main.py must include `callback_to_scenarios` in coverage payload",
     )
 
     match = re.search(

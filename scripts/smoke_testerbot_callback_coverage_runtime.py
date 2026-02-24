@@ -34,6 +34,17 @@ def _has_prefix(values: list[str], prefix: str) -> bool:
     return any(str(v).startswith(prefix) for v in values)
 
 
+def _map_has_prefix_with_scenario(
+    mapping: dict[str, list[str]],
+    prefix: str,
+    scenario_name: str,
+) -> bool:
+    for key, scenarios in mapping.items():
+        if str(key).startswith(prefix) and scenario_name in [str(v) for v in (scenarios or [])]:
+            return True
+    return False
+
+
 def _validate_bot_no_missing(bot_payload: dict, bot_name: str) -> tuple[list[str], list[str], int]:
     missing = bot_payload.get("missing") or {}
     missing_total = (
@@ -103,6 +114,11 @@ def main() -> None:
         "admin": admin_clicked,
         "business": business_clicked,
     }
+    payload_by_bot = {
+        "resident": resident,
+        "admin": admin,
+        "business": business,
+    }
     seen_by_bot = {
         "resident": resident_seen,
         "admin": admin_seen,
@@ -115,16 +131,44 @@ def main() -> None:
     }
 
     for bot_name, req in RUNTIME_COVERAGE_REQUIREMENTS.items():
+        bot_payload = payload_by_bot[bot_name]
         clicked = clicked_by_bot[bot_name]
         seen = seen_by_bot[bot_name]
+        scenario_name = str(bot_payload.get("scenario_name") or "").strip()
+        _assert(scenario_name, f"{bot_name} coverage must include non-empty `scenario_name`")
+
+        callback_map = bot_payload.get("callback_to_scenarios") or {}
+        _assert(isinstance(callback_map, dict), f"{bot_name} callback map must be object")
+        clicked_map = callback_map.get("clicked") or {}
+        seen_map = callback_map.get("seen") or {}
+        _assert(isinstance(clicked_map, dict), f"{bot_name} callback map.clicked must be object")
+        _assert(isinstance(seen_map, dict), f"{bot_name} callback map.seen must be object")
+        _assert(clicked_map or seen_map, f"{bot_name} callback map must not be empty")
+
         for value in sorted(req.get("clicked_eq") or set()):
             _assert(value in clicked, f"{bot_name} clicked must include `{value}`")
+            _assert(
+                value in clicked_map and scenario_name in [str(v) for v in (clicked_map.get(value) or [])],
+                f"{bot_name} callback map.clicked must include `{value}` mapped to scenario `{scenario_name}`",
+            )
         for value in sorted(req.get("clicked_prefix") or set()):
             _assert(_has_prefix(clicked, value), f"{bot_name} clicked must include `{value}*`")
+            _assert(
+                _map_has_prefix_with_scenario(clicked_map, value, scenario_name),
+                f"{bot_name} callback map.clicked must include `{value}*` mapped to scenario `{scenario_name}`",
+            )
         for value in sorted(req.get("seen_eq") or set()):
             _assert(value in seen, f"{bot_name} seen must include `{value}`")
+            _assert(
+                value in seen_map and scenario_name in [str(v) for v in (seen_map.get(value) or [])],
+                f"{bot_name} callback map.seen must include `{value}` mapped to scenario `{scenario_name}`",
+            )
         for value in sorted(req.get("seen_prefix") or set()):
             _assert(_has_prefix(seen, value), f"{bot_name} seen must include `{value}*`")
+            _assert(
+                _map_has_prefix_with_scenario(seen_map, value, scenario_name),
+                f"{bot_name} callback map.seen must include `{value}*` mapped to scenario `{scenario_name}`",
+            )
 
         floor = min_clicked_by_bot[bot_name]
         clicked_count = clicked_counts_by_bot[bot_name]
