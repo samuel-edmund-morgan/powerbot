@@ -153,6 +153,37 @@ async def run(ctx) -> ScenarioResult:
             return msg, extract_text(msg)
         raise AssertionError(f"{ctx_name}: no incoming bot message found")
 
+    def _is_business_home_message(message, text: str) -> bool:
+        return ("Бізнес-кабінет" in text) and _has_button(message, "Мої бізнеси")
+
+    async def ensure_business_home(*, ctx_name: str):
+        last_error: Exception | None = None
+        timeout_sec = max(ctx.cfg.timeout_sec * 2, 45)
+        for attempt in range(2):
+            sent = await ctx.client.send_message(ctx.cfg.targets.businessbot, "/start")
+            sent_utc = _to_utc(getattr(sent, "date", None)) or scenario_started_utc
+            try:
+                return await wait_bot_message(
+                    predicate=lambda m, t: _is_business_home_message(m, t),
+                    ctx_name=ctx_name,
+                    min_activity_utc=sent_utc,
+                    previous_snapshot=None,
+                )
+            except AssertionError as exc:
+                last_error = exc
+                try:
+                    latest_msg, latest_text = await latest_bot_message(f"{ctx_name} fallback latest")
+                except AssertionError:
+                    latest_msg, latest_text = None, ""
+                if latest_msg is not None and _is_business_home_message(latest_msg, latest_text):
+                    return latest_msg, latest_text
+                if attempt < 1:
+                    continue
+                break
+        if last_error is not None:
+            raise AssertionError(f"{ctx_name}: unable to reach business home via /start") from last_error
+        raise AssertionError(f"{ctx_name}: unable to reach business home via /start")
+
     async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
         current = message
         for _ in range(4):
@@ -551,11 +582,7 @@ async def run(ctx) -> ScenarioResult:
             current, _ = await open_first_owner_card(current, ctx_name=f"business owner action {needle} recover")
         return current
 
-    await ctx.client.send_message(ctx.cfg.targets.businessbot, "/start")
-    msg, text = await wait_bot_message(
-        predicate=lambda m, t: ("Бізнес-кабінет" in t) and _has_button(m, "Мої бізнеси"),
-        ctx_name="business /start",
-    )
+    msg, text = await ensure_business_home(ctx_name="business /start")
     assert_contains(text, ("Бізнес-кабінет",), ctx="business /start")
     assert_contains(text, ("Оберіть дію:",), ctx="business /start action prompt")
 
