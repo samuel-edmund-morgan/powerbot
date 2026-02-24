@@ -105,11 +105,36 @@ INTENTS: tuple[Intent, ...] = (
     Intent(
         code=INTENT_LIGHT_STATUS,
         title="Світло",
-        keywords=("світло", "світла", "чи", "вимк", "відсутн", "зникло", "поточн"),
-        strong_keywords=("світло", "світла", "вимк", "відсутн", "зникло", "поточн"),
+        keywords=(
+            "світло",
+            "світла",
+            "свет",
+            "є світло",
+            "есть свет",
+            "нема світла",
+            "нет света",
+            "чи",
+            "вимк",
+            "відсутн",
+            "зникло",
+            "поточн",
+        ),
+        strong_keywords=(
+            "світло",
+            "світла",
+            "свет",
+            "есть свет",
+            "нет света",
+            "вимк",
+            "відсутн",
+            "зникло",
+            "поточн",
+        ),
         inline_query=INLINE_QUERY_BY_INTENT[INTENT_LIGHT_STATUS],
         fallback_reply="💡 Щоб подивитись точний статус, відкрийте резидент-бота.",
-        required_signals=2,
+        # Allow short one-signal questions ("Є світло?", "Есть свет?").
+        # Long noisy messages are filtered by confidence and non-question guard in matcher.
+        required_signals=1,
     ),
 )
 
