@@ -87,6 +87,15 @@ def _is_stats_screen(text: str) -> bool:
     )
 
 
+def _is_building_picker_screen(message, text: str) -> bool:
+    if _text_has_any(text, "оберіть свій будинок", "оберіть ваш будинок"):
+        return True
+    # Fallback: explicit building buttons are visible, plus menu/back control.
+    if _has_button(message, "Ньюкасл") and (_has_button(message, "Меню") or _has_button(message, "Назад")):
+        return True
+    return False
+
+
 def _to_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
@@ -326,19 +335,25 @@ async def run(ctx) -> ScenarioResult:
         ctx_name="resident bootstrap main menu",
         allow_start_fallback=False,
     )
-    if not _has_button(msg, "Обрати будинок"):
-        msg, text = await wait_bot_message(
-            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Обрати будинок"),
-            ctx_name="resident bootstrap buildings button",
-        )
-    assert_contains(text, ("Головне меню",), ctx="resident bootstrap")
-
-    msg, text = await click_and_wait(
-        msg,
-        "Обрати будинок",
-        predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
-        ctx_name="resident buildings",
-    )
+    if _is_building_picker_screen(msg, text):
+        pass
+    else:
+        if not _has_button(msg, "Обрати будинок"):
+            msg, text = await wait_bot_message(
+                predicate=lambda m, t: (
+                    (("Головне меню" in t) and _has_button(m, "Обрати будинок"))
+                    or _is_building_picker_screen(m, t)
+                ),
+                ctx_name="resident bootstrap buildings button",
+            )
+        if not _is_building_picker_screen(msg, text):
+            assert_contains(text, ("Головне меню",), ctx="resident bootstrap")
+            msg, text = await click_and_wait(
+                msg,
+                "Обрати будинок",
+                predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
+                ctx_name="resident buildings",
+            )
     assert_contains_any(
         text,
         ("Оберіть ваш будинок", "Оберіть свій будинок"),
