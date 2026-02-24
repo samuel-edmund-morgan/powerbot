@@ -79,6 +79,7 @@ class AdbotConfig:
     internal_reply_timeout_sec: int
     internal_min_nonempty_len: int
     internal_require_real_bot_reply: bool
+    source_require_forwarded: bool
     source_allow_text_fallback_on_forward_failure: bool
     internal_allowed_resident_bot_ids: tuple[int, ...]
     allow_self_outgoing_e2e: bool
@@ -151,6 +152,10 @@ def build_config() -> AdbotConfig:
         internal_require_real_bot_reply=parse_bool(
             os.getenv("ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY", "1"),
             default=True,
+        ),
+        source_require_forwarded=parse_bool(
+            os.getenv("ADBOT_SOURCE_REQUIRE_FORWARDED", "0"),
+            default=False,
         ),
         source_allow_text_fallback_on_forward_failure=parse_bool(
             os.getenv("ADBOT_SOURCE_ALLOW_TEXT_FALLBACK", "0"),

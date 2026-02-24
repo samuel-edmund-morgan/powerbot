@@ -69,6 +69,26 @@ class _FakeInternalPipeline:
         )
 
 
+class _FakeInternalPipelineNoId(_FakeInternalPipeline):
+    async def get_via_internal(
+        self,
+        *,
+        query: str,
+        fallback: str,
+        internal_chat_id: int,
+        reply_to_message_id: int | None = None,
+    ):
+        from adbot.pipeline import InternalReplyResult
+
+        self.calls.append((query, int(internal_chat_id), reply_to_message_id))
+        return InternalReplyResult(
+            text="⚡ Електрик\n📞 067-576-22-42",
+            reason=None,
+            internal_message_id=None,
+            via_bot_id=123456,
+        )
+
+
 class _ForwardOkClient:
     def __init__(self):
         self.forwarded_to_internal: list[tuple[int, int]] = []
@@ -180,6 +200,40 @@ async def _run() -> None:
             any(item.get("reason") == "forward_required" for item in decision_log),
             f"expected forward_required decision log, got: {decision_log}",
         )
+
+        # Strict forwarded mode: if internal pipeline has no message_id context,
+        # listener must NOT degrade to text-reply.
+        strict_noid_pipeline = _FakeInternalPipelineNoId()
+        strict_noid_listener = AdbotListener(
+            matcher_min_len=10,
+            matcher_max_len=280,
+            matcher_min_confidence=120,
+            cooldown=CooldownGuard(0),
+            pipeline=pipeline,
+            internal_pipeline=strict_noid_pipeline,
+            internal_chat_id=777001,
+            require_real_internal_reply=True,
+            require_source_forwarded=True,
+            allow_text_fallback_on_forward_failure=True,
+        )
+        strict_noid_event = _FakeEvent(
+            client=_ForwardOkClient(),
+            text="Дайте номер електрика, будь ласка",
+            chat_id=-100202,
+            msg_id=701,
+        )
+        handled_strict_noid = await strict_noid_listener.process(
+            strict_noid_event,
+            source_chat_id=strict_noid_event.chat_id,
+        )
+        _assert(
+            handled_strict_noid is False,
+            "strict forwarded mode must reject delivery without internal reply message id",
+        )
+        _assert(
+            not strict_noid_event.responses,
+            "strict forwarded mode must not emit text reply when internal message id is absent",
+        )
     finally:
         listener_module.log_decision = original_log_decision
 
@@ -191,4 +245,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

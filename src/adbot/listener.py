@@ -37,6 +37,7 @@ class AdbotListener:
         internal_chat_id: int | None = None,
         light_chat_bindings: dict[int, tuple[int, int]] | None = None,
         require_real_internal_reply: bool = True,
+        require_source_forwarded: bool = False,
         allow_text_fallback_on_forward_failure: bool = False,
         allow_self_outgoing_e2e: bool = False,
         self_user_id: int | None = None,
@@ -51,6 +52,7 @@ class AdbotListener:
         self._internal_chat_id = internal_chat_id
         self._light_chat_bindings = dict(light_chat_bindings or {})
         self._require_real_internal_reply = bool(require_real_internal_reply)
+        self._require_source_forwarded = bool(require_source_forwarded)
         self._allow_text_fallback_on_forward_failure = bool(allow_text_fallback_on_forward_failure)
         self._allow_self_outgoing_e2e = bool(allow_self_outgoing_e2e)
         self._self_user_id = int(self_user_id) if self_user_id else None
@@ -87,6 +89,8 @@ class AdbotListener:
             return True
 
         has_forward_context = internal_chat_id > 0 and int(internal_reply_message_id or 0) > 0
+        if self._require_source_forwarded and not has_forward_context:
+            return False, "forward_required"
         if has_forward_context:
             reply_msg_id = int(internal_reply_message_id or 0)
             try:
@@ -120,7 +124,7 @@ class AdbotListener:
                     internal_chat_id,
                     reply_msg_id,
                 )
-            if not self._allow_text_fallback_on_forward_failure:
+            if self._require_source_forwarded or not self._allow_text_fallback_on_forward_failure:
                 return False, "forward_required"
 
         try:

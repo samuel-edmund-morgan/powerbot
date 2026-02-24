@@ -236,6 +236,7 @@ async def _run(config: AdbotConfig) -> None:
         internal_chat_id=config.internal_chat_id,
         light_chat_bindings=config.light_chat_bindings,
         require_real_internal_reply=config.internal_require_real_bot_reply,
+        require_source_forwarded=config.source_require_forwarded,
         allow_text_fallback_on_forward_failure=config.source_allow_text_fallback_on_forward_failure,
         allow_self_outgoing_e2e=config.allow_self_outgoing_e2e,
         self_user_id=self_user_id,

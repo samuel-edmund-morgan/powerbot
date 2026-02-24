@@ -65,6 +65,7 @@ def _base_env() -> dict[str, str]:
         "ADBOT_INTERNAL_REPLY_TIMEOUT_SEC": "8",
         "ADBOT_INTERNAL_MIN_NONEMPTY_LEN": "10",
         "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY": "1",
+        "ADBOT_SOURCE_REQUIRE_FORWARDED": "0",
         "ADBOT_SOURCE_ALLOW_TEXT_FALLBACK": "0",
         "ADBOT_INTERNAL_ALLOWED_RESIDENT_BOT_IDS": "12345 67890",
         "ADBOT_LIGHT_CHAT_BINDINGS": "-100111:1:2,-100222:13:1",
@@ -98,6 +99,10 @@ def main() -> None:
         _assert(cfg.internal_reply_timeout_sec == 8, "unexpected internal reply timeout")
         _assert(cfg.internal_min_nonempty_len == 10, "unexpected internal min nonempty len")
         _assert(cfg.internal_require_real_bot_reply is True, "internal real reply must default true")
+        _assert(
+            cfg.source_require_forwarded is False,
+            "source strict-forward mode should be disabled by default",
+        )
         _assert(
             cfg.source_allow_text_fallback_on_forward_failure is False,
             "source text fallback should be disabled by default",
