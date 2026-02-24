@@ -5,6 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from testerbot.callback_contract import (
+    READ_ONLY_INCLUDE_EQ,
+    READ_ONLY_INCLUDE_RG,
+    READ_ONLY_INCLUDE_SW,
+)
+
 
 def extract_callback_data(button) -> str | None:
     """Best-effort extraction of callback_data from Telethon button wrappers."""
@@ -141,49 +147,6 @@ _READ_ONLY_EXCLUDE_RG: dict[str, set[str]] = {
 }
 
 
-_READ_ONLY_INCLUDE_EQ: dict[str, set[str]] = {
-    "admin": {
-        "admin_refresh",
-        "admin_subs",
-        "admin_sensors",
-        "admin_jobs",
-        "admin_jobs_export",
-        "admin_cancel",
-        "admin_business",
-        "abiz_mod",
-        "abiz_reports",
-        "abiz_support",
-        "abiz_tok_menu",
-        "abiz_tok_list",
-        "abiz_subs",
-        "abiz_payments",
-        "abiz_audit",
-    },
-    "business": {
-        "bmenu:add",
-        "bmenu:attach",
-        "bmenu:cancel",
-        "bmenu:home",
-        "bmenu:mine",
-        "bmenu:plans",
-    },
-}
-
-
-_READ_ONLY_INCLUDE_SW: dict[str, set[str]] = {
-    "admin": {
-        "admin_jobs_page|",
-        "admin_sensors_page|",
-        "admin_sensor|",
-        "abiz_tokv_s|",
-        "abiz_tokv_o|",
-    },
-    "business": {
-        "bp_menu:",
-    },
-}
-
-
 def parse_callback_inventory(repo_root: Path) -> dict[str, dict[str, set[str]]]:
     """Extract callback matcher patterns from resident/admin/business handlers."""
     mapping = {
@@ -234,12 +197,15 @@ def filter_read_only_inventory(
         sw -= _READ_ONLY_EXCLUDE_SW.get(bot_name, set())
         rg -= _READ_ONLY_EXCLUDE_RG.get(bot_name, set())
 
-        include_eq = _READ_ONLY_INCLUDE_EQ.get(bot_name)
-        include_sw = _READ_ONLY_INCLUDE_SW.get(bot_name)
+        include_eq = READ_ONLY_INCLUDE_EQ.get(bot_name)
+        include_sw = READ_ONLY_INCLUDE_SW.get(bot_name)
+        include_rg = READ_ONLY_INCLUDE_RG.get(bot_name)
         if include_eq is not None:
             eq &= include_eq
         if include_sw is not None:
             sw &= include_sw
+        if include_rg is not None:
+            rg &= include_rg
 
         filtered[bot_name] = {"eq": eq, "startswith": sw, "regexp": rg}
     return filtered

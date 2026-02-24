@@ -385,6 +385,9 @@ python3 "${REPO_DIR}/scripts/smoke_testerbot_idempotence_policy.py"
 echo "Running testerbot callback-coverage strict policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_strict_policy.py"
 
+echo "Running testerbot callback contract policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_contract_policy.py"
+
 # Automated smoke: testerbot admin business callbacks contract (payments/audit/export).
 echo "Running testerbot admin business callbacks policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_testerbot_admin_business_callbacks_policy.py"

@@ -14,6 +14,15 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from testerbot.callback_contract import RUNTIME_COVERAGE_REQUIREMENTS
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -23,6 +32,21 @@ def _assert(condition: bool, message: str) -> None:
 
 def _has_prefix(values: list[str], prefix: str) -> bool:
     return any(str(v).startswith(prefix) for v in values)
+
+
+def _validate_bot_no_missing(bot_payload: dict, bot_name: str) -> tuple[list[str], list[str], int]:
+    missing = bot_payload.get("missing") or {}
+    missing_total = (
+        len(missing.get("eq") or [])
+        + len(missing.get("startswith") or [])
+        + len(missing.get("regexp") or [])
+    )
+    _assert(missing_total == 0, f"{bot_name} coverage has missing callbacks: {missing}")
+    clicked_local = [str(v) for v in (bot_payload.get("clicked") or [])]
+    seen_local = [str(v) for v in (bot_payload.get("seen") or [])]
+    stats_local = bot_payload.get("stats") or {}
+    clicked_count_local = int(stats_local.get("clicked") or len(clicked_local))
+    return clicked_local, seen_local, clicked_count_local
 
 
 def main() -> None:
@@ -35,19 +59,19 @@ def main() -> None:
     parser.add_argument(
         "--min-admin-clicked",
         type=int,
-        default=18,
+        default=int(RUNTIME_COVERAGE_REQUIREMENTS["admin"]["min_clicked"]),
         help="Minimum admin clicked callbacks threshold",
     )
     parser.add_argument(
         "--min-resident-clicked",
         type=int,
-        default=20,
+        default=int(RUNTIME_COVERAGE_REQUIREMENTS["resident"]["min_clicked"]),
         help="Minimum resident clicked callbacks threshold",
     )
     parser.add_argument(
         "--min-business-clicked",
         type=int,
-        default=10,
+        default=int(RUNTIME_COVERAGE_REQUIREMENTS["business"]["min_clicked"]),
         help="Minimum business clicked callbacks threshold",
     )
     args = parser.parse_args()
@@ -58,20 +82,6 @@ def main() -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     bots = payload.get("bots") or {}
     _assert(isinstance(bots, dict), "coverage report: `bots` must be object")
-    def _validate_bot_no_missing(bot_payload: dict, bot_name: str) -> tuple[list[str], list[str], int]:
-        missing = bot_payload.get("missing") or {}
-        missing_total = (
-            len(missing.get("eq") or [])
-            + len(missing.get("startswith") or [])
-            + len(missing.get("regexp") or [])
-        )
-        _assert(missing_total == 0, f"{bot_name} coverage has missing callbacks: {missing}")
-        clicked_local = [str(v) for v in (bot_payload.get("clicked") or [])]
-        seen_local = [str(v) for v in (bot_payload.get("seen") or [])]
-        stats_local = bot_payload.get("stats") or {}
-        clicked_count_local = int(stats_local.get("clicked") or len(clicked_local))
-        return clicked_local, seen_local, clicked_count_local
-
     resident = bots.get("resident") or {}
     admin = bots.get("admin") or {}
     business = bots.get("business") or {}
@@ -83,46 +93,45 @@ def main() -> None:
     admin_clicked, admin_seen, admin_clicked_count = _validate_bot_no_missing(admin, "admin")
     business_clicked, business_seen, business_clicked_count = _validate_bot_no_missing(business, "business")
 
-    # Resident baseline
-    _assert("search_menu" in resident_clicked, "resident clicked must include `search_menu`")
-    _assert("places_menu" in resident_clicked, "resident clicked must include `places_menu`")
-    _assert("utilities_menu" in resident_clicked, "resident clicked must include `utilities_menu`")
-    _assert("notifications_menu" in resident_clicked, "resident clicked must include `notifications_menu`")
-    _assert(_has_prefix(resident_clicked, "places_cat_"), "resident clicked must include `places_cat_*`")
-    _assert(_has_prefix(resident_clicked, "place_"), "resident clicked must include `place_*`")
-    _assert(_has_prefix(resident_seen, "plrep_"), "resident seen must include `plrep_*`")
-    _assert(
-        resident_clicked_count >= int(args.min_resident_clicked),
-        f"resident clicked callbacks below floor: {resident_clicked_count} < {args.min_resident_clicked}",
-    )
+    min_clicked_by_bot = {
+        "resident": int(args.min_resident_clicked),
+        "admin": int(args.min_admin_clicked),
+        "business": int(args.min_business_clicked),
+    }
+    clicked_by_bot = {
+        "resident": resident_clicked,
+        "admin": admin_clicked,
+        "business": business_clicked,
+    }
+    seen_by_bot = {
+        "resident": resident_seen,
+        "admin": admin_seen,
+        "business": business_seen,
+    }
+    clicked_counts_by_bot = {
+        "resident": resident_clicked_count,
+        "admin": admin_clicked_count,
+        "business": business_clicked_count,
+    }
 
-    # Admin baseline
-    _assert("admin_jobs_export" in admin_clicked, "admin clicked must include `admin_jobs_export`")
-    _assert(_has_prefix(admin_clicked, "admin_sensor|"), "admin clicked must include `admin_sensor|*`")
-    _assert(_has_prefix(admin_clicked, "abiz_tokv_s|"), "admin clicked must include `abiz_tokv_s|*`")
-    _assert(_has_prefix(admin_clicked, "abiz_tokv_o|"), "admin clicked must include `abiz_tokv_o|*`")
-    _assert("abiz_payments" in admin_seen, "admin seen must include `abiz_payments`")
-    _assert("abiz_audit" in admin_seen, "admin seen must include `abiz_audit`")
-    _assert(
-        admin_clicked_count >= int(args.min_admin_clicked),
-        f"admin clicked callbacks below floor: {admin_clicked_count} < {args.min_admin_clicked}",
-    )
+    for bot_name, req in RUNTIME_COVERAGE_REQUIREMENTS.items():
+        clicked = clicked_by_bot[bot_name]
+        seen = seen_by_bot[bot_name]
+        for value in sorted(req.get("clicked_eq") or set()):
+            _assert(value in clicked, f"{bot_name} clicked must include `{value}`")
+        for value in sorted(req.get("clicked_prefix") or set()):
+            _assert(_has_prefix(clicked, value), f"{bot_name} clicked must include `{value}*`")
+        for value in sorted(req.get("seen_eq") or set()):
+            _assert(value in seen, f"{bot_name} seen must include `{value}`")
+        for value in sorted(req.get("seen_prefix") or set()):
+            _assert(_has_prefix(seen, value), f"{bot_name} seen must include `{value}*`")
 
-    # Business baseline
-    _assert("bmenu:mine" in business_clicked, "business clicked must include `bmenu:mine`")
-    _assert("bmenu:plans" in business_clicked, "business clicked must include `bmenu:plans`")
-    _assert("bmenu:add" in business_clicked, "business clicked must include `bmenu:add`")
-    _assert("bmenu:attach" in business_clicked, "business clicked must include `bmenu:attach`")
-    _assert("bmenu:cancel" in business_clicked, "business clicked must include `bmenu:cancel`")
-    _assert(_has_prefix(business_clicked, "bp_menu:"), "business clicked must include `bp_menu:*`")
-    _assert(
-        _has_prefix(business_seen, "bmy_o:") or _has_prefix(business_clicked, "bmy_o:"),
-        "business coverage must include owner-card callbacks (`bmy_o:*`)",
-    )
-    _assert(
-        business_clicked_count >= int(args.min_business_clicked),
-        f"business clicked callbacks below floor: {business_clicked_count} < {args.min_business_clicked}",
-    )
+        floor = min_clicked_by_bot[bot_name]
+        clicked_count = clicked_counts_by_bot[bot_name]
+        _assert(
+            clicked_count >= floor,
+            f"{bot_name} clicked callbacks below floor: {clicked_count} < {floor}",
+        )
 
     print("OK: testerbot callback coverage runtime smoke passed.")
 
