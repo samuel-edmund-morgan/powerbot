@@ -11,8 +11,16 @@ Checks:
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
+import sys
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from testerbot.callback_contract import READ_ONLY_INCLUDE_EQ
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -20,45 +28,11 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def _extract_read_only_include_eq(callbacks_py: str) -> set[str]:
-    tree = ast.parse(callbacks_py)
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_READ_ONLY_INCLUDE_EQ":
-                    value = node.value
-                    if isinstance(value, ast.Dict):
-                        for k, v in zip(value.keys, value.values):
-                            if isinstance(k, ast.Constant) and k.value == "admin":
-                                if isinstance(v, ast.Set):
-                                    out: set[str] = set()
-                                    for elt in v.elts:
-                                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                            out.add(elt.value)
-                                    return out
-        elif isinstance(node, ast.AnnAssign):
-            target = node.target
-            if isinstance(target, ast.Name) and target.id == "_READ_ONLY_INCLUDE_EQ":
-                value = node.value
-                if isinstance(value, ast.Dict):
-                    for k, v in zip(value.keys, value.values):
-                        if isinstance(k, ast.Constant) and k.value == "admin":
-                            if isinstance(v, ast.Set):
-                                out: set[str] = set()
-                                for elt in v.elts:
-                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                        out.add(elt.value)
-                                return out
-    return set()
-
-
 def main() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    callbacks_text = (repo_root / "src" / "testerbot" / "callbacks.py").read_text(encoding="utf-8")
-    admin_scenario = (repo_root / "src" / "testerbot" / "scenarios" / "admin.py").read_text(encoding="utf-8")
+    admin_scenario = (REPO_ROOT / "src" / "testerbot" / "scenarios" / "admin.py").read_text(encoding="utf-8")
 
-    admin_eq = _extract_read_only_include_eq(callbacks_text)
-    _assert(admin_eq, "failed to parse _READ_ONLY_INCLUDE_EQ['admin'] from callbacks.py")
+    admin_eq = READ_ONLY_INCLUDE_EQ.get("admin") or set()
+    _assert(admin_eq, "failed to read READ_ONLY_INCLUDE_EQ['admin'] from callback_contract.py")
 
     _assert("abiz_payments" in admin_eq, "callbacks whitelist must include `abiz_payments`")
     _assert("abiz_audit" in admin_eq, "callbacks whitelist must include `abiz_audit`")
