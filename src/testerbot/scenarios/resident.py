@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from telethon.errors.rpcerrorlist import DataInvalidError, FloodWaitError, MessageIdInvalidError
+
 from testerbot.assertions import assert_contains, assert_contains_any
 from testerbot.scenarios.common import callback_at, collect_message_callbacks, extract_text, find_button
 
@@ -135,37 +137,48 @@ async def run(ctx) -> ScenarioResult:
             await asyncio.sleep(0.6)
         raise AssertionError(f"{ctx_name}: timeout waiting bot message. last_text=\n{last_text}")
 
-    async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
-        i, j = find_button(message, needle)
-        prev_snapshot = (
-            getattr(message, "id", None),
-            extract_text(message),
-            _to_utc(getattr(message, "edit_date", None)),
-        )
-        ctx.record_clicked_callback("resident", callback_at(message, i, j))
-        await message.click(i, j)
-        msg, text = await wait_bot_message(
-            predicate=predicate,
-            ctx_name=ctx_name,
-            previous_snapshot=prev_snapshot,
-        )
-        ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
-        return msg, text
+    async def latest_bot_message(ctx_name: str):
+        msgs = await ctx.client.get_messages(target, limit=12)
+        for msg in msgs:
+            if getattr(msg, "out", False):
+                continue
+            if getattr(msg, "sender_id", None) != bot_id:
+                continue
+            text = extract_text(msg)
+            if not text:
+                continue
+            ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
+            return msg, text
+        raise AssertionError(f"{ctx_name}: no incoming resident-bot message found")
 
-    async def click_first_non_nav_button(message, *, predicate, ctx_name: str):
-        buttons = getattr(message, "buttons", None) or []
-        for row_idx, row in enumerate(buttons):
-            for btn_idx, btn in enumerate(row):
-                label = str(getattr(btn, "text", "")).strip()
-                if _is_nav_button(label):
-                    continue
-                prev_snapshot = (
-                    getattr(message, "id", None),
-                    extract_text(message),
-                    _to_utc(getattr(message, "edit_date", None)),
+    async def click_and_wait(message, needle: str, *, predicate, ctx_name: str):
+        current = message
+        for _ in range(4):
+            try:
+                i, j = find_button(current, needle)
+            except AssertionError:
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh buttons)",
                 )
-                ctx.record_clicked_callback("resident", callback_at(message, row_idx, btn_idx))
-                await message.click(row_idx, btn_idx)
+                continue
+
+            prev_snapshot = (
+                getattr(current, "id", None),
+                extract_text(current),
+                _to_utc(getattr(current, "edit_date", None)),
+            )
+            try:
+                ctx.record_clicked_callback("resident", callback_at(current, i, j))
+                await current.click(i, j)
+            except (MessageIdInvalidError, DataInvalidError):
+                current, _ = await wait_bot_message(
+                    predicate=lambda m, _t: _has_button(m, needle),
+                    ctx_name=f"{ctx_name} (refresh stale message)",
+                )
+                continue
+
+            try:
                 msg, text = await wait_bot_message(
                     predicate=predicate,
                     ctx_name=ctx_name,
@@ -173,7 +186,52 @@ async def run(ctx) -> ScenarioResult:
                 )
                 ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
                 return msg, text
-        raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
+            except AssertionError:
+                current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                continue
+
+        raise AssertionError(f"{ctx_name}: unable to click `{needle}`")
+
+    async def click_first_non_nav_button(message, *, predicate, ctx_name: str):
+        current = message
+        for _ in range(4):
+            buttons = getattr(current, "buttons", None) or []
+            for row_idx, row in enumerate(buttons):
+                for btn_idx, btn in enumerate(row):
+                    label = str(getattr(btn, "text", "")).strip()
+                    if _is_nav_button(label):
+                        continue
+                    prev_snapshot = (
+                        getattr(current, "id", None),
+                        extract_text(current),
+                        _to_utc(getattr(current, "edit_date", None)),
+                    )
+                    try:
+                        ctx.record_clicked_callback("resident", callback_at(current, row_idx, btn_idx))
+                        await current.click(row_idx, btn_idx)
+                    except (MessageIdInvalidError, DataInvalidError):
+                        current, _ = await wait_bot_message(
+                            predicate=lambda m, _t: bool(getattr(m, "buttons", None)),
+                            ctx_name=f"{ctx_name} (refresh stale message)",
+                        )
+                        break
+                    try:
+                        msg, text = await wait_bot_message(
+                            predicate=predicate,
+                            ctx_name=ctx_name,
+                            previous_snapshot=prev_snapshot,
+                        )
+                        ctx.record_seen_callbacks("resident", collect_message_callbacks(msg))
+                        return msg, text
+                    except AssertionError:
+                        current, _ = await latest_bot_message(f"{ctx_name} (refresh latest)")
+                        break
+                else:
+                    continue
+                break
+            else:
+                raise AssertionError(f"{ctx_name}: no non-navigation buttons to click")
+        raise AssertionError(f"{ctx_name}: unable to click non-navigation button")
 
     def assert_not_dead_end(current_msg, *, ctx_name: str) -> None:
         if _has_recovery_controls(current_msg):
@@ -184,7 +242,26 @@ async def run(ctx) -> ScenarioResult:
         )
 
     async def recover_main_menu(*, ctx_name: str):
-        await ctx.client.send_message(target, "/start")
+        # First, try to recover using the latest bot message without sending new commands.
+        try:
+            msg, text = await latest_bot_message(f"{ctx_name} latest")
+            if ("Головне меню" in text) and _has_button(msg, "Пошук закладу"):
+                return msg, text
+            if _has_button(msg, "Меню"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Меню",
+                    predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Пошук закладу"),
+                    ctx_name=f"{ctx_name} via menu",
+                )
+                return msg, text
+        except Exception:
+            pass
+
+        try:
+            await ctx.client.send_message(target, "/start")
+        except FloodWaitError as exc:
+            raise AssertionError(f"{ctx_name}: flood-wait on /start recovery ({exc})") from exc
         msg, text = await wait_bot_message(
             predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Пошук закладу"),
             ctx_name=ctx_name,
