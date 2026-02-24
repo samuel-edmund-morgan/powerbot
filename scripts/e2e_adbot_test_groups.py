@@ -8,7 +8,7 @@ Scenarios (test groups):
 3) "де оформити перепустку в паркінг"
 
 The script sends messages to source chat and verifies:
-- adbot replies in source chat as reply to original message,
+- adbot delivers response in source chat (preferred: forwarded resident reply),
 - response text matches expected intent family,
 - internal audit chat gets adbot summary, and (optionally) forwarded original message.
 
@@ -102,6 +102,10 @@ def _contains_any(text: str, tokens: Iterable[str]) -> bool:
     return False
 
 
+def _is_forwarded_message(message) -> bool:
+    return getattr(message, "fwd_from", None) is not None
+
+
 async def _wait_for_source_reply(
     client,
     *,
@@ -115,11 +119,14 @@ async def _wait_for_source_reply(
     while time.monotonic() < deadline:
         messages = await client.get_messages(source_chat_id, limit=40)
         for message in messages:
-            reply_to = _reply_to_msg_id(message)
-            if reply_to != original_message_id:
+            message_id = int(getattr(message, "id", 0) or 0)
+            if message_id <= original_message_id:
                 continue
+            reply_to = _reply_to_msg_id(message)
             text = str(getattr(message, "raw_text", "") or getattr(message, "text", "") or "")
-            if _contains_any(text, expected_tokens):
+            if not _contains_any(text, expected_tokens):
+                continue
+            if reply_to == original_message_id or _is_forwarded_message(message):
                 return message
         await asyncio.sleep(poll_sec)
     raise AssertionError(
@@ -139,8 +146,11 @@ async def _assert_no_source_reply(
     while time.monotonic() < deadline:
         messages = await client.get_messages(source_chat_id, limit=40)
         for message in messages:
+            message_id = int(getattr(message, "id", 0) or 0)
+            if message_id <= original_message_id:
+                continue
             reply_to = _reply_to_msg_id(message)
-            if reply_to == original_message_id:
+            if reply_to == original_message_id or _is_forwarded_message(message):
                 text = str(getattr(message, "raw_text", "") or getattr(message, "text", "") or "")
                 raise AssertionError(
                     f"unexpected adbot reply in anti-false-positive case for msg_id={original_message_id}: {text[:180]}"
@@ -310,7 +320,8 @@ async def _run() -> None:
                 poll_sec=poll_sec,
             )
             reply_text = str(getattr(reply, "raw_text", "") or getattr(reply, "text", "") or "")
-            print(f"OK source reply [{scenario.code}]: {reply_text[:120]}")
+            delivery_mode = "forwarded" if _is_forwarded_message(reply) else "text_reply"
+            print(f"OK source reply [{scenario.code}][{delivery_mode}]: {reply_text[:120]}")
 
             if internal_chat_id is not None:
                 await _wait_for_internal_audit(

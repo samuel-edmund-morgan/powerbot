@@ -3,7 +3,7 @@
 Integration smoke for adbot listener/pipeline with mock Telethon-like stubs.
 
 Checks:
-- intent match -> inline query fetch -> reply as message reply
+- intent match -> inline query fetch -> source delivery prefers forwarded internal reply
 - audit forward is emitted
 - cooldown dedupe suppresses identical repeated triggers
 - fallback is used when inline provider returns no result
@@ -52,12 +52,24 @@ class _FakeInlineClient:
 
 class _FakeForwarder:
     def __init__(self):
-        self.forwarded: list[tuple[int, int]] = []
+        self.forwarded_to_internal: list[tuple[int, int]] = []
+        self.forwarded_to_source: list[tuple[int, int, int]] = []
         self.sent: list[tuple[int, str]] = []
 
-    async def forward_messages(self, chat_id: int, message):
-        message_id = int(getattr(message, "id", 0) or 0)
-        self.forwarded.append((int(chat_id), message_id))
+    async def forward_messages(self, entity, messages, from_peer=None, **kwargs):
+        # Audit-path forward: source -> internal chat.
+        if from_peer is None:
+            message_id = int(getattr(messages, "id", 0) or 0)
+            self.forwarded_to_internal.append((int(entity), message_id))
+            return [type("FwdMsg", (), {"id": 700001})()]
+
+        # Source-delivery path: internal reply -> source chat.
+        if isinstance(messages, (list, tuple)):
+            internal_message_id = int(messages[0] if messages else 0)
+        else:
+            internal_message_id = int(messages or 0)
+        self.forwarded_to_source.append((int(entity), internal_message_id, int(from_peer)))
+        return [type("FwdMsg", (), {"id": 800001, "fwd_from": object()})()]
 
     async def send_message(self, chat_id: int, text: str):
         self.sent.append((int(chat_id), str(text)))
@@ -170,11 +182,17 @@ async def _run() -> None:
     _assert(handled is True, "expected listener to handle electrician message")
     _assert(len(fake_inline.calls) == 1, f"inline query not called exactly once: {fake_inline.calls}")
     _assert(fake_inline.calls[0][1] == "електрик", f"unexpected inline query: {fake_inline.calls}")
-    _assert(len(evt_ok.responses) == 1, "expected one response")
-    _assert(evt_ok.responses[0][1] == 501, f"response should be reply to original message: {evt_ok.responses}")
-    _assert("⚡ Електрик" in evt_ok.responses[0][0], f"unexpected response body: {evt_ok.responses}")
-    _assert(len(forwarder.forwarded) == 1, "expected one forwarded source message to internal chat")
-    _assert(forwarder.forwarded[0] == (777001, 501), f"unexpected forwarded payload: {forwarder.forwarded}")
+    _assert(len(evt_ok.responses) == 0, "forward-delivery should not require text fallback response")
+    _assert(len(forwarder.forwarded_to_internal) == 1, "expected one forwarded source message to internal chat")
+    _assert(
+        forwarder.forwarded_to_internal[0] == (777001, 501),
+        f"unexpected internal-forward payload: {forwarder.forwarded_to_internal}",
+    )
+    _assert(len(forwarder.forwarded_to_source) == 1, "expected one forwarded internal reply to source chat")
+    _assert(
+        forwarder.forwarded_to_source[0] == (-100123, 900001, 777001),
+        f"unexpected source-forward payload: {forwarder.forwarded_to_source}",
+    )
     _assert(len(forwarder.sent) == 1, "expected one audit summary message")
     _assert("intent" in forwarder.sent[0][1], f"audit payload missing intent: {forwarder.sent}")
 
@@ -274,8 +292,11 @@ async def _run() -> None:
     )
     handled_fb = await listener.process(evt_fallback, source_chat_id=evt_fallback.chat_id)
     _assert(handled_fb is True, "fallback flow should still be handled")
-    _assert(len(evt_fallback.responses) == 1, "fallback should send one response")
-    _assert("сантехнік" in evt_fallback.responses[0][0].lower(), f"unexpected fallback response: {evt_fallback.responses}")
+    _assert(len(evt_fallback.responses) == 0, "fallback flow should prefer forwarded internal reply")
+    _assert(
+        any(item[0] == -100124 and item[2] == 777001 for item in forwarder.forwarded_to_source),
+        f"fallback flow should forward internal reply to source chat: {forwarder.forwarded_to_source}",
+    )
 
     # Non-matching text should be ignored.
     evt_skip = _FakeEvent(
@@ -298,7 +319,11 @@ async def _run() -> None:
     handled_elev = await listener.process(evt_elev, source_chat_id=evt_elev.chat_id)
     _assert(handled_elev is True, "elevator intent should be handled")
     _assert(any(call[1] == "диспетчер ліфтів" for call in fake_inline.calls), f"missing elevator inline call: {fake_inline.calls}")
-    _assert(len(evt_elev.responses) == 1, "elevator flow should send one response")
+    _assert(len(evt_elev.responses) == 0, "elevator flow should prefer forwarded internal reply")
+    _assert(
+        any(item[0] == -100126 and item[2] == 777001 for item in forwarder.forwarded_to_source),
+        f"elevator flow should forward internal reply: {forwarder.forwarded_to_source}",
+    )
 
     # Critical flow from AGENTS backlog: pass/parking phrasing.
     evt_pass = _FakeEvent(
@@ -313,7 +338,11 @@ async def _run() -> None:
         any(str(call[1]).startswith("перепустка") for call in fake_inline.calls),
         f"missing car-pass inline call: {fake_inline.calls}",
     )
-    _assert(len(evt_pass.responses) == 1, "car-pass flow should send one response")
+    _assert(len(evt_pass.responses) == 0, "car-pass flow should prefer forwarded internal reply")
+    _assert(
+        any(item[0] == -100127 and item[2] == 777001 for item in forwarder.forwarded_to_source),
+        f"car-pass flow should forward internal reply: {forwarder.forwarded_to_source}",
+    )
 
 
 def main() -> None:

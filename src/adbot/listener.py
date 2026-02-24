@@ -58,6 +58,63 @@ class AdbotListener:
         self._correlations: dict[str, CorrelationRecord] = {}
         self._correlation_ttl_sec = 6 * 3600
 
+    async def _deliver_source_response(
+        self,
+        *,
+        event,
+        source_chat_id: int,
+        source_message_id: int,
+        response_text: str,
+        internal_chat_id: int,
+        internal_reply_message_id: int | None,
+    ) -> tuple[bool, str]:
+        """Deliver response to source chat.
+
+        Preferred mode: forward internal resident-bot message so residents
+        can see response origin in chat UI.
+        Fallback mode: plain text reply to original source message.
+        """
+        if internal_chat_id > 0 and int(internal_reply_message_id or 0) > 0:
+            reply_msg_id = int(internal_reply_message_id or 0)
+            try:
+                forwarded = await event.client.forward_messages(
+                    int(source_chat_id),
+                    reply_msg_id,
+                    int(internal_chat_id),
+                )
+                if forwarded:
+                    return True, "forwarded"
+            except TypeError:
+                try:
+                    forwarded = await event.client.forward_messages(
+                        entity=int(source_chat_id),
+                        messages=reply_msg_id,
+                        from_peer=int(internal_chat_id),
+                    )
+                    if forwarded:
+                        return True, "forwarded"
+                except Exception:
+                    logger.exception(
+                        "failed to forward internal reply to source chat source_chat_id=%s internal_chat_id=%s internal_msg_id=%s",
+                        source_chat_id,
+                        internal_chat_id,
+                        reply_msg_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "failed to forward internal reply to source chat source_chat_id=%s internal_chat_id=%s internal_msg_id=%s",
+                    source_chat_id,
+                    internal_chat_id,
+                    reply_msg_id,
+                )
+
+        try:
+            await event.respond(response_text, reply_to=int(source_message_id))
+            return True, "text_reply"
+        except Exception:
+            logger.exception("failed to reply in adbot")
+            return False, "reply_error"
+
     def _dedupe_event_key(self, chat_id: int, message_id: int) -> str:
         return f"{int(chat_id)}:{int(message_id)}"
 
@@ -307,15 +364,20 @@ class AdbotListener:
             )
             return False
 
-        try:
-            await event.respond(response_text, reply_to=message_obj.id)
-        except Exception:
-            logger.exception("failed to reply in adbot")
+        delivered, delivery_mode = await self._deliver_source_response(
+            event=event,
+            source_chat_id=int(source_chat_id),
+            source_message_id=int(getattr(message_obj, "id", 0) or 0),
+            response_text=response_text,
+            internal_chat_id=int(self._internal_chat_id or 0),
+            internal_reply_message_id=int(internal_result.internal_message_id or 0) or None,
+        )
+        if not delivered:
             log_decision(
                 build_decision_payload(
                     chat_id=source_chat_id,
                     user_id=int(sender_id),
-                    reason="reply_error",
+                    reason=str(delivery_mode),
                     message_text=text,
                     intent_code=intent.code,
                     meta={
@@ -348,6 +410,7 @@ class AdbotListener:
                     "internal_chat_id": int(self._internal_chat_id or 0),
                     "forwarded_message_id": forwarded_message_id or 0,
                     "internal_reply_message_id": int(internal_result.internal_message_id or 0),
+                    "delivery_mode": str(delivery_mode),
                 },
             )
         )
