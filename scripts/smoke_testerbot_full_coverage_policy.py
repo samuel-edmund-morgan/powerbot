@@ -7,6 +7,7 @@ Checks:
 - `src/testerbot_main.py` writes `TESTERBOT_GAP_REPORT_PATH` report.
 - strict gate emits `testerbot_full_coverage_strict` failure scenario.
 - deploy_test includes runtime smoke for the full coverage artifact.
+- deploy_test includes strict-negative smoke to verify fail-closed behavior.
 """
 
 from __future__ import annotations
@@ -48,10 +49,13 @@ def main() -> None:
         "smoke_testerbot_full_coverage_runtime.py" in deploy_text,
         "deploy_test.sh must run smoke_testerbot_full_coverage_runtime.py",
     )
+    _assert(
+        "smoke_testerbot_full_coverage_strict_negative.py" in deploy_text,
+        "deploy_test.sh must run smoke_testerbot_full_coverage_strict_negative.py",
+    )
 
     print("OK: testerbot full-coverage policy smoke passed.")
 
 
 if __name__ == "__main__":
     main()
-

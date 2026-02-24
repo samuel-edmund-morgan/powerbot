@@ -294,6 +294,8 @@ if should_enable_testerbot "${TEST_DIR}/.env"; then
   echo "Running testerbot full coverage runtime smoke test..."
   python3 "${REPO_DIR}/scripts/smoke_testerbot_full_coverage_runtime.py" \
     --coverage-file "${TEST_DIR}/logs/testerbot_full_coverage.json"
+  echo "Running testerbot full coverage strict-negative smoke test..."
+  python3 "${REPO_DIR}/scripts/smoke_testerbot_full_coverage_strict_negative.py"
 else
   echo "Testerbot disabled (TESTERBOT_ENABLED!=1)."
 fi
