@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class PowerbotInlineClient:
@@ -119,15 +122,32 @@ class InternalReplyPipeline:
             return None
 
         first = results.results[0]
-        try:
-            if reply_to_message_id:
-                return await first.click(entity=internal_chat_id, reply_to=reply_to_message_id)
-            return await first.click(entity=internal_chat_id)
-        except TypeError:
-            # Some Telethon versions don't accept named args in click(...).
-            if reply_to_message_id:
-                return await first.click(internal_chat_id, reply_to_message_id)
-            return await first.click(internal_chat_id)
+        async def _click(use_reply_to: bool) -> object | None:
+            try:
+                if use_reply_to and reply_to_message_id:
+                    return await first.click(entity=internal_chat_id, reply_to=reply_to_message_id)
+                return await first.click(entity=internal_chat_id)
+            except TypeError:
+                # Some Telethon versions don't accept named args in click(...).
+                if use_reply_to and reply_to_message_id:
+                    return await first.click(internal_chat_id, reply_to_message_id)
+                return await first.click(internal_chat_id)
+
+        if reply_to_message_id:
+            try:
+                return await _click(True)
+            except Exception:
+                # Fallback: some chats/contexts can reject reply_to linkage.
+                # Retry plain inline insertion to keep E2E flow deterministic.
+                logger.warning(
+                    "internal inline click with reply_to failed; retrying without reply_to (chat_id=%s reply_to=%s)",
+                    internal_chat_id,
+                    reply_to_message_id,
+                    exc_info=True,
+                )
+                return await _click(False)
+
+        return await _click(False)
 
     async def get_via_internal(
         self,
