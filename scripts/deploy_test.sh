@@ -902,6 +902,8 @@ python3 "${REPO_DIR}/scripts/smoke_business_mode_ui_policy.py"
 # Automated smoke: when verified_count=0 resident UI must not expose monetization hints.
 echo "Running no-monetization-when-no-verified smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_no_monetization_when_no_verified.py"
+echo "Running no-monetization-when-no-verified runtime smoke test in test container..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_no_monetization_when_no_verified_runtime.py"
 
 # Pre-prod style checklist snapshot (test DB): revision/hash + verified_count + stealth guard.
 echo "Running pre-prod resident UI checklist (test DB snapshot)..."
