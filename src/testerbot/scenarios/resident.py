@@ -241,7 +241,7 @@ async def run(ctx) -> ScenarioResult:
             f"{ctx_name}: dead-end screen detected (no recovery controls). text={text[:220]!r}"
         )
 
-    async def recover_main_menu(*, ctx_name: str):
+    async def recover_main_menu(*, ctx_name: str, allow_start_fallback: bool = False):
         # First, try to recover using the latest bot message without sending new commands.
         try:
             msg, text = await latest_bot_message(f"{ctx_name} latest")
@@ -258,6 +258,9 @@ async def run(ctx) -> ScenarioResult:
         except Exception:
             pass
 
+        if not allow_start_fallback:
+            raise AssertionError(f"{ctx_name}: unable to recover main menu without /start fallback")
+
         try:
             await ctx.client.send_message(target, "/start")
         except FloodWaitError as exc:
@@ -268,12 +271,16 @@ async def run(ctx) -> ScenarioResult:
         )
         return msg, text
 
-    await ctx.client.send_message(target, "/start")
-    msg, text = await wait_bot_message(
-        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Обрати будинок"),
-        ctx_name="resident /start",
+    msg, text = await recover_main_menu(
+        ctx_name="resident bootstrap main menu",
+        allow_start_fallback=False,
     )
-    assert_contains(text, ("Головне меню",), ctx="resident /start")
+    if not _has_button(msg, "Обрати будинок"):
+        msg, text = await wait_bot_message(
+            predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Обрати будинок"),
+            ctx_name="resident bootstrap buildings button",
+        )
+    assert_contains(text, ("Головне меню",), ctx="resident bootstrap")
 
     msg, text = await click_and_wait(
         msg,
