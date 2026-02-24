@@ -96,6 +96,7 @@ class InternalReplyPipeline:
         self._min_nonempty_len = max(int(min_nonempty_len or 1), 1)
         self._require_real = bool(require_real)
         self._allowed_resident_bot_ids = tuple(int(v) for v in (allowed_resident_bot_ids or ()) if int(v) > 0)
+        self._target_powerbot_id: int | None = None
 
     @staticmethod
     def _message_text(message_obj: object | None) -> str:
@@ -107,6 +108,125 @@ class InternalReplyPipeline:
             or getattr(message_obj, "message", "")
             or ""
         ).strip()
+
+    @staticmethod
+    def _reply_to_message_id(message_obj: object | None) -> int | None:
+        if message_obj is None:
+            return None
+        direct = getattr(message_obj, "reply_to_msg_id", None)
+        if isinstance(direct, int):
+            return direct
+        reply_obj = getattr(message_obj, "reply_to", None)
+        if reply_obj is not None:
+            nested = getattr(reply_obj, "reply_to_msg_id", None)
+            if isinstance(nested, int):
+                return nested
+        return None
+
+    async def _resolve_target_bot_id(self) -> int | None:
+        if self._target_powerbot_id:
+            return self._target_powerbot_id
+        if not self._target_powerbot_username:
+            return None
+        try:
+            entity = await self._client.get_entity(self._target_powerbot_username)
+            value = int(getattr(entity, "id", 0) or 0) or None
+            self._target_powerbot_id = value
+            return value
+        except Exception:
+            return None
+
+    async def _wait_for_reply_to_message(
+        self,
+        *,
+        internal_chat_id: int,
+        prompt_message_id: int,
+        expected_sender_ids: set[int],
+    ) -> object | None:
+        if prompt_message_id <= 0:
+            return None
+        deadline = asyncio.get_running_loop().time() + float(self._timeout_sec)
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                messages = await self._client.get_messages(int(internal_chat_id), limit=40)
+            except Exception:
+                await asyncio.sleep(0.35)
+                continue
+            for message in messages:
+                message_id = int(getattr(message, "id", 0) or 0)
+                if message_id <= prompt_message_id:
+                    continue
+                if self._reply_to_message_id(message) != prompt_message_id:
+                    continue
+                sender_id = int(getattr(message, "sender_id", 0) or 0)
+                if expected_sender_ids and sender_id not in expected_sender_ids:
+                    continue
+                text = self._message_text(message)
+                if len(text) < self._min_nonempty_len:
+                    continue
+                return message
+            await asyncio.sleep(0.35)
+        return None
+
+    async def _fallback_via_direct_mention(
+        self,
+        *,
+        query: str,
+        internal_chat_id: int,
+        reply_to_message_id: int | None,
+    ) -> InternalReplyResult | None:
+        if not query or not self._target_powerbot_username:
+            return None
+
+        mention_query = f"@{self._target_powerbot_username} {query}".strip()
+        try:
+            if reply_to_message_id:
+                prompt = await self._client.send_message(
+                    int(internal_chat_id),
+                    mention_query,
+                    reply_to=int(reply_to_message_id),
+                )
+            else:
+                prompt = await self._client.send_message(int(internal_chat_id), mention_query)
+        except TypeError:
+            if reply_to_message_id:
+                prompt = await self._client.send_message(
+                    int(internal_chat_id),
+                    mention_query,
+                    int(reply_to_message_id),
+                )
+            else:
+                prompt = await self._client.send_message(int(internal_chat_id), mention_query)
+        except Exception:
+            return None
+
+        prompt_message_id = int(getattr(prompt, "id", 0) or 0)
+        expected_sender_ids = set(self._allowed_resident_bot_ids)
+        if not expected_sender_ids:
+            resolved = await self._resolve_target_bot_id()
+            if resolved:
+                expected_sender_ids.add(int(resolved))
+
+        reply_msg = await self._wait_for_reply_to_message(
+            internal_chat_id=int(internal_chat_id),
+            prompt_message_id=prompt_message_id,
+            expected_sender_ids=expected_sender_ids,
+        )
+        if reply_msg is None:
+            return None
+
+        reply_text = self._message_text(reply_msg)
+        if len(reply_text) < self._min_nonempty_len:
+            return None
+
+        reply_message_id = int(getattr(reply_msg, "id", 0) or 0) or None
+        sender_id = int(getattr(reply_msg, "sender_id", 0) or 0) or None
+        return InternalReplyResult(
+            text=reply_text,
+            reason=None,
+            internal_message_id=reply_message_id,
+            via_bot_id=sender_id,
+        )
 
     async def _click_inline_to_internal(
         self,
@@ -190,6 +310,13 @@ class InternalReplyPipeline:
             )
 
         if inserted is None:
+            mention_fallback = await self._fallback_via_direct_mention(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if mention_fallback is not None:
+                return mention_fallback
             return InternalReplyResult(
                 text=(fallback if not self._require_real else None),
                 reason="inline_empty",
@@ -201,6 +328,13 @@ class InternalReplyPipeline:
         internal_message_id = int(getattr(inserted, "id", 0) or 0) or None
         via_bot_id = int(getattr(inserted, "via_bot_id", 0) or 0) or None
         if self._allowed_resident_bot_ids and via_bot_id not in set(self._allowed_resident_bot_ids):
+            mention_fallback = await self._fallback_via_direct_mention(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if mention_fallback is not None:
+                return mention_fallback
             return InternalReplyResult(
                 text=(fallback if not self._require_real else None),
                 reason="resident_no_reply",
@@ -209,6 +343,13 @@ class InternalReplyPipeline:
             )
 
         if len(text) < self._min_nonempty_len:
+            mention_fallback = await self._fallback_via_direct_mention(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if mention_fallback is not None:
+                return mention_fallback
             return InternalReplyResult(
                 text=(fallback if not self._require_real else None),
                 reason="resident_no_reply",
