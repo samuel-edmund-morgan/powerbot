@@ -1520,6 +1520,7 @@ async def _render_business_payments(
 
     kb_rows: list[list[InlineKeyboardButton]] = []
     # Admin fallback: allow marking successful Telegram Stars payments as refunded.
+    refund_state_cache: dict[tuple[str, str], bool] = {}
     for row in rows:
         try:
             event_id = int(row.get("id") or 0)
@@ -1529,7 +1530,32 @@ async def _render_business_payments(
             continue
         event_type = str(row.get("event_type") or "").strip().lower()
         provider = str(row.get("provider") or "").strip().lower()
+        external_payment_id = str(row.get("external_payment_id") or "").strip()
         if event_type == "payment_succeeded" and provider == "telegram_stars":
+            if not external_payment_id:
+                continue
+            cache_key = (provider, external_payment_id)
+            has_refund = refund_state_cache.get(cache_key)
+            if has_refund is None:
+                has_refund = False
+                try:
+                    events = await business_repo.get_payment_events_by_external_id(
+                        provider=provider,
+                        external_payment_id=external_payment_id,
+                    )
+                    has_refund = any(
+                        str(event.get("event_type") or "").strip().lower() == "refund"
+                        for event in events
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to resolve refund state for provider=%s external_id=%s",
+                        provider,
+                        external_payment_id,
+                    )
+                refund_state_cache[cache_key] = bool(has_refund)
+            if bool(has_refund):
+                continue
             kb_rows.append(
                 [
                     InlineKeyboardButton(
@@ -1888,6 +1914,33 @@ async def cb_business_payment_refund_confirm(callback: CallbackQuery) -> None:
 
     provider = str(row.get("provider") or "").strip().lower()
     event_type = str(row.get("event_type") or "").strip().lower()
+    payment_external_id = str(row.get("external_payment_id") or "").strip()
+    if provider == "telegram_stars" and event_type == "payment_succeeded" and payment_external_id:
+        try:
+            existing_events = await business_repo.get_payment_events_by_external_id(
+                provider=provider,
+                external_payment_id=payment_external_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load existing payment events for duplicate refund guard event_id=%s",
+                event_id,
+            )
+            existing_events = []
+        has_refund = any(
+            str(item.get("event_type") or "").strip().lower() == "refund"
+            for item in existing_events
+        )
+        if has_refund:
+            await _render_business_payments(
+                callback.bot,
+                callback.message.chat.id,
+                page=int(page),
+                prefer_message_id=callback.message.message_id,
+                note="ℹ️ Refund вже був оброблений раніше.",
+            )
+            return
+
     telegram_refund_note = ""
     if provider == "telegram_stars" and event_type == "payment_succeeded":
         payer_tg_user_id, charge_id = _extract_refund_target_from_payment_event(row)

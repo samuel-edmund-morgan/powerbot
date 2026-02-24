@@ -3712,28 +3712,17 @@ async def on_refunded_payment(message: Message) -> None:
             raw_payload_json=raw_payload_json,
         )
     except (ValidationError, AccessDeniedError, NotFoundError) as error:
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            text=(
-                "⚠️ Не вдалося застосувати повернення автоматично.\n"
-                "Напиши адміністратору і додай скрін цього повідомлення.\n\n"
-                f"Деталі: {html.escape(str(error))}"
-            ),
-            reply_markup=build_main_menu(tg_user_id),
+        # Refund updates from Telegram are best-effort and may arrive without
+        # enough context (or after admin reconcile). Do not alarm the owner chat.
+        logger.warning(
+            "Skip refunded_payment auto-apply chat_id=%s user_id=%s: %s",
+            message.chat.id,
+            tg_user_id,
+            error,
         )
         return
     except Exception:
         logger.exception("Failed to apply refunded payment for chat_id=%s", message.chat.id)
-        await ui_render(
-            message.bot,
-            chat_id=message.chat.id,
-            text=(
-                "⚠️ Сталась технічна помилка при обробці повернення.\n"
-                "Напиши адміністратору і додай скрін цього повідомлення."
-            ),
-            reply_markup=build_main_menu(tg_user_id),
-        )
         return
 
     place_id = int(outcome.get("place_id") or 0)
