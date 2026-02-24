@@ -16,10 +16,36 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+def _bootstrap_src_path() -> None:
+    candidates: list[Path] = []
+
+    env_src = os.getenv("APP_SRC_DIR", "").strip()
+    if env_src:
+        candidates.append(Path(env_src))
+
+    cwd = Path.cwd()
+    candidates.append(cwd / "src")
+    candidates.append(Path("/app/src"))
+
+    # When executed as a file (not stdin), keep local repo layout support.
+    file_name = globals().get("__file__")
+    if file_name:
+        try:
+            candidates.append(Path(file_name).resolve().parents[1] / "src")
+        except Exception:
+            pass
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        raw = str(candidate)
+        if raw in seen:
+            continue
+        seen.add(raw)
+        if candidate.exists() and raw not in sys.path:
+            sys.path.insert(0, raw)
+
+
+_bootstrap_src_path()
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -127,4 +153,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
