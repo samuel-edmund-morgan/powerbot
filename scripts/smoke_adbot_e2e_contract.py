@@ -5,6 +5,7 @@ Static contract smoke for adbot real-E2E runner.
 Goals:
 - keep required source-chat scenarios from AGENTS backlog in the runner;
 - keep anti-false-positive checks (no source reply + no internal audit);
+- keep strict forwarded-only source delivery check in E2E runner;
 - avoid regressions even when real E2E is optional/disabled in CI.
 """
 
@@ -73,6 +74,14 @@ def main() -> None:
     _assert(
         "_assert_no_internal_audit_for_prompt" in called,
         "Anti-false-positive internal-audit guard is missing in e2e_adbot_test_groups.py",
+    )
+    _assert(
+        "ADBOT_E2E_REQUIRE_SOURCE_FORWARDED" in source,
+        "Missing strict source-forwarded env gate in e2e_adbot_test_groups.py",
+    )
+    _assert(
+        "source delivery must be forwarded in strict mode" in source,
+        "Missing strict forwarded-only assertion in e2e_adbot_test_groups.py",
     )
 
     print("OK: adbot E2E contract smoke passed.")

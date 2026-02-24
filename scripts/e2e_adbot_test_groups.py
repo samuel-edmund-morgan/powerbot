@@ -27,6 +27,7 @@ Optional env:
   ADBOT_E2E_POLL_SEC         (default: 1.0)
   ADBOT_E2E_NEGATIVE_WAIT_SEC (default: 12)
   ADBOT_E2E_VERIFY_FORWARD   (default: 1)
+  ADBOT_E2E_REQUIRE_SOURCE_FORWARDED (default: 1)
 """
 
 from __future__ import annotations
@@ -235,6 +236,10 @@ async def _run() -> None:
     poll_sec = float(str(os.getenv("ADBOT_E2E_POLL_SEC", "1.0")).strip())
     negative_wait_sec = int(str(os.getenv("ADBOT_E2E_NEGATIVE_WAIT_SEC", "12")).strip())
     verify_forward = _parse_bool(os.getenv("ADBOT_E2E_VERIFY_FORWARD", "1"), default=True)
+    require_source_forwarded = _parse_bool(
+        os.getenv("ADBOT_E2E_REQUIRE_SOURCE_FORWARDED", "1"),
+        default=True,
+    )
     prompt_prefix = str(os.getenv("ADBOT_E2E_PROMPT_PREFIX", "[E2E] ")).strip()
     if not prompt_prefix:
         prompt_prefix = "[E2E]"
@@ -320,7 +325,13 @@ async def _run() -> None:
                 poll_sec=poll_sec,
             )
             reply_text = str(getattr(reply, "raw_text", "") or getattr(reply, "text", "") or "")
-            delivery_mode = "forwarded" if _is_forwarded_message(reply) else "text_reply"
+            is_forwarded = _is_forwarded_message(reply)
+            delivery_mode = "forwarded" if is_forwarded else "text_reply"
+            if require_source_forwarded and not is_forwarded:
+                raise AssertionError(
+                    f"source delivery must be forwarded in strict mode: scenario={scenario.code} "
+                    f"msg_id={getattr(reply, 'id', 0)} text={reply_text[:180]}"
+                )
             print(f"OK source reply [{scenario.code}][{delivery_mode}]: {reply_text[:120]}")
 
             if internal_chat_id is not None:

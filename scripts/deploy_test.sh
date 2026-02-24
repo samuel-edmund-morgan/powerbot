@@ -371,6 +371,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_e2e_contract.py"
 echo "Running adbot pipeline integration smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
 
+# Runtime smoke: resident /adbot light_bind path in live test container.
+echo "Running adbot light-bind runtime smoke test..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_adbot_light_bind_runtime.py"
+
 # Automated smoke: adbot decision logging contract (reasoned match/no-match logs).
 echo "Running adbot decision logging smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_decision_logging.py"
@@ -398,6 +402,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_outgoing_e2e_guard.py"
 # Automated smoke: adbot self-outgoing poll fallback policy.
 echo "Running adbot self-outgoing poll policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_self_outgoing_poll_policy.py"
+
+# Runtime smoke: strict source delivery must stay forwarded-only (no silent text fallback).
+echo "Running adbot forward-delivery runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_forward_delivery_runtime.py"
 
 # Optional real Telegram E2E for adbot on test groups.
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
