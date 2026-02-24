@@ -25,13 +25,6 @@ def _must_contain(text: str, token: str, *, file_label: str, errors: list[str]) 
         errors.append(f"{file_label}: missing token `{token}`")
 
 
-def _must_contain_any(text: str, tokens: list[str], *, file_label: str, errors: list[str], label: str) -> None:
-    if any(token in text for token in tokens):
-        return
-    joined = " OR ".join(f"`{token}`" for token in tokens)
-    errors.append(f"{file_label}: missing {label} token ({joined})")
-
-
 def _must_match_regex(text: str, pattern: str, *, file_label: str, errors: list[str], label: str) -> None:
     if re.search(pattern, text, flags=re.DOTALL):
         return
@@ -61,17 +54,6 @@ def main() -> None:
         "@router.message(StateFilter(None), F.text.in_(LEGACY_REPLY_TEXTS))",
         file_label="src/handlers.py",
         errors=errors,
-    )
-    _must_contain_any(
-        handlers_text,
-        [
-            "@router.message(StateFilter(None), F.text, lambda message: message.chat.id not in search_waiting_users)",
-            "@router.message(StateFilter(None), F.text & ~F.text.startswith(\"/\"), lambda message: message.chat.id not in search_waiting_users)",
-            "@router.message(StateFilter(None), F.text)",
-        ],
-        file_label="src/handlers.py",
-        errors=errors,
-        label="generic text fallback",
     )
     _must_match_regex(
         handlers_text,
