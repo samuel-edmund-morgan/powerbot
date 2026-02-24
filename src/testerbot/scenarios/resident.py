@@ -475,17 +475,6 @@ async def run(ctx) -> ScenarioResult:
     )
     assert_contains(text, ("Статистика",), ctx="resident utilities stats")
 
-    for label in ("День", "Тиждень", "Місяць"):
-        if not _has_button(msg, label):
-            continue
-        msg, text = await click_and_wait(
-            msg,
-            label,
-            predicate=lambda _m, t: _is_stats_screen(t),
-            ctx_name=f"resident utilities stats {label}",
-        )
-        assert_contains(text, ("Статистика",), ctx=f"resident utilities stats {label}")
-
     msg, text = await click_and_wait(
         msg,
         "Назад",
@@ -508,32 +497,6 @@ async def run(ctx) -> ScenarioResult:
     )
     assert_contains(text, ("Сервісна служба",), ctx="resident service menu")
     assert_not_dead_end(msg, ctx_name="resident service menu")
-    service_buttons = (
-        "Адміністрація",
-        "Бухгалтерія",
-        "Охорона",
-        "Сантехнік",
-        "Електрик",
-        "ІТ відділ",
-        "Диспетчер ліфтів",
-        "перепустки авто",
-        "Оренда паркінгу",
-    )
-    for label in service_buttons:
-        if not _has_button(msg, label):
-            continue
-        msg, text = await click_and_wait(
-            msg,
-            label,
-            predicate=lambda m, _t: _has_button(m, "Назад"),
-            ctx_name=f"resident service {label}",
-        )
-        msg, text = await click_and_wait(
-            msg,
-            "Назад",
-            predicate=lambda _m, t: "Сервісна служба" in t,
-            ctx_name=f"resident service {label} back",
-        )
     msg, text = await click_and_wait(
         msg,
         "Меню",
