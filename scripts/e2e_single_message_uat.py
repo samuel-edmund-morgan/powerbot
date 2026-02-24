@@ -27,6 +27,7 @@ class Config:
     bot_username: str
     timeout_sec: int
     max_growth: int
+    min_clicks: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -37,6 +38,7 @@ class Config:
             bot_username=_strip_quotes(os.getenv("TESTERBOT_TARGET_POWERBOT_USERNAME", "")).lstrip("@"),
             timeout_sec=int(_strip_quotes(os.getenv("SINGLE_MESSAGE_UAT_TIMEOUT_SEC", "25")) or 25),
             max_growth=int(_strip_quotes(os.getenv("SINGLE_MESSAGE_UAT_MAX_GROWTH", "3")) or 3),
+            min_clicks=int(_strip_quotes(os.getenv("SINGLE_MESSAGE_UAT_MIN_CLICKS", "50")) or 50),
         )
 
 
@@ -67,6 +69,13 @@ async def _click_by_label(message, needle: str) -> bool:
     return False
 
 
+async def _click_first_available(message, labels: tuple[str, ...]) -> str | None:
+    for label in labels:
+        if await _click_by_label(message, label):
+            return label
+    return None
+
+
 async def _run(cfg: Config) -> None:
     from telethon import TelegramClient  # type: ignore
     from telethon.sessions import StringSession  # type: ignore
@@ -88,22 +97,34 @@ async def _run(cfg: Config) -> None:
         await client.send_message(target, "/start")
         msg, _ = await _wait_latest_bot_message(client, target, bot_id, cfg.timeout_sec)
 
-        sequence = (
-            "Світло/опалення/вода",
-            "Меню",
-            "Тривоги та укриття",
-            "Меню",
-            "Пошук закладу",
-        )
-
-        for step in sequence:
-            clicked = await _click_by_label(msg, step)
-            if not clicked:
-                # non-fatal: interface can differ slightly between revisions
-                continue
+        # Hard acceptance: drive 50+ interactive clicks and ensure it still behaves
+        # as single-message UI (minimal message growth).
+        clicks_done = 0
+        while clicks_done < max(cfg.min_clicks, 1):
+            # Prefer deterministic oscillation: main-menu -> light submenu -> menu.
+            clicked_label = await _click_first_available(
+                msg,
+                (
+                    "Світло/опалення/вода",
+                    "Меню",
+                    "« Меню",
+                    "« Назад",
+                    "Головне меню",
+                ),
+            )
+            if not clicked_label:
+                raise SystemExit(
+                    "ERROR: single-message UAT cannot find clickable navigation control "
+                    f"(clicks_done={clicks_done})"
+                )
+            clicks_done += 1
             msg, _ = await _wait_latest_bot_message(client, target, bot_id, cfg.timeout_sec)
             await asyncio.sleep(0.6)
 
+        # Text-input branch should also stay in single-message pattern.
+        if await _click_by_label(msg, "Пошук закладу"):
+            msg, _ = await _wait_latest_bot_message(client, target, bot_id, cfg.timeout_sec)
+            await asyncio.sleep(0.5)
         await client.send_message(target, "сирники")
         await _wait_latest_bot_message(client, target, bot_id, cfg.timeout_sec)
         await asyncio.sleep(0.8)
@@ -122,7 +143,9 @@ async def _run(cfg: Config) -> None:
                 f"ERROR: single-message UAT failed, bot message growth {growth} > {cfg.max_growth}"
             )
 
-        print(f"OK: single-message UAT passed (growth={growth}, max={cfg.max_growth})")
+        print(
+            f"OK: single-message UAT passed (clicks={clicks_done}, growth={growth}, max={cfg.max_growth})"
+        )
     finally:
         await client.disconnect()
 
@@ -130,14 +153,16 @@ async def _run(cfg: Config) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Telethon UAT for resident single-message flow")
     parser.add_argument("--max-growth", type=int, default=None)
+    parser.add_argument("--min-clicks", type=int, default=None)
     args = parser.parse_args()
 
     cfg = Config.from_env()
     if args.max_growth is not None:
         cfg.max_growth = int(args.max_growth)
+    if args.min_clicks is not None:
+        cfg.min_clicks = int(args.min_clicks)
     asyncio.run(_run(cfg))
 
 
 if __name__ == "__main__":
     main()
-
