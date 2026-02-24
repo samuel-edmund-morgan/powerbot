@@ -1,6 +1,8 @@
+import json
 import logging
 from datetime import datetime, timedelta
 
+import aiohttp
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
@@ -43,6 +45,7 @@ from business.service import BusinessCabinetService
 from business.service import NotFoundError as BusinessNotFoundError
 from business.service import ValidationError as BusinessValidationError
 from business.ui import render as render_business_ui
+from business.payments import decode_telegram_stars_payload
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1745,6 +1748,96 @@ async def _render_business_payment_refund_confirm(
     )
 
 
+def _extract_refund_target_from_payment_event(row: dict) -> tuple[int | None, str | None]:
+    """Extract Telegram refund target from a successful payment event."""
+    charge_id = str(row.get("external_payment_id") or "").strip()
+    if not charge_id:
+        return None, None
+
+    raw_payload_json = str(row.get("raw_payload_json") or "").strip()
+    if not raw_payload_json:
+        return None, charge_id
+
+    try:
+        raw_payload = json.loads(raw_payload_json)
+    except Exception:
+        return None, charge_id
+
+    invoice_payload = str(raw_payload.get("invoice_payload") or "").strip()
+    if invoice_payload:
+        decoded = decode_telegram_stars_payload(invoice_payload)
+        if decoded and int(decoded.tg_user_id) > 0:
+            return int(decoded.tg_user_id), charge_id
+
+    tg_user_id = int(raw_payload.get("tg_user_id") or 0)
+    if tg_user_id > 0:
+        return tg_user_id, charge_id
+    return None, charge_id
+
+
+async def _refund_telegram_stars_via_business_bot(
+    *,
+    user_id: int,
+    telegram_payment_charge_id: str,
+) -> tuple[bool, str]:
+    token = str(CFG.business_bot_api_key or "").strip()
+    if not token:
+        return False, "BUSINESS_BOT_API_KEY порожній."
+    if int(user_id) <= 0:
+        return False, "Не вдалося визначити user_id платника."
+    charge_id = str(telegram_payment_charge_id or "").strip()
+    if not charge_id:
+        return False, "Порожній telegram_payment_charge_id."
+
+    # Prefer aiogram Bot method when available; fallback to direct Bot API call.
+    api_error = ""
+    business_bot = Bot(token=token)
+    try:
+        refund_method = getattr(business_bot, "refund_star_payment", None)
+        if callable(refund_method):
+            try:
+                result = await refund_method(
+                    user_id=int(user_id),
+                    telegram_payment_charge_id=charge_id,
+                )
+                if bool(result):
+                    return True, "ok"
+            except Exception as error:
+                api_error = str(error).strip()
+    finally:
+        try:
+            await business_bot.session.close()
+        except Exception:
+            pass
+
+    timeout = aiohttp.ClientTimeout(total=20)
+    url = f"https://api.telegram.org/bot{token}/refundStarPayment"
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                url,
+                data={
+                    "user_id": str(int(user_id)),
+                    "telegram_payment_charge_id": charge_id,
+                },
+            ) as response:
+                payload = await response.json(content_type=None)
+    except Exception as error:
+        detail = str(error).strip() or "network_error"
+        return False, f"{api_error}; {detail}" if api_error else detail
+
+    if bool(payload.get("ok")) and bool(payload.get("result")):
+        return True, "ok"
+    description = str(payload.get("description") or "").strip()
+    lowered = description.lower()
+    if "already" in lowered and "refund" in lowered:
+        # Telegram already refunded this charge: treat as success for local reconcile path.
+        return True, description or "already_refunded"
+    if api_error:
+        description = f"{description}; {api_error}" if description else api_error
+    return False, description or "refundStarPayment failed"
+
+
 @router.callback_query(F.data.startswith(CB_BIZ_PAY_REFUND_PREFIX))
 async def cb_business_payment_refund(callback: CallbackQuery) -> None:
     if not await _require_admin_callback(callback):
@@ -1784,6 +1877,43 @@ async def cb_business_payment_refund_confirm(callback: CallbackQuery) -> None:
         return
 
     try:
+        row = await business_service.get_payment_event_admin(admin_id, event_id=event_id)
+    except (BusinessAccessDeniedError, BusinessValidationError, BusinessNotFoundError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to load payment event for refund event_id=%s", event_id)
+        await callback.answer("❌ Не вдалося завантажити платіжну подію", show_alert=True)
+        return
+
+    provider = str(row.get("provider") or "").strip().lower()
+    event_type = str(row.get("event_type") or "").strip().lower()
+    telegram_refund_note = ""
+    if provider == "telegram_stars" and event_type == "payment_succeeded":
+        payer_tg_user_id, charge_id = _extract_refund_target_from_payment_event(row)
+        if int(payer_tg_user_id or 0) <= 0:
+            await callback.answer("❌ Не вдалося визначити Telegram ID платника для refund.", show_alert=True)
+            return
+        if not charge_id:
+            await callback.answer("❌ Не вдалося визначити telegram_payment_charge_id.", show_alert=True)
+            return
+        external_ok, external_detail = await _refund_telegram_stars_via_business_bot(
+            user_id=int(payer_tg_user_id),
+            telegram_payment_charge_id=str(charge_id),
+        )
+        if not external_ok:
+            await callback.answer(
+                f"❌ Telegram refund не виконано: {external_detail}",
+                show_alert=True,
+            )
+            return
+        telegram_refund_note = (
+            "Telegram refund: ✅"
+            if external_detail in {"", "ok"}
+            else f"Telegram refund: {escape(external_detail)}"
+        )
+
+    try:
         outcome = await business_service.admin_mark_payment_refund(admin_id, event_id=event_id)
     except BusinessAccessDeniedError as error:
         await callback.answer(str(error), show_alert=True)
@@ -1803,7 +1933,12 @@ async def cb_business_payment_refund_confirm(callback: CallbackQuery) -> None:
         await callback.answer("❌ Помилка обробки refund", show_alert=True)
         return
 
-    note = "ℹ️ Refund вже був оброблений раніше." if outcome.get("duplicate") else "✅ Refund зафіксовано. Verified вимкнено."
+    if outcome.get("duplicate"):
+        note = "ℹ️ Refund вже був оброблений раніше."
+    else:
+        note = "✅ Refund зафіксовано. Verified вимкнено."
+    if telegram_refund_note:
+        note = f"{note}\n{telegram_refund_note}"
     await _render_business_payments(
         callback.bot,
         callback.message.chat.id,
