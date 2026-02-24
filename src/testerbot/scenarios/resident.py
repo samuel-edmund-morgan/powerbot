@@ -193,6 +193,10 @@ async def run(ctx) -> ScenarioResult:
             try:
                 i, j = find_button(current, needle)
             except AssertionError:
+                current_text = extract_text(current)
+                if predicate(current, current_text):
+                    ctx.record_seen_callbacks("resident", collect_message_callbacks(current))
+                    return current, current_text
                 current, _ = await wait_bot_message(
                     predicate=lambda m, _t: _has_button(m, needle),
                     ctx_name=f"{ctx_name} (refresh buttons)",
@@ -362,7 +366,7 @@ async def run(ctx) -> ScenarioResult:
                 msg, text = await click_and_wait(
                     msg,
                     "Обрати будинок",
-                    predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
+                    predicate=lambda _m, t: _is_building_picker_screen(_m, t),
                     ctx_name="resident buildings",
                 )
             else:
@@ -373,7 +377,7 @@ async def run(ctx) -> ScenarioResult:
                     msg, text = await click_and_wait(
                         latest_msg,
                         "Обрати будинок",
-                        predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
+                        predicate=lambda _m, t: _is_building_picker_screen(_m, t),
                         ctx_name="resident buildings latest click",
                     )
                 else:
