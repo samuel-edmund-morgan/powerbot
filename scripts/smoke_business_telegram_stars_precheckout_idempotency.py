@@ -102,6 +102,8 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
 
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
+    light_price = int(service.get_plan_price_stars("light"))
+    _assert(light_price > 0, f"invalid light stars price: {light_price}")
 
     intent = await service.create_payment_intent(
         tg_user_id=int(tg_user_id),
@@ -117,7 +119,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     first = await service.validate_telegram_stars_pre_checkout(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         pre_checkout_query_id="smoke-pc-1",
     )
@@ -127,7 +129,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     second = await service.validate_telegram_stars_pre_checkout(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         pre_checkout_query_id="smoke-pc-2",
     )
@@ -137,7 +139,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     success = await service.apply_telegram_stars_successful_payment(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         subscription_expiration_date=None,
         is_recurring=True,
@@ -151,7 +153,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     duplicate_success = await service.apply_telegram_stars_successful_payment(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         subscription_expiration_date=None,
         is_recurring=True,

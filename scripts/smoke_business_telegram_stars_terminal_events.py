@@ -108,6 +108,8 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
 
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
+    light_price = int(service.get_plan_price_stars("light"))
+    _assert(light_price > 0, f"invalid light stars price: {light_price}")
 
     # 1) cancel path
     place_cancel, tg_cancel = pairs[0]
@@ -122,7 +124,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     cancel_outcome = await service.apply_telegram_stars_terminal_event(
         tg_user_id=int(tg_cancel),
         invoice_payload=cancel_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         terminal_kind="cancel",
         telegram_payment_charge_id=cancel_charge_id,
@@ -134,7 +136,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     cancel_dup = await service.apply_telegram_stars_terminal_event(
         tg_user_id=int(tg_cancel),
         invoice_payload=cancel_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         terminal_kind="canceled",
         telegram_payment_charge_id=cancel_charge_id,
@@ -161,7 +163,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     fail_outcome = await service.apply_telegram_stars_terminal_event(
         tg_user_id=int(tg_fail),
         invoice_payload=fail_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         terminal_kind="fail",
         telegram_payment_charge_id=fail_charge_id,
@@ -173,7 +175,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     fail_dup = await service.apply_telegram_stars_terminal_event(
         tg_user_id=int(tg_fail),
         invoice_payload=fail_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         terminal_kind="failed",
         telegram_payment_charge_id=fail_charge_id,
@@ -201,7 +203,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     success = await service.apply_telegram_stars_successful_payment(
         tg_user_id=int(tg_refund),
         invoice_payload=refund_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         subscription_expiration_date=expiration_unix,
         is_recurring=True,
@@ -217,7 +219,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     refund_outcome = await service.apply_telegram_stars_terminal_event(
         tg_user_id=int(tg_refund),
         invoice_payload=refund_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         terminal_kind="refund",
         telegram_payment_charge_id=refund_charge_id,
@@ -229,7 +231,7 @@ async def _run_checks(pairs: list[tuple[int, int]]) -> None:
     refund_dup = await service.apply_telegram_stars_terminal_event(
         tg_user_id=int(tg_refund),
         invoice_payload=refund_invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         terminal_kind="refunded",
         telegram_payment_charge_id=refund_charge_id,

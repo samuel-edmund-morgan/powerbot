@@ -99,6 +99,8 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
 
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
+    light_price = int(service.get_plan_price_stars("light"))
+    _assert(light_price > 0, f"invalid light stars price: {light_price}")
 
     intent = await service.create_payment_intent(
         tg_user_id=int(tg_user_id),
@@ -112,7 +114,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     await service.validate_telegram_stars_pre_checkout(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         pre_checkout_query_id="smoke-refund-update-precheckout",
     )
@@ -122,7 +124,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     success = await service.apply_telegram_stars_successful_payment(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         subscription_expiration_date=expiration_unix,
         is_recurring=True,
@@ -137,7 +139,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     refund = await service.apply_telegram_stars_refund_update(
         tg_user_id=int(tg_user_id),
         invoice_payload="",
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         telegram_payment_charge_id=charge_id,
         provider_payment_charge_id="",
@@ -156,7 +158,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     dup = await service.apply_telegram_stars_refund_update(
         tg_user_id=int(tg_user_id),
         invoice_payload="",
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         telegram_payment_charge_id=charge_id,
         provider_payment_charge_id="",
@@ -190,4 +192,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
