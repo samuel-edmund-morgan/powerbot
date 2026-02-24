@@ -228,6 +228,66 @@ class InternalReplyPipeline:
             via_bot_id=sender_id,
         )
 
+    async def _fallback_via_adbot_command(
+        self,
+        *,
+        query: str,
+        internal_chat_id: int,
+        reply_to_message_id: int | None,
+    ) -> InternalReplyResult | None:
+        if not query or not self._target_powerbot_username:
+            return None
+
+        command = f"/adbot@{self._target_powerbot_username} {query}".strip()
+        try:
+            if reply_to_message_id:
+                prompt = await self._client.send_message(
+                    int(internal_chat_id),
+                    command,
+                    reply_to=int(reply_to_message_id),
+                )
+            else:
+                prompt = await self._client.send_message(int(internal_chat_id), command)
+        except TypeError:
+            if reply_to_message_id:
+                prompt = await self._client.send_message(
+                    int(internal_chat_id),
+                    command,
+                    int(reply_to_message_id),
+                )
+            else:
+                prompt = await self._client.send_message(int(internal_chat_id), command)
+        except Exception:
+            return None
+
+        prompt_message_id = int(getattr(prompt, "id", 0) or 0)
+        expected_sender_ids = set(self._allowed_resident_bot_ids)
+        if not expected_sender_ids:
+            resolved = await self._resolve_target_bot_id()
+            if resolved:
+                expected_sender_ids.add(int(resolved))
+
+        reply_msg = await self._wait_for_reply_to_message(
+            internal_chat_id=int(internal_chat_id),
+            prompt_message_id=prompt_message_id,
+            expected_sender_ids=expected_sender_ids,
+        )
+        if reply_msg is None:
+            return None
+
+        reply_text = self._message_text(reply_msg)
+        if len(reply_text) < self._min_nonempty_len:
+            return None
+
+        reply_message_id = int(getattr(reply_msg, "id", 0) or 0) or None
+        sender_id = int(getattr(reply_msg, "sender_id", 0) or 0) or None
+        return InternalReplyResult(
+            text=reply_text,
+            reason=None,
+            internal_message_id=reply_message_id,
+            via_bot_id=sender_id,
+        )
+
     async def _click_inline_to_internal(
         self,
         *,
@@ -317,6 +377,13 @@ class InternalReplyPipeline:
             )
             if mention_fallback is not None:
                 return mention_fallback
+            command_fallback = await self._fallback_via_adbot_command(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if command_fallback is not None:
+                return command_fallback
             return InternalReplyResult(
                 text=(fallback if not self._require_real else None),
                 reason="inline_empty",
@@ -335,6 +402,13 @@ class InternalReplyPipeline:
             )
             if mention_fallback is not None:
                 return mention_fallback
+            command_fallback = await self._fallback_via_adbot_command(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if command_fallback is not None:
+                return command_fallback
             return InternalReplyResult(
                 text=(fallback if not self._require_real else None),
                 reason="resident_no_reply",
@@ -350,6 +424,13 @@ class InternalReplyPipeline:
             )
             if mention_fallback is not None:
                 return mention_fallback
+            command_fallback = await self._fallback_via_adbot_command(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if command_fallback is not None:
+                return command_fallback
             return InternalReplyResult(
                 text=(fallback if not self._require_real else None),
                 reason="resident_no_reply",

@@ -4123,6 +4123,30 @@ async def inline_search(inline_query: InlineQuery):
     await inline_query.answer(results=articles, cache_time=60)
 
 
+@router.message(Command("adbot"))
+async def handle_adbot_internal_command(message: Message):
+    """Internal command for adbot pipeline fallback (admin-only)."""
+    user_id = int(message.from_user.id) if message.from_user else 0
+    if user_id <= 0 or user_id not in set(CFG.admin_ids):
+        return
+
+    raw_text = str(message.text or "").strip()
+    parts = raw_text.split(maxsplit=1)
+    query = parts[1].strip() if len(parts) > 1 else ""
+    if not query:
+        await message.reply("Використання: <code>/adbot &lt;запит&gt;</code>")
+        return
+
+    special = resolve_inline_special_result(query, cfg=CFG)
+    if special is not None:
+        await message.reply(special.message_text)
+        return
+
+    # Fallback to shared resident search renderer for non-special intents.
+    text = await do_search(query, user_id=user_id)
+    await message.reply(text)
+
+
 # Обробка тегу бота в групі
 @router.message(F.text.contains(f"@{CFG.bot_username}") if CFG.bot_username else F.text.regexp(r"^$"))
 async def handle_bot_mention(message: Message):
