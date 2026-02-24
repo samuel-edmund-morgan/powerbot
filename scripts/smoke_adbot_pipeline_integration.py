@@ -157,6 +157,7 @@ async def _run() -> None:
             "сантехнік": ("🔧 Сантехнік\n📞 067-000-00-00", None),
             "диспетчер ліфтів": ("🛗 Ліфти\n📞 2 контакти", None),
             "перепустка авто": ("🚗 Перепустка авто\nОформлення через сервісну службу", None),
+            "light_bind:1:2": ("☀️ Стан електропостачання в Ньюкасл секція 2", None),
         }
     )
     cooldown = CooldownGuard(3600)
@@ -169,6 +170,7 @@ async def _run() -> None:
         pipeline=pipeline,
         internal_pipeline=internal_pipeline,
         internal_chat_id=777001,
+        light_chat_bindings={-100128: (1, 2)},
         require_real_internal_reply=True,
     )
 
@@ -342,6 +344,21 @@ async def _run() -> None:
     _assert(
         any(item[0] == -100127 and item[2] == 777001 for item in forwarder.forwarded_to_source),
         f"car-pass flow should forward internal reply: {forwarder.forwarded_to_source}",
+    )
+
+    # Chat binding flow for light status: source chat is mapped to building/section.
+    evt_light_bound = _FakeEvent(
+        text="Чи є світло?",
+        chat_id=-100128,
+        msg_id=951,
+        forwarder=forwarder,
+    )
+    handled_light_bound = await listener.process(evt_light_bound, source_chat_id=evt_light_bound.chat_id)
+    _assert(handled_light_bound is True, "light-bound intent should be handled")
+    _assert(len(evt_light_bound.responses) == 0, "light-bound flow should prefer forwarded internal reply")
+    _assert(
+        ("light_bind:1:2", 777001, 700001) in internal_pipeline.calls,
+        f"light-bound query must be rewritten for internal pipeline: {internal_pipeline.calls}",
     )
 
 

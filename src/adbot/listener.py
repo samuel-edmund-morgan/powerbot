@@ -12,6 +12,7 @@ from adbot.matcher import analyze_intent_match
 from adbot.pipeline import InternalReplyPipeline, ResponsePipeline
 
 logger = logging.getLogger(__name__)
+LIGHT_STATUS_INTENT_CODE = "light_status"
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,9 @@ class AdbotListener:
         pipeline: ResponsePipeline,
         internal_pipeline: InternalReplyPipeline,
         internal_chat_id: int | None = None,
+        light_chat_bindings: dict[int, tuple[int, int]] | None = None,
         require_real_internal_reply: bool = True,
+        allow_text_fallback_on_forward_failure: bool = False,
         allow_self_outgoing_e2e: bool = False,
         self_user_id: int | None = None,
         self_outgoing_prefix: str = "[E2E]",
@@ -46,7 +49,9 @@ class AdbotListener:
         self._pipeline = pipeline
         self._internal_pipeline = internal_pipeline
         self._internal_chat_id = internal_chat_id
+        self._light_chat_bindings = dict(light_chat_bindings or {})
         self._require_real_internal_reply = bool(require_real_internal_reply)
+        self._allow_text_fallback_on_forward_failure = bool(allow_text_fallback_on_forward_failure)
         self._allow_self_outgoing_e2e = bool(allow_self_outgoing_e2e)
         self._self_user_id = int(self_user_id) if self_user_id else None
         self._self_outgoing_prefix = str(self_outgoing_prefix or "[E2E]").strip() or "[E2E]"
@@ -74,7 +79,8 @@ class AdbotListener:
         can see response origin in chat UI.
         Fallback mode: plain text reply to original source message.
         """
-        if internal_chat_id > 0 and int(internal_reply_message_id or 0) > 0:
+        has_forward_context = internal_chat_id > 0 and int(internal_reply_message_id or 0) > 0
+        if has_forward_context:
             reply_msg_id = int(internal_reply_message_id or 0)
             try:
                 forwarded = await event.client.forward_messages(
@@ -107,6 +113,8 @@ class AdbotListener:
                     internal_chat_id,
                     reply_msg_id,
                 )
+            if not self._allow_text_fallback_on_forward_failure:
+                return False, "forward_required"
 
         try:
             await event.respond(response_text, reply_to=int(source_message_id))
@@ -272,8 +280,15 @@ class AdbotListener:
             )
             return False
 
+        effective_query = str(intent.inline_query or "").strip()
+        if intent.code == LIGHT_STATUS_INTENT_CODE:
+            binding = self._light_chat_bindings.get(int(source_chat_id))
+            if binding:
+                bound_building_id, bound_section_id = binding
+                effective_query = f"light_bind:{int(bound_building_id)}:{int(bound_section_id)}"
+
         # Keep old pipeline call for telemetry parity / fallback mode support.
-        _ = await self._pipeline.answer(intent.inline_query, intent.fallback_reply)
+        _ = await self._pipeline.answer(effective_query, intent.fallback_reply)
         payload = build_audit_payload(
             chat_id=source_chat_id,
             user_id=int(sender_id),
@@ -297,7 +312,7 @@ class AdbotListener:
                     forwarded_message_id = None
 
         internal_result = await self._internal_pipeline.get_via_internal(
-            query=intent.inline_query,
+            query=effective_query,
             fallback=intent.fallback_reply,
             internal_chat_id=int(self._internal_chat_id or 0),
             reply_to_message_id=forwarded_message_id,

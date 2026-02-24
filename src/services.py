@@ -64,6 +64,8 @@ async def format_light_status(
     include_vote_prompt: bool = False,
     heating_stats: dict | None = None,
     water_stats: dict | None = None,
+    override_building_id: int | None = None,
+    override_section_id: int | None = None,
 ) -> str:
     """
     Форматувати статус світла зі шкалою для будинку користувача.
@@ -73,6 +75,18 @@ async def format_light_status(
 
     perf_start = asyncio.get_running_loop().time()
     user_building_id, user_section_id = await get_subscriber_building_and_section(user_id)
+    if override_building_id is not None:
+        try:
+            user_building_id = int(override_building_id)
+        except Exception:
+            user_building_id = None
+    if override_section_id is not None:
+        try:
+            user_section_id = int(override_section_id)
+        except Exception:
+            user_section_id = None
+    elif override_building_id is not None:
+        user_section_id = default_section_for_building(user_building_id)
     perf_after_building = asyncio.get_running_loop().time()
     user_building = get_building_by_id(user_building_id) if user_building_id else None
 

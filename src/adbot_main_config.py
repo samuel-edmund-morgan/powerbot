@@ -21,6 +21,36 @@ def parse_chat_ids(raw: str) -> tuple[int, ...]:
     return tuple(dict.fromkeys(out))
 
 
+def parse_light_chat_bindings(raw: str) -> dict[int, tuple[int, int]]:
+    """Parse chat->(building,section) bindings from env.
+
+    Format examples:
+    - "-100111:1:2,-100222:13:1"
+    - "-100111:1:2 -100222:13:1"
+    """
+    out: dict[int, tuple[int, int]] = {}
+    if not raw:
+        return out
+    normalized = str(raw).replace(",", " ").replace(";", " ")
+    for part in normalized.split():
+        token = part.strip()
+        if not token:
+            continue
+        bits = token.split(":")
+        if len(bits) != 3:
+            continue
+        try:
+            chat_id = int(bits[0].strip())
+            building_id = int(bits[1].strip())
+            section_id = int(bits[2].strip())
+        except ValueError:
+            continue
+        if chat_id == 0 or building_id <= 0 or section_id <= 0:
+            continue
+        out[int(chat_id)] = (int(building_id), int(section_id))
+    return out
+
+
 def parse_bool(raw: str, default: bool = False) -> bool:
     value = str(raw or "").strip().lower()
     if value in {"1", "true", "yes", "on"}:
@@ -40,6 +70,7 @@ class AdbotConfig:
     target_powerbot_username: str
     source_chat_ids: tuple[int, ...]
     internal_chat_id: int | None
+    light_chat_bindings: dict[int, tuple[int, int]]
     reply_cooldown_sec: int
     min_message_len: int
     max_message_len: int
@@ -48,6 +79,7 @@ class AdbotConfig:
     internal_reply_timeout_sec: int
     internal_min_nonempty_len: int
     internal_require_real_bot_reply: bool
+    source_allow_text_fallback_on_forward_failure: bool
     internal_allowed_resident_bot_ids: tuple[int, ...]
     allow_self_outgoing_e2e: bool
     self_outgoing_prefix: str
@@ -84,6 +116,8 @@ def build_config() -> AdbotConfig:
     if internal_chat_id is None and not test_mode:
         raise ValueError("ADBOT_INTERNAL_CHAT_ID is required (non-test mode)")
 
+    light_chat_bindings = parse_light_chat_bindings(os.getenv("ADBOT_LIGHT_CHAT_BINDINGS", ""))
+
     allowed_resident_bot_ids = parse_chat_ids(os.getenv("ADBOT_INTERNAL_ALLOWED_RESIDENT_BOT_IDS", ""))
 
     allow_self_outgoing_e2e = parse_bool(
@@ -106,6 +140,7 @@ def build_config() -> AdbotConfig:
         target_powerbot_username=target_powerbot_username,
         source_chat_ids=source_chat_ids,
         internal_chat_id=internal_chat_id,
+        light_chat_bindings=light_chat_bindings,
         reply_cooldown_sec=int(os.getenv("ADBOT_REPLY_COOLDOWN_SEC", "10800")),
         min_message_len=int(os.getenv("ADBOT_MIN_MESSAGE_LEN", "12")),
         max_message_len=int(os.getenv("ADBOT_MAX_MESSAGE_LEN", "280")),
@@ -116,6 +151,10 @@ def build_config() -> AdbotConfig:
         internal_require_real_bot_reply=parse_bool(
             os.getenv("ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY", "1"),
             default=True,
+        ),
+        source_allow_text_fallback_on_forward_failure=parse_bool(
+            os.getenv("ADBOT_SOURCE_ALLOW_TEXT_FALLBACK", "0"),
+            default=False,
         ),
         internal_allowed_resident_bot_ids=allowed_resident_bot_ids,
         allow_self_outgoing_e2e=allow_self_outgoing_e2e,

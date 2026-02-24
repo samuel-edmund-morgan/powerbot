@@ -56,6 +56,21 @@ def _parse_int_env(name: str) -> int | None:
 
 
 ADBOT_INTERNAL_CHAT_ID = _parse_int_env("ADBOT_INTERNAL_CHAT_ID")
+ADBOT_LIGHT_BIND_RE = re.compile(r"^\s*light_bind:(\d+):(\d+)\s*$", re.IGNORECASE)
+
+
+def _parse_adbot_light_bind_query(raw_query: str) -> tuple[int, int] | None:
+    match = ADBOT_LIGHT_BIND_RE.match(str(raw_query or ""))
+    if not match:
+        return None
+    try:
+        building_id = int(match.group(1))
+        section_id = int(match.group(2))
+    except Exception:
+        return None
+    if building_id <= 0 or section_id <= 0:
+        return None
+    return building_id, section_id
 
 
 def _chat_id_variants(chat_id: int) -> set[int]:
@@ -4223,6 +4238,18 @@ async def handle_adbot_internal_command(message: Message):
 
     if not query:
         await _safe_send("Використання: <code>/adbot &lt;запит&gt;</code>")
+        return
+
+    light_binding = _parse_adbot_light_bind_query(query)
+    if light_binding is not None:
+        bound_building_id, bound_section_id = light_binding
+        text = await format_light_status(
+            user_id=user_id or chat_id,
+            include_vote_prompt=False,
+            override_building_id=int(bound_building_id),
+            override_section_id=int(bound_section_id),
+        )
+        await _safe_send(text)
         return
 
     special = resolve_inline_special_result(query, cfg=CFG)

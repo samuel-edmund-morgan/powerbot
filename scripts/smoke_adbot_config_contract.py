@@ -65,17 +65,24 @@ def _base_env() -> dict[str, str]:
         "ADBOT_INTERNAL_REPLY_TIMEOUT_SEC": "8",
         "ADBOT_INTERNAL_MIN_NONEMPTY_LEN": "10",
         "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY": "1",
+        "ADBOT_SOURCE_ALLOW_TEXT_FALLBACK": "0",
         "ADBOT_INTERNAL_ALLOWED_RESIDENT_BOT_IDS": "12345 67890",
+        "ADBOT_LIGHT_CHAT_BINDINGS": "-100111:1:2,-100222:13:1",
     }
 
 
 def main() -> None:
     _bootstrap_imports()
-    from adbot_main_config import build_config, parse_chat_ids
+    from adbot_main_config import build_config, parse_chat_ids, parse_light_chat_bindings
 
     # parse_chat_ids contract
     parsed = parse_chat_ids("-1001, -1002 bad-token 1003 -1001")
     _assert(parsed == (-1001, -1002, 1003), f"unexpected parse_chat_ids result: {parsed}")
+    parsed_bindings = parse_light_chat_bindings("-1001:1:2, -1002:13:1 bad-token")
+    _assert(
+        parsed_bindings == {-1001: (1, 2), -1002: (13, 1)},
+        f"unexpected light bindings parse: {parsed_bindings}",
+    )
 
     # Valid non-test config
     with _patched_env(**_base_env()):
@@ -92,8 +99,16 @@ def main() -> None:
         _assert(cfg.internal_min_nonempty_len == 10, "unexpected internal min nonempty len")
         _assert(cfg.internal_require_real_bot_reply is True, "internal real reply must default true")
         _assert(
+            cfg.source_allow_text_fallback_on_forward_failure is False,
+            "source text fallback should be disabled by default",
+        )
+        _assert(
             cfg.internal_allowed_resident_bot_ids == (12345, 67890),
             f"unexpected internal allowed bot ids: {cfg.internal_allowed_resident_bot_ids}",
+        )
+        _assert(
+            cfg.light_chat_bindings == {-100111: (1, 2), -100222: (13, 1)},
+            f"unexpected light chat bindings: {cfg.light_chat_bindings}",
         )
 
     # Username should be sanitized from leading @.

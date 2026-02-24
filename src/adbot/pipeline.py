@@ -136,6 +136,14 @@ class InternalReplyPipeline:
         except Exception:
             return None
 
+    async def _expected_sender_ids(self) -> set[int]:
+        expected_sender_ids = set(self._allowed_resident_bot_ids)
+        if not expected_sender_ids:
+            resolved = await self._resolve_target_bot_id()
+            if resolved:
+                expected_sender_ids.add(int(resolved))
+        return expected_sender_ids
+
     async def _wait_for_reply_to_message(
         self,
         *,
@@ -201,11 +209,7 @@ class InternalReplyPipeline:
             return None
 
         prompt_message_id = int(getattr(prompt, "id", 0) or 0)
-        expected_sender_ids = set(self._allowed_resident_bot_ids)
-        if not expected_sender_ids:
-            resolved = await self._resolve_target_bot_id()
-            if resolved:
-                expected_sender_ids.add(int(resolved))
+        expected_sender_ids = await self._expected_sender_ids()
 
         reply_msg = await self._wait_for_reply_to_message(
             internal_chat_id=int(internal_chat_id),
@@ -261,11 +265,7 @@ class InternalReplyPipeline:
             return None
 
         prompt_message_id = int(getattr(prompt, "id", 0) or 0)
-        expected_sender_ids = set(self._allowed_resident_bot_ids)
-        if not expected_sender_ids:
-            resolved = await self._resolve_target_bot_id()
-            if resolved:
-                expected_sender_ids.add(int(resolved))
+        expected_sender_ids = await self._expected_sender_ids()
 
         reply_msg = await self._wait_for_reply_to_message(
             internal_chat_id=int(internal_chat_id),
@@ -394,6 +394,31 @@ class InternalReplyPipeline:
         text = self._message_text(inserted)
         internal_message_id = int(getattr(inserted, "id", 0) or 0) or None
         via_bot_id = int(getattr(inserted, "via_bot_id", 0) or 0) or None
+        sender_id = int(getattr(inserted, "sender_id", 0) or 0) or None
+        expected_sender_ids = await self._expected_sender_ids()
+        # Inline insertion usually produces a user-authored message with via_bot metadata.
+        # For "forwarded-from-bot" delivery we need a real bot-authored message in internal chat.
+        if (not expected_sender_ids) or (sender_id not in expected_sender_ids):
+            command_fallback = await self._fallback_via_adbot_command(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if command_fallback is not None:
+                return command_fallback
+            mention_fallback = await self._fallback_via_direct_mention(
+                query=query,
+                internal_chat_id=int(internal_chat_id),
+                reply_to_message_id=reply_to_message_id,
+            )
+            if mention_fallback is not None:
+                return mention_fallback
+            return InternalReplyResult(
+                text=(fallback if not self._require_real else None),
+                reason="resident_no_reply",
+                internal_message_id=internal_message_id,
+                via_bot_id=via_bot_id,
+            )
         if self._allowed_resident_bot_ids and via_bot_id not in set(self._allowed_resident_bot_ids):
             mention_fallback = await self._fallback_via_direct_mention(
                 query=query,
