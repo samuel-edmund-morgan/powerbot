@@ -4179,23 +4179,51 @@ async def handle_adbot_internal_command(message: Message):
         and int(ADBOT_INTERNAL_CHAT_ID) in _chat_id_variants(chat_id)
     )
     if not is_admin and not is_adbot_internal_chat:
+        logger.info(
+            "adbot_internal_command denied: user_id=%s chat_id=%s is_admin=%s is_internal=%s env_internal_chat_id=%s",
+            user_id,
+            chat_id,
+            is_admin,
+            is_adbot_internal_chat,
+            ADBOT_INTERNAL_CHAT_ID,
+        )
         return
 
     raw_text = str(message.text or "").strip()
     parts = raw_text.split(maxsplit=1)
     query = parts[1].strip() if len(parts) > 1 else ""
+    logger.info(
+        "adbot_internal_command accepted: user_id=%s chat_id=%s query=%s",
+        user_id,
+        chat_id,
+        query,
+    )
+
+    async def _safe_send(text: str) -> None:
+        try:
+            await message.reply(text)
+            return
+        except Exception as exc:
+            logger.warning(
+                "adbot_internal_command reply failed; fallback to answer: user_id=%s chat_id=%s err=%s",
+                user_id,
+                chat_id,
+                exc,
+            )
+        await message.answer(text)
+
     if not query:
-        await message.reply("Використання: <code>/adbot &lt;запит&gt;</code>")
+        await _safe_send("Використання: <code>/adbot &lt;запит&gt;</code>")
         return
 
     special = resolve_inline_special_result(query, cfg=CFG)
     if special is not None:
-        await message.reply(special.message_text)
+        await _safe_send(special.message_text)
         return
 
     # Fallback to shared resident search renderer for non-special intents.
     text = await do_search(query, user_id=user_id)
-    await message.reply(text)
+    await _safe_send(text)
 
 
 # Обробка тегу бота в групі
