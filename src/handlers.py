@@ -45,6 +45,19 @@ PLAIN_HOST_WITH_PATH_RE = re.compile(
 )
 
 
+def _parse_int_env(name: str) -> int | None:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+ADBOT_INTERNAL_CHAT_ID = _parse_int_env("ADBOT_INTERNAL_CHAT_ID")
+
+
 def _resident_verified_tier_title(raw_tier: str | None) -> str:
     normalized = str(raw_tier or "").strip().lower()
     return RESIDENT_VERIFIED_TIER_TITLES.get(normalized, normalized.upper())
@@ -4127,7 +4140,14 @@ async def inline_search(inline_query: InlineQuery):
 async def handle_adbot_internal_command(message: Message):
     """Internal command for adbot pipeline fallback (admin-only)."""
     user_id = int(message.from_user.id) if message.from_user else 0
-    if user_id <= 0 or user_id not in set(CFG.admin_ids):
+    chat_id = int(message.chat.id) if message.chat else 0
+    is_admin = user_id > 0 and user_id in set(CFG.admin_ids)
+    is_adbot_internal_chat = (
+        ADBOT_INTERNAL_CHAT_ID is not None
+        and chat_id != 0
+        and chat_id == int(ADBOT_INTERNAL_CHAT_ID)
+    )
+    if not is_admin and not is_adbot_internal_chat:
         return
 
     raw_text = str(message.text or "").strip()
