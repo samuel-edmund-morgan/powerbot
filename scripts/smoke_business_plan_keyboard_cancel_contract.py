@@ -4,7 +4,7 @@ Smoke test: business plan keyboard cancel/free contract.
 
 Checks:
 - paid active (not expired) -> show `🚫 Скасувати автопродовження` with `bp_cancel`.
-- paid canceled (not expired) -> show `🚫 Автопродовження скасовано` without `bp_cancel`.
+- paid canceled (not expired) -> show `🚫 Автопродовження скасовано` with `bp_cancel` (explicit feedback, no silent noop).
 - free/inactive -> show regular Free button (no cancel controls).
 """
 
@@ -118,7 +118,7 @@ def main() -> None:
     _ensure_dotenv_stub()
     _ensure_aiosqlite_stub()
     _ensure_config_env()
-    from business.handlers import CB_MENU_NOOP, build_plan_keyboard  # noqa: E402
+    from business.handlers import build_plan_keyboard  # noqa: E402
 
     place_id = 77
     now = datetime.now(timezone.utc)
@@ -138,7 +138,7 @@ def main() -> None:
     _assert(cancel_btn[1] == f"bp_cancel:{place_id}:card", f"unexpected cancel callback: {cancel_btn}")
     _assert(_find_first(rows_active, "Автопродовження скасовано") is None, "active paid plan must not show canceled badge button")
 
-    # Case 2: canceled paid -> disabled canceled status button, no bp_cancel callback.
+    # Case 2: canceled paid -> explicit canceled status button with bp_cancel callback.
     kb_canceled = build_plan_keyboard(
         place_id,
         "light",
@@ -149,8 +149,7 @@ def main() -> None:
     rows_canceled = _buttons(kb_canceled)
     canceled_btn = _find_first(rows_canceled, "Автопродовження скасовано")
     _assert(canceled_btn is not None, "canceled paid plan must show canceled status button")
-    _assert(canceled_btn[1] == CB_MENU_NOOP, f"canceled button must be noop: {canceled_btn}")
-    _assert(all(not cb.startswith("bp_cancel:") for _, cb in rows_canceled), "canceled paid plan must not show bp_cancel callback")
+    _assert(canceled_btn[1] == f"bp_cancel:{place_id}:card", f"canceled button must use bp_cancel callback: {canceled_btn}")
 
     # Case 3: free/inactive -> regular Free button, no cancel controls.
     kb_free = build_plan_keyboard(
