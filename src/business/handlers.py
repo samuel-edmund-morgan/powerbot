@@ -705,23 +705,19 @@ def build_plan_keyboard(
     first_row = []
     for tier in ("free", "light"):
         if tier == "free" and not show_free_option:
-            if normalized_status == "active" and has_paid_entitlement:
-                cancel_cb = f"bp_cancel:{place_id}:{source}" if source else f"bp_cancel:{place_id}"
-                first_row.append(
-                    ikb(
-                        text="🚫 Скасувати автопродовження",
-                        callback_data=cancel_cb,
-                        style=STYLE_DANGER,
-                    )
+            cancel_cb = f"bp_cancel:{place_id}:{source}" if source else f"bp_cancel:{place_id}"
+            cancel_label = (
+                "🚫 Скасувати автопродовження"
+                if normalized_status == "active" and has_paid_entitlement
+                else "🚫 Автопродовження скасовано"
+            )
+            first_row.append(
+                ikb(
+                    text=cancel_label,
+                    callback_data=cancel_cb,
+                    style=STYLE_DANGER,
                 )
-            else:
-                first_row.append(
-                    ikb(
-                        text="🚫 Автопродовження скасовано",
-                        callback_data=CB_MENU_NOOP,
-                        style=STYLE_DANGER,
-                    )
-                )
+            )
             continue
 
         title = PLAN_TITLES[tier]
