@@ -361,6 +361,23 @@ async def _run() -> None:
         f"light-bound query must be rewritten for internal pipeline: {internal_pipeline.calls}",
     )
 
+    # Unbound light-status chat: must keep generic query (no light_bind rewrite).
+    evt_light_unbound = _FakeEvent(
+        text="Чи є світло?",
+        chat_id=-100129,
+        msg_id=952,
+        forwarder=forwarder,
+    )
+    handled_light_unbound = await listener.process(
+        evt_light_unbound,
+        source_chat_id=evt_light_unbound.chat_id,
+    )
+    _assert(handled_light_unbound is True, "light-status intent in unbound chat should be handled")
+    _assert(
+        ("світло", 777001, 700001) in internal_pipeline.calls,
+        f"unbound light chat must use generic query: {internal_pipeline.calls}",
+    )
+
 
 def main() -> None:
     asyncio.run(_run())
