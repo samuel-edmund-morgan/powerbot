@@ -90,8 +90,20 @@ def _is_stats_screen(text: str) -> bool:
 def _is_building_picker_screen(message, text: str) -> bool:
     if _text_has_any(text, "оберіть свій будинок", "оберіть ваш будинок"):
         return True
-    # Fallback: explicit building buttons are visible, plus menu/back control.
-    if _has_button(message, "Ньюкасл") and (_has_button(message, "Меню") or _has_button(message, "Назад")):
+    # Fallback: explicit building buttons are visible.
+    labels = [
+        str(getattr(btn, "text", "")).strip()
+        for row in (getattr(message, "buttons", None) or [])
+        for btn in row
+    ]
+    explicit_buildings = 0
+    for label in labels:
+        normalized = label.casefold()
+        if "меню" in normalized or "назад" in normalized:
+            continue
+        if ("(" in label and ")" in label) or ("престон" in normalized):
+            explicit_buildings += 1
+    if explicit_buildings >= 3:
         return True
     return False
 
