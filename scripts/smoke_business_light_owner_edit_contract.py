@@ -138,7 +138,7 @@ async def _run_checks(place_id: int) -> None:
         OWNER_ID,
         int(place_id),
         "link_url",
-        "https://example.org/light-contract",
+        "example.org/light-contract",
     )
     await service.update_place_contact(
         OWNER_ID,

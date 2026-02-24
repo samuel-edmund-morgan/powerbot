@@ -152,6 +152,35 @@ async def _run_checks(place_id: int) -> None:
             f"link flow must acknowledge without callback URL redirect: {safe_calls[-1]}",
         )
 
+        # 1b) Link callback with plain domain value must be normalized to https://.
+        async with open_db() as db:
+            await db.execute("UPDATE places SET link_url = ? WHERE id = ?", ("example.org/smoke-link", int(place_id)))
+            await db.commit()
+
+        msg_link_domain = _DummyMessage()
+        cb_link_domain = _DummyCallback(f"plink_{int(place_id)}", msg_link_domain)
+        before_link_domain = await _get_click_sum(int(place_id), "link")
+        await resident_handlers.cb_place_link_open(cb_link_domain)
+        after_link_domain = await _get_click_sum(int(place_id), "link")
+        _assert(
+            after_link_domain == before_link_domain + 1,
+            f"plain-domain link click counter mismatch: {before_link_domain}->{after_link_domain}",
+        )
+        _assert(
+            len(msg_link_domain.edits) == 1,
+            f"plain-domain link flow must edit current message once: {msg_link_domain.edits}",
+        )
+        domain_buttons = [
+            btn
+            for row in getattr(msg_link_domain.edits[0].get("reply_markup"), "inline_keyboard", [])
+            for btn in row
+        ]
+        _assert(bool(domain_buttons), f"plain-domain panel must contain buttons: {msg_link_domain.edits[0]}")
+        _assert(
+            str(getattr(domain_buttons[0], "url", "") or "") == "https://example.org/smoke-link",
+            f"plain-domain URL normalization mismatch: {domain_buttons}",
+        )
+
         # 2) Coupon callback success path.
         msg_coupon = _DummyMessage()
         cb_coupon = _DummyCallback(f"pcoupon_{int(place_id)}", msg_coupon)

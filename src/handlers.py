@@ -39,6 +39,9 @@ RESIDENT_VERIFIED_TIER_TITLES = {
     "partner": "Partner",
 }
 TELEGRAM_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+PLAIN_HOST_WITH_PATH_RE = re.compile(
+    r"^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}(?::\d{2,5})?(?:[/?#].*)?$"
+)
 
 
 def _resident_verified_tier_title(raw_tier: str | None) -> str:
@@ -2303,6 +2306,8 @@ def _normalize_place_link(raw: str | None) -> str | None:
     value = str(raw or "").strip()
     if not value:
         return None
+    if any(ch.isspace() for ch in value):
+        return None
     lowered = value.lower()
     if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("tg://"):
         return value
@@ -2316,6 +2321,9 @@ def _normalize_place_link(raw: str | None) -> str | None:
     # Plain username (best-effort).
     if re.fullmatch(r"[A-Za-z0-9_]{5,32}", value):
         return f"https://t.me/{value}"
+    # Plain host/path (best-effort): example.com/path -> https://example.com/path
+    if PLAIN_HOST_WITH_PATH_RE.fullmatch(value):
+        return "https://" + value
     return None
 
 

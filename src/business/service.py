@@ -40,6 +40,9 @@ CLAIM_TOKEN_BULK_CHUNK_SIZE = 400  # Keep well under SQLite variable limit.
 PROMO_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,31}$")
 TG_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
 TG_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+PLAIN_HOST_WITH_PATH_RE = re.compile(
+    r"^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}(?::\d{2,5})?(?:[/?#].*)?$"
+)
 
 
 class BusinessCabinetError(RuntimeError):
@@ -172,6 +175,37 @@ def _normalize_chat_contact_value(raw_value: str) -> str:
         raise ValidationError("Для кнопки «Написати» вкажи @username або t.me/username.")
 
     return f"@{username}"
+
+
+def _normalize_public_link_value(raw_value: str) -> str:
+    """Normalize owner-entered link fields to a canonical URL."""
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+    if any(ch.isspace() for ch in value):
+        raise ValidationError("Посилання не повинно містити пробіли.")
+
+    lowered = value.lower()
+    if lowered.startswith(("http://", "https://", "tg://")):
+        return value
+    if lowered.startswith("t.me/"):
+        return "https://" + value
+
+    if value.startswith("@"):
+        username = value[1:].strip()
+        if not TG_USERNAME_RE.fullmatch(username):
+            raise ValidationError("Для Telegram-посилання вкажи @username або t.me/username.")
+        return f"https://t.me/{username}"
+
+    if TG_USERNAME_RE.fullmatch(value):
+        return f"https://t.me/{value}"
+
+    if PLAIN_HOST_WITH_PATH_RE.fullmatch(value):
+        return f"https://{value}"
+
+    raise ValidationError(
+        "Посилання має починатися з https://, t.me/, @username або бути доменом (example.com)."
+    )
 
 
 def _is_supported_media_reference(raw_value: str) -> bool:
@@ -1756,15 +1790,7 @@ class BusinessCabinetService:
             if clean_value and len(clean_value) > 300:
                 raise ValidationError("Посилання занадто довге.")
             if clean_value:
-                lowered = clean_value.lower()
-                if not (
-                    lowered.startswith("http://")
-                    or lowered.startswith("https://")
-                    or lowered.startswith("tg://")
-                    or lowered.startswith("t.me/")
-                    or lowered.startswith("@")
-                ):
-                    raise ValidationError("Посилання має починатися з https://, t.me/ або @username.")
+                clean_value = _normalize_public_link_value(clean_value)
 
         kwargs: dict[str, Any] = {normalized_field: clean_value}
         updated_place = await self.repository.update_place_business_profile(place_id, **kwargs)
