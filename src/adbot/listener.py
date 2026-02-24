@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from dataclasses import dataclass
 
 from adbot.audit import build_audit_payload, build_decision_payload, log_decision, log_match
@@ -93,37 +94,62 @@ class AdbotListener:
             return False, "forward_required"
         if has_forward_context:
             reply_msg_id = int(internal_reply_message_id or 0)
-            try:
-                forwarded = await event.client.forward_messages(
-                    int(source_chat_id),
-                    reply_msg_id,
-                    int(internal_chat_id),
-                )
-                if _forward_ok(forwarded):
-                    return True, "forwarded"
-            except TypeError:
+            max_attempts = 4 if self._require_source_forwarded else 1
+            for attempt in range(1, max_attempts + 1):
                 try:
                     forwarded = await event.client.forward_messages(
-                        entity=int(source_chat_id),
-                        messages=reply_msg_id,
-                        from_peer=int(internal_chat_id),
+                        int(source_chat_id),
+                        reply_msg_id,
+                        int(internal_chat_id),
                     )
                     if _forward_ok(forwarded):
                         return True, "forwarded"
-                except Exception:
-                    logger.exception(
-                        "failed to forward internal reply to source chat source_chat_id=%s internal_chat_id=%s internal_msg_id=%s",
+                    logger.warning(
+                        "forward attempt returned empty result source_chat_id=%s internal_chat_id=%s internal_msg_id=%s attempt=%s/%s",
                         source_chat_id,
                         internal_chat_id,
                         reply_msg_id,
+                        attempt,
+                        max_attempts,
                     )
-            except Exception:
-                logger.exception(
-                    "failed to forward internal reply to source chat source_chat_id=%s internal_chat_id=%s internal_msg_id=%s",
-                    source_chat_id,
-                    internal_chat_id,
-                    reply_msg_id,
-                )
+                except TypeError:
+                    try:
+                        forwarded = await event.client.forward_messages(
+                            entity=int(source_chat_id),
+                            messages=reply_msg_id,
+                            from_peer=int(internal_chat_id),
+                        )
+                        if _forward_ok(forwarded):
+                            return True, "forwarded"
+                        logger.warning(
+                            "forward attempt (keyword signature) returned empty result source_chat_id=%s internal_chat_id=%s internal_msg_id=%s attempt=%s/%s",
+                            source_chat_id,
+                            internal_chat_id,
+                            reply_msg_id,
+                            attempt,
+                            max_attempts,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "failed to forward internal reply to source chat source_chat_id=%s internal_chat_id=%s internal_msg_id=%s attempt=%s/%s",
+                            source_chat_id,
+                            internal_chat_id,
+                            reply_msg_id,
+                            attempt,
+                            max_attempts,
+                        )
+                except Exception:
+                    logger.exception(
+                        "failed to forward internal reply to source chat source_chat_id=%s internal_chat_id=%s internal_msg_id=%s attempt=%s/%s",
+                        source_chat_id,
+                        internal_chat_id,
+                        reply_msg_id,
+                        attempt,
+                        max_attempts,
+                    )
+
+                if attempt < max_attempts:
+                    await asyncio.sleep(0.35 * attempt)
             if self._require_source_forwarded or not self._allow_text_fallback_on_forward_failure:
                 return False, "forward_required"
 
