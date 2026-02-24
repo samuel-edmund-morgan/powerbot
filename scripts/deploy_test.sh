@@ -6,6 +6,7 @@ DOCKERHUB_USER="${DOCKERHUB_USER:-semorgana}"
 VERSION="${VERSION:-$(date +%Y.%m.%d-%H%M)}"
 MIGRATE="${MIGRATE:-0}"
 TEST_DIR="/opt/powerbot-test"
+TESTERBOT_RUN_TIMEOUT_SEC="${TESTERBOT_RUN_TIMEOUT_SEC:-420}"
 
 strip_quotes() {
   local value="${1:-}"
@@ -254,7 +255,13 @@ if should_enable_testerbot "${TEST_DIR}/.env"; then
     echo "ERROR: docker-compose.testerbot.yml is missing in ${TEST_DIR}"
     exit 1
   fi
-  docker compose -f docker-compose.yml -f docker-compose.testerbot.yml --profile testerbot run --rm testerbot
+  if ! timeout "${TESTERBOT_RUN_TIMEOUT_SEC}" docker compose -f docker-compose.yml -f docker-compose.testerbot.yml --profile testerbot run --rm testerbot; then
+    run_exit_code=$?
+    if [[ "${run_exit_code}" -eq 124 ]]; then
+      echo "ERROR: testerbot regression suite exceeded ${TESTERBOT_RUN_TIMEOUT_SEC}s timeout."
+    fi
+    exit "${run_exit_code}"
+  fi
   echo "Running testerbot callback coverage runtime smoke test..."
   python3 "${REPO_DIR}/scripts/smoke_testerbot_callback_coverage_runtime.py" \
     --coverage-file "${TEST_DIR}/logs/testerbot_callback_coverage.json" \
