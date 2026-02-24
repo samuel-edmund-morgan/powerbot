@@ -100,6 +100,8 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
 
     repo = BusinessRepository()
     service = BusinessCabinetService(repository=repo)
+    light_price = int(service.get_plan_price_stars("light"))
+    _assert(light_price > 0, f"invalid light stars price: {light_price}")
 
     intent = await service.create_payment_intent(
         tg_user_id=int(tg_user_id),
@@ -119,13 +121,13 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     pre = await service.validate_telegram_stars_pre_checkout(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         pre_checkout_query_id="smoke-precheckout",
     )
     _assert(int(pre.get("place_id") or 0) == int(place_id), "pre_checkout place_id mismatch")
     _assert(str(pre.get("tier") or "") == "light", "pre_checkout tier mismatch")
-    _assert(int(pre.get("amount_stars") or 0) == 1000, "pre_checkout amount mismatch")
+    _assert(int(pre.get("amount_stars") or 0) == light_price, "pre_checkout amount mismatch")
 
     # Expiration in the future (Telegram sends unix timestamp, UTC).
     expiration_unix = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
@@ -133,7 +135,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     success = await service.apply_telegram_stars_successful_payment(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         subscription_expiration_date=expiration_unix,
         is_recurring=True,
@@ -158,7 +160,7 @@ async def _run_checks(place_id: int, tg_user_id: int) -> None:
     duplicate = await service.apply_telegram_stars_successful_payment(
         tg_user_id=int(tg_user_id),
         invoice_payload=invoice_payload,
-        total_amount=1000,
+        total_amount=light_price,
         currency="XTR",
         subscription_expiration_date=expiration_unix,
         is_recurring=True,
