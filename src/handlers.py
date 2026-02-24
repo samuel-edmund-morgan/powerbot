@@ -692,18 +692,6 @@ def get_service_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def _resident_support_contact_line() -> str:
-    return "💬 Побачили неточність? Напишіть у підтримку через «📞 Сервісна служба»."
-
-
-def _resident_add_category_contact_line() -> str:
-    return "💬 Хочете додати категорію? Напишіть у підтримку через «📞 Сервісна служба»."
-
-
-def _resident_add_place_contact_line() -> str:
-    return "💬 Хочете додати заклад? Напишіть у підтримку через «📞 Сервісна служба»."
-
-
 def get_quiet_keyboard(back_callback: str = "notifications_menu") -> InlineKeyboardMarkup:
     """Клавіатура для налаштування тихих годин."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1370,7 +1358,6 @@ async def cb_shelter_detail(callback: CallbackQuery):
     if shelter["address"]:
         text += f"📍 <b>Локація:</b> {shelter['address']}\n\n"
     text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
-    text += _resident_support_contact_line()
     
     map_file = get_map_file_for_address(shelter["address"])
     
@@ -2316,8 +2303,7 @@ async def reply_places(message: Message):
             chat_id=message.chat.id,
             text=(
                 "🏢 <b>Заклади в ЖК</b>\n\n"
-                "Поки що категорій немає.\n\n"
-                f"{_resident_add_category_contact_line()}"
+                "Поки що категорій немає."
             ),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="« Меню", callback_data="menu")]]
@@ -2331,8 +2317,7 @@ async def reply_places(message: Message):
         chat_id=message.chat.id,
         text=(
             "🏢 <b>Заклади в ЖК</b>\n\n"
-            f"Оберіть категорію:\n\n"
-            f"{_resident_add_category_contact_line()}"
+            "Оберіть категорію:"
         ),
         reply_markup=await get_places_keyboard(),
         context_key="places_menu",
@@ -2350,8 +2335,7 @@ async def cb_places_menu(callback: CallbackQuery):
     if not services:
         await callback.message.edit_text(
             "🏢 <b>Заклади в ЖК</b>\n\n"
-            "Поки що категорій немає.\n\n"
-            f"{_resident_add_category_contact_line()}",
+            "Поки що категорій немає.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="« Меню", callback_data="menu")],
             ])
@@ -2361,8 +2345,7 @@ async def cb_places_menu(callback: CallbackQuery):
     
     await callback.message.edit_text(
         "🏢 <b>Заклади в ЖК</b>\n\n"
-        f"Оберіть категорію:\n\n"
-        f"{_resident_add_category_contact_line()}",
+        "Оберіть категорію:",
         reply_markup=await get_places_keyboard()
     )
     await safe_callback_answer(callback)
@@ -2392,8 +2375,7 @@ async def cb_places_category(callback: CallbackQuery):
     if not places:
         text = (
             f"🏢 <b>{service['name']}</b>\n\n"
-            "Закладів поки немає.\n\n"
-            f"{_resident_add_place_contact_line()}"
+            "Закладів поки немає."
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="« Назад", callback_data="places_menu")],
@@ -2557,7 +2539,6 @@ async def cb_places_category(callback: CallbackQuery):
         f"🏢 <b>{service['name']}</b>\n\n"
         f"Оберіть заклад (❤️ = лайки мешканців):\n\n"
         f"{ranking_hint}"
-        f"{_resident_support_contact_line()}"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     
@@ -2893,11 +2874,6 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
         text += f"📍 <b>Адреса:</b> {place_enriched['address']}\n\n"
 
     text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
-    text += (
-        "💬 Побачили помилку або хочете додати детальніший опис? "
-        "Напишіть у підтримку через «📞 Сервісна служба»."
-    )
-
     map_file = get_map_file_for_address(place_enriched["address"])
 
     gallery_items: list[dict] = []
@@ -4074,8 +4050,6 @@ async def do_search(query: str, user_id: int | None = None) -> str:
         if p['address']:
             text += f"   🏠 {p['address']}\n"
         text += "\n"
-    
-    text += _resident_support_contact_line()
     
     return text
 
