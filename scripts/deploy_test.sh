@@ -270,6 +270,9 @@ python3 "${REPO_DIR}/scripts/bootstrap_testerbot_claim_token.py" --db-path "${TE
 
 # Automated testerbot E2E regression suite (runs on dedicated runtime and exits with result).
 if should_enable_testerbot "${TEST_DIR}/.env"; then
+  echo "Running resident single-message Telethon UAT..."
+  docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/e2e_single_message_uat.py"
+
   echo "Running testerbot regression suite in test environment..."
   if [[ ! -f "${TEST_DIR}/docker-compose.testerbot.yml" ]]; then
     echo "ERROR: docker-compose.testerbot.yml is missing in ${TEST_DIR}"
