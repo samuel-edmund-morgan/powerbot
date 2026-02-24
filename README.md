@@ -377,7 +377,17 @@ python3 scripts/analyze_adbot_chat_history.py \
   --output-json /tmp/adbot_chat_analysis.json
 ```
 
+Запуск прямо в test-контейнері adbot (без локального `pip`):
+```bash
+ssh workspace-docker "docker compose -f /opt/powerbot-test/docker-compose.yml exec -T adbot \
+  python /app/src/tools/analyze_adbot_chat_history.py \
+  --chat-title 'Ньюкасл A-7 (ЖК Нова Англія)' \
+  --months 3 \
+  --output-json /data/logs/adbot_chat_analysis.json \
+  --output-md /data/logs/adbot_chat_analysis.md"
+```
+
 ### 8.2 Важливо
 - Потрібна валідна `Telethon StringSession` акаунта, який є учасником цього чату.
 - Якщо chat-title неоднозначний, скрипт поверне помилку і попросить використовувати `--chat-id`.
-- Рекомендовано запускати на локальній dev-машині; це аналітичний інструмент, не частина CI.
+- Рекомендовано запускати локально або у test-контейнері; це аналітичний інструмент, не частина CI.

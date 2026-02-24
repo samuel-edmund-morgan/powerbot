@@ -292,6 +292,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_config_contract.py"
 echo "Running adbot chat-bootstrap policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_chat_bootstrap_policy.py"
 
+# Automated smoke: adbot chat-analysis tool must stay runnable in container and via script wrapper.
+echo "Running adbot chat-analysis tool policy smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_chat_analysis_tool_policy.py"
+
 # Automated smoke: adbot cooldown contract (per chat+intent + dedupe behavior).
 echo "Running adbot cooldown contract smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_cooldown_contract.py"
