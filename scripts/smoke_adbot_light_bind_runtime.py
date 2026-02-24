@@ -21,10 +21,22 @@ def _assert(condition: bool, message: str) -> None:
 
 
 def _bootstrap_imports() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    src_root = repo_root / "src"
-    if str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
+    # Supports both normal execution (`python scripts/...`) and stdin mode
+    # (`python - < scripts/...`) used in deploy_test.sh.
+    candidates: list[Path] = [Path.cwd()]
+    raw_file = globals().get("__file__")
+    if isinstance(raw_file, str) and raw_file and raw_file != "<stdin>":
+        try:
+            candidates.append(Path(raw_file).resolve().parents[1])
+        except Exception:
+            pass
+
+    for base in candidates:
+        src_root = base / "src"
+        if src_root.exists() and str(src_root) not in sys.path:
+            sys.path.insert(0, str(src_root))
+        if (base / "handlers.py").exists() and str(base) not in sys.path:
+            sys.path.insert(0, str(base))
 
 
 class _FakeMessage:
@@ -96,4 +108,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
