@@ -255,6 +255,31 @@ async def run(ctx) -> ScenarioResult:
                     ctx_name=f"{ctx_name} via menu",
                 )
                 return msg, text
+            # Walk back to a screen that has "Меню", then open main menu.
+            current = msg
+            for step in range(6):
+                if _has_button(current, "Меню"):
+                    current, text = await click_and_wait(
+                        current,
+                        "Меню",
+                        predicate=lambda m, t: ("Головне меню" in t) and _has_button(m, "Пошук закладу"),
+                        ctx_name=f"{ctx_name} via menu after back {step}",
+                    )
+                    return current, text
+                if not _has_button(current, "Назад"):
+                    break
+                current, text = await click_and_wait(
+                    current,
+                    "Назад",
+                    predicate=lambda m, t: (
+                        ("Головне меню" in t and _has_button(m, "Пошук закладу"))
+                        or _has_button(m, "Меню")
+                        or _has_button(m, "Назад")
+                    ),
+                    ctx_name=f"{ctx_name} back-step {step + 1}",
+                )
+                if ("Головне меню" in text) and _has_button(current, "Пошук закладу"):
+                    return current, text
         except Exception:
             pass
 
