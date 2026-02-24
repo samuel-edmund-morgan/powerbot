@@ -677,6 +677,18 @@ def get_service_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _resident_support_contact_line() -> str:
+    return "💬 Побачили неточність? Напишіть у підтримку через «📞 Сервісна служба»."
+
+
+def _resident_add_category_contact_line() -> str:
+    return "💬 Хочете додати категорію? Напишіть у підтримку через «📞 Сервісна служба»."
+
+
+def _resident_add_place_contact_line() -> str:
+    return "💬 Хочете додати заклад? Напишіть у підтримку через «📞 Сервісна служба»."
+
+
 def get_quiet_keyboard(back_callback: str = "notifications_menu") -> InlineKeyboardMarkup:
     """Клавіатура для налаштування тихих годин."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1337,15 +1349,13 @@ async def cb_shelter_detail(callback: CallbackQuery):
     
     user_liked = await has_liked_shelter(shelter_id, callback.from_user.id)
     likes_count = await get_shelter_likes_count(shelter_id)
-    admin_tag = CFG.admin_tag or "адміністратору"
-    
     text = f"🏛 <b>{shelter['name']}</b>\n\n"
     if shelter["description"]:
         text += f"📝 {shelter['description']}\n\n"
     if shelter["address"]:
         text += f"📍 <b>Локація:</b> {shelter['address']}\n\n"
     text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
-    text += f"💬 Побачили помилку? Пишіть {admin_tag}"
+    text += _resident_support_contact_line()
     
     map_file = get_map_file_for_address(shelter["address"])
     
@@ -2286,14 +2296,13 @@ async def reply_places(message: Message):
     services = await get_all_general_services()
     
     if not services:
-        admin_tag = CFG.admin_tag or "адміністратору"
         await render_or_edit(
             bot=message.bot,
             chat_id=message.chat.id,
             text=(
                 "🏢 <b>Заклади в ЖК</b>\n\n"
                 "Поки що категорій немає.\n\n"
-                f"💬 Хочете додати категорію? Пишіть {admin_tag}"
+                f"{_resident_add_category_contact_line()}"
             ),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="« Меню", callback_data="menu")]]
@@ -2302,14 +2311,13 @@ async def reply_places(message: Message):
         )
         return
     
-    admin_tag = CFG.admin_tag or "адміністратору"
     await render_or_edit(
         bot=message.bot,
         chat_id=message.chat.id,
         text=(
             "🏢 <b>Заклади в ЖК</b>\n\n"
             f"Оберіть категорію:\n\n"
-            f"💬 Хочете додати категорію? Пишіть {admin_tag}"
+            f"{_resident_add_category_contact_line()}"
         ),
         reply_markup=await get_places_keyboard(),
         context_key="places_menu",
@@ -2325,11 +2333,10 @@ async def cb_places_menu(callback: CallbackQuery):
     services = await get_all_general_services()
     
     if not services:
-        admin_tag = CFG.admin_tag or "адміністратору"
         await callback.message.edit_text(
             "🏢 <b>Заклади в ЖК</b>\n\n"
             "Поки що категорій немає.\n\n"
-            f"💬 Хочете додати категорію? Пишіть {admin_tag}",
+            f"{_resident_add_category_contact_line()}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="« Меню", callback_data="menu")],
             ])
@@ -2337,11 +2344,10 @@ async def cb_places_menu(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
     
-    admin_tag = CFG.admin_tag or "адміністратору"
     await callback.message.edit_text(
         "🏢 <b>Заклади в ЖК</b>\n\n"
         f"Оберіть категорію:\n\n"
-        f"💬 Хочете додати категорію? Пишіть {admin_tag}",
+        f"{_resident_add_category_contact_line()}",
         reply_markup=await get_places_keyboard()
     )
     await safe_callback_answer(callback)
@@ -2364,7 +2370,6 @@ async def cb_places_category(callback: CallbackQuery):
     places = await get_places_by_service_with_likes(service_id)
     places = await get_business_service().enrich_places_for_main_bot(places)
     business_enabled = is_business_feature_enabled()
-    admin_tag = CFG.admin_tag or "адміністратору"
     
     # Якщо повідомлення має фото - видаляємо і відправляємо нове
     is_photo = callback.message.photo is not None
@@ -2373,7 +2378,7 @@ async def cb_places_category(callback: CallbackQuery):
         text = (
             f"🏢 <b>{service['name']}</b>\n\n"
             "Закладів поки немає.\n\n"
-            f"💬 Хочете додати заклад? Пишіть {admin_tag}"
+            f"{_resident_add_place_contact_line()}"
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="« Назад", callback_data="places_menu")],
@@ -2537,7 +2542,7 @@ async def cb_places_category(callback: CallbackQuery):
         f"🏢 <b>{service['name']}</b>\n\n"
         f"Оберіть заклад (❤️ = лайки мешканців):\n\n"
         f"{ranking_hint}"
-        f"💬 Побачили помилку? Пишіть {admin_tag}"
+        f"{_resident_support_contact_line()}"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     
@@ -2830,8 +2835,6 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
     # Best-effort analytics: do not break UX on failure.
     await record_place_view(place_id)
 
-    admin_tag = CFG.admin_tag or "адміністратору"
-
     user_liked = await has_liked_place(place_id, user_id)
     likes_count = await get_place_likes_count(place_id)
 
@@ -2875,7 +2878,10 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
         text += f"📍 <b>Адреса:</b> {place_enriched['address']}\n\n"
 
     text += f"❤️ <b>Лайків:</b> {likes_count}\n\n"
-    text += f"💬 Побачили помилку? Хочете додати детальніший опис? Пишіть {admin_tag}"
+    text += (
+        "💬 Побачили помилку або хочете додати детальніший опис? "
+        "Напишіть у підтримку через «📞 Сервісна служба»."
+    )
 
     map_file = get_map_file_for_address(place_enriched["address"])
 
@@ -4054,8 +4060,7 @@ async def do_search(query: str, user_id: int | None = None) -> str:
             text += f"   🏠 {p['address']}\n"
         text += "\n"
     
-    admin_tag = CFG.admin_tag or "адміністратору"
-    text += f"💬 Побачили помилку? Пишіть {admin_tag}"
+    text += _resident_support_contact_line()
     
     return text
 
