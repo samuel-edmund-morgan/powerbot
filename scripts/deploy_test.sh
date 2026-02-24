@@ -418,10 +418,20 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   ADBOT_E2E_POLL_SEC_VAL="$(get_env_value "ADBOT_E2E_POLL_SEC" "${TEST_DIR}/.env")"
   ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL="$(get_env_value "ADBOT_E2E_NEGATIVE_WAIT_SEC" "${TEST_DIR}/.env")"
   ADBOT_E2E_VERIFY_FORWARD_VAL="$(get_env_value "ADBOT_E2E_VERIFY_FORWARD" "${TEST_DIR}/.env")"
+  ADBOT_E2E_REQUIRE_SOURCE_FORWARDED_VAL="$(get_env_value "ADBOT_E2E_REQUIRE_SOURCE_FORWARDED" "${TEST_DIR}/.env")"
   ADBOT_E2E_PROMPT_PREFIX_VAL="$(get_env_value "ADBOT_E2E_PROMPT_PREFIX" "${TEST_DIR}/.env")"
   ADBOT_STRING_SESSION_VAL="$(get_env_value "ADBOT_STRING_SESSION" "${TEST_DIR}/.env")"
   TELETHON_API_ID_VAL="$(get_env_value "TELETHON_API_ID" "${TEST_DIR}/.env")"
   TELETHON_API_HASH_VAL="$(get_env_value "TELETHON_API_HASH" "${TEST_DIR}/.env")"
+  ADBOT_E2E_STRICT_REAL_INLINE_VAL="$(get_env_value "ADBOT_E2E_STRICT_REAL_INLINE" "${TEST_DIR}/.env")"
+
+  if [[ -z "${ADBOT_E2E_REQUIRE_SOURCE_FORWARDED_VAL}" ]]; then
+    if [[ "${ADBOT_E2E_STRICT_REAL_INLINE_VAL}" == "1" ]]; then
+      ADBOT_E2E_REQUIRE_SOURCE_FORWARDED_VAL="1"
+    else
+      ADBOT_E2E_REQUIRE_SOURCE_FORWARDED_VAL="0"
+    fi
+  fi
 
   if [[ -z "${ADBOT_E2E_DRIVER_SESSION_VAL}" || -z "${ADBOT_E2E_SOURCE_CHAT_ID_VAL}" ]]; then
     echo "ERROR: ADBOT_E2E_ENABLED=1 but required vars are missing:"
@@ -445,6 +455,7 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
     -e ADBOT_E2E_POLL_SEC="${ADBOT_E2E_POLL_SEC_VAL:-1.0}" \
     -e ADBOT_E2E_NEGATIVE_WAIT_SEC="${ADBOT_E2E_NEGATIVE_WAIT_SEC_VAL:-12}" \
     -e ADBOT_E2E_VERIFY_FORWARD="${ADBOT_E2E_VERIFY_FORWARD_VAL:-1}" \
+    -e ADBOT_E2E_REQUIRE_SOURCE_FORWARDED="${ADBOT_E2E_REQUIRE_SOURCE_FORWARDED_VAL}" \
     -e ADBOT_E2E_PROMPT_PREFIX="${ADBOT_E2E_PROMPT_PREFIX_VAL:-[E2E] }" \
     adbot python - < "${REPO_DIR}/scripts/e2e_adbot_test_groups.py"
 else

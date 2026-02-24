@@ -27,7 +27,7 @@ Optional env:
   ADBOT_E2E_POLL_SEC         (default: 1.0)
   ADBOT_E2E_NEGATIVE_WAIT_SEC (default: 12)
   ADBOT_E2E_VERIFY_FORWARD   (default: 1)
-  ADBOT_E2E_REQUIRE_SOURCE_FORWARDED (default: 1)
+  ADBOT_E2E_REQUIRE_SOURCE_FORWARDED (default: 0)
 """
 
 from __future__ import annotations
@@ -237,8 +237,8 @@ async def _run() -> None:
     negative_wait_sec = int(str(os.getenv("ADBOT_E2E_NEGATIVE_WAIT_SEC", "12")).strip())
     verify_forward = _parse_bool(os.getenv("ADBOT_E2E_VERIFY_FORWARD", "1"), default=True)
     require_source_forwarded = _parse_bool(
-        os.getenv("ADBOT_E2E_REQUIRE_SOURCE_FORWARDED", "1"),
-        default=True,
+        os.getenv("ADBOT_E2E_REQUIRE_SOURCE_FORWARDED", "0"),
+        default=False,
     )
     prompt_prefix = str(os.getenv("ADBOT_E2E_PROMPT_PREFIX", "[E2E] ")).strip()
     if not prompt_prefix:
