@@ -151,6 +151,10 @@ fi
 echo "Running Telethon env preflight..."
 python3 "${REPO_DIR}/scripts/smoke_telethon_env_contract.py" --env-file "${TEST_DIR}/.env"
 
+# Automated smoke: strict adbot E2E requires resident inline mode enabled.
+echo "Running adbot strict-inline preflight smoke..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_inline_mode_preflight.py" --env-file "${TEST_DIR}/.env"
+
 # Automated smoke: Telethon env preflight must enforce StringSession/chat-id contract.
 echo "Running Telethon env contract-cases smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_telethon_env_contract_cases.py"
@@ -181,19 +185,30 @@ fi
 # щоб запити з ADBOT_E2E_PROMPT_PREFIX не блокувались cooldown-ом.
 # Це test-only поведінка (prod не зачіпається).
 if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
+  strict_real_inline="$(get_env_value "ADBOT_E2E_STRICT_REAL_INLINE" "${TEST_DIR}/.env")"
+
   if grep -q "^ADBOT_ALLOW_SELF_OUTGOING_E2E=" "${TEST_DIR}/.env"; then
     sed -i -E 's/^ADBOT_ALLOW_SELF_OUTGOING_E2E=.*/ADBOT_ALLOW_SELF_OUTGOING_E2E=1/' "${TEST_DIR}/.env"
   else
     echo "ADBOT_ALLOW_SELF_OUTGOING_E2E=1" >> "${TEST_DIR}/.env"
   fi
 
-  # Test-only non-strict internal reply mode:
+  # Default test behavior is non-strict internal reply mode:
   # якщо resident inline тимчасово недоступний (наприклад BotInlineDisabled),
   # adbot використовує fallback-відповідь замість таймауту E2E.
-  if grep -q "^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=" "${TEST_DIR}/.env"; then
-    sed -i -E 's/^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=.*/ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0/' "${TEST_DIR}/.env"
+  # For strict mode set ADBOT_E2E_STRICT_REAL_INLINE=1.
+  if [[ "${strict_real_inline}" == "1" ]]; then
+    if grep -q "^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=" "${TEST_DIR}/.env"; then
+      sed -i -E 's/^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=.*/ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=1/' "${TEST_DIR}/.env"
+    else
+      echo "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=1" >> "${TEST_DIR}/.env"
+    fi
   else
-    echo "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0" >> "${TEST_DIR}/.env"
+    if grep -q "^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=" "${TEST_DIR}/.env"; then
+      sed -i -E 's/^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=.*/ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0/' "${TEST_DIR}/.env"
+    else
+      echo "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0" >> "${TEST_DIR}/.env"
+    fi
   fi
 fi
 
