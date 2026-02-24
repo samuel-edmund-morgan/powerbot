@@ -347,9 +347,7 @@ async def run(ctx) -> ScenarioResult:
         ctx_name="resident bootstrap main menu",
         allow_start_fallback=False,
     )
-    if _is_building_picker_screen(msg, text):
-        pass
-    else:
+    if not _is_building_picker_screen(msg, text):
         if not _has_button(msg, "Обрати будинок"):
             msg, text = await wait_bot_message(
                 predicate=lambda m, t: (
@@ -360,12 +358,26 @@ async def run(ctx) -> ScenarioResult:
             )
         if not _is_building_picker_screen(msg, text):
             assert_contains(text, ("Головне меню",), ctx="resident bootstrap")
-            msg, text = await click_and_wait(
-                msg,
-                "Обрати будинок",
-                predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
-                ctx_name="resident buildings",
-            )
+            if _has_button(msg, "Обрати будинок"):
+                msg, text = await click_and_wait(
+                    msg,
+                    "Обрати будинок",
+                    predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
+                    ctx_name="resident buildings",
+                )
+            else:
+                latest_msg, latest_text = await latest_bot_message("resident buildings latest")
+                if _is_building_picker_screen(latest_msg, latest_text):
+                    msg, text = latest_msg, latest_text
+                elif _has_button(latest_msg, "Обрати будинок"):
+                    msg, text = await click_and_wait(
+                        latest_msg,
+                        "Обрати будинок",
+                        predicate=lambda _m, t: ("Оберіть свій будинок" in t) or ("Оберіть ваш будинок" in t),
+                        ctx_name="resident buildings latest click",
+                    )
+                else:
+                    raise AssertionError("resident buildings: neither picker nor `Обрати будинок` button available")
     assert_contains_any(
         text,
         ("Оберіть ваш будинок", "Оберіть свій будинок"),
