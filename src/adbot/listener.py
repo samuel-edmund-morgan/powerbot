@@ -245,15 +245,38 @@ class AdbotListener:
             internal_chat_id=int(self._internal_chat_id or 0),
             reply_to_message_id=forwarded_message_id,
         )
+        response_text = str(internal_result.text or "").strip()
         if internal_result.reason:
+            if self._require_real_internal_reply or not response_text:
+                log_decision(
+                    build_decision_payload(
+                        chat_id=source_chat_id,
+                        user_id=int(sender_id),
+                        reason=str(internal_result.reason),
+                        message_text=text,
+                        intent_code=intent.code,
+                        meta={
+                            "match_reason": analysis.reason,
+                            "best_confidence": analysis.best_confidence,
+                            "internal_chat_id": int(self._internal_chat_id or 0),
+                            "forwarded_message_id": forwarded_message_id or 0,
+                            "internal_reply_message_id": int(internal_result.internal_message_id or 0),
+                            "require_real": self._require_real_internal_reply,
+                            "via_bot_id": int(internal_result.via_bot_id or 0),
+                        },
+                    )
+                )
+                return False
+
             log_decision(
                 build_decision_payload(
                     chat_id=source_chat_id,
                     user_id=int(sender_id),
-                    reason=str(internal_result.reason),
+                    reason="internal_fallback_used",
                     message_text=text,
                     intent_code=intent.code,
                     meta={
+                        "source_reason": str(internal_result.reason),
                         "match_reason": analysis.reason,
                         "best_confidence": analysis.best_confidence,
                         "internal_chat_id": int(self._internal_chat_id or 0),
@@ -264,9 +287,7 @@ class AdbotListener:
                     },
                 )
             )
-            return False
 
-        response_text = str(internal_result.text or "").strip()
         if not response_text:
             log_decision(
                 build_decision_payload(

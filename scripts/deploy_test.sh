@@ -186,6 +186,15 @@ if should_enable_adbot_e2e "${TEST_DIR}/.env"; then
   else
     echo "ADBOT_ALLOW_SELF_OUTGOING_E2E=1" >> "${TEST_DIR}/.env"
   fi
+
+  # Test-only non-strict internal reply mode:
+  # якщо resident inline тимчасово недоступний (наприклад BotInlineDisabled),
+  # adbot використовує fallback-відповідь замість таймауту E2E.
+  if grep -q "^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=" "${TEST_DIR}/.env"; then
+    sed -i -E 's/^ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=.*/ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0/' "${TEST_DIR}/.env"
+  else
+    echo "ADBOT_INTERNAL_REQUIRE_REAL_BOT_REPLY=0" >> "${TEST_DIR}/.env"
+  fi
 fi
 
 # У test за замовчуванням працюємо через mock-оплати (без реальних списань Stars).
