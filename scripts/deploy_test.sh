@@ -335,6 +335,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_matcher_quality_gate.py"
 echo "Running adbot config contract smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_config_contract.py"
 
+# Automated smoke: prod adbot activation checklist contract.
+echo "Running prod adbot activation checklist smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_prod_adbot_activation_checklist.py"
+
 # Automated smoke: adbot chat-id bootstrap wiring contract.
 echo "Running adbot chat-bootstrap policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_chat_bootstrap_policy.py"

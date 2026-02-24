@@ -391,3 +391,21 @@ ssh workspace-docker "docker compose -f /opt/powerbot-test/docker-compose.yml ex
 - Потрібна валідна `Telethon StringSession` акаунта, який є учасником цього чату.
 - Якщо chat-title неоднозначний, скрипт поверне помилку і попросить використовувати `--chat-id`.
 - Рекомендовано запускати локально або у test-контейнері; це аналітичний інструмент, не частина CI.
+
+## 9) Prod adbot activation checklist
+
+Перед увімкненням `ADBOT_ENABLED=1` у проді проганяй checklist:
+
+```bash
+python3 scripts/prod_adbot_activation_checklist.py --env-file /opt/powerbot/.env
+```
+
+Що перевіряється:
+- `ADBOT_ENABLED=1`, `ADBOT_TEST_MODE=0`
+- валідні `TELETHON_API_ID`, `TELETHON_API_HASH`, `ADBOT_STRING_SESSION`
+- валідний `ADBOT_TARGET_POWERBOT_USERNAME`
+- задані chat id для прод:
+  - `ADBOT_SOURCE_CHAT_IDS` (мінімум один numeric chat_id)
+  - `ADBOT_INTERNAL_CHAT_ID` (numeric chat_id)
+
+Якщо checklist падає, adbot у проді не активувати, поки не виправлені всі FAIL-пункти.
