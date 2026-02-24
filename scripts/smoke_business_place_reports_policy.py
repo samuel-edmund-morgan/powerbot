@@ -59,6 +59,7 @@ def main() -> None:
         handlers_text,
         [
             "@router.message(StateFilter(None), F.text, lambda message: message.chat.id not in search_waiting_users)",
+            "@router.message(StateFilter(None), F.text & ~F.text.startswith(\"/\"), lambda message: message.chat.id not in search_waiting_users)",
             "@router.message(StateFilter(None), F.text)",
         ],
         file_label="src/handlers.py",

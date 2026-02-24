@@ -23,9 +23,12 @@ def main() -> None:
     handlers_file = repo_root / "src" / "handlers.py"
     text = handlers_file.read_text(encoding="utf-8")
 
+    fallback_tokens = (
+        "@router.message(StateFilter(None), F.text, lambda message: message.chat.id not in search_waiting_users)",
+        "@router.message(StateFilter(None), F.text & ~F.text.startswith(\"/\"), lambda message: message.chat.id not in search_waiting_users)",
+    )
     _assert(
-        "@router.message(StateFilter(None), F.text, lambda message: message.chat.id not in search_waiting_users)"
-        in text,
+        any(token in text for token in fallback_tokens),
         "Generic text fallback must skip users in search_waiting_users.",
     )
     _assert(
