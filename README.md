@@ -290,6 +290,43 @@ gh workflow run deploy.yml -f run_migrate=auto
 
 Перед/після прод-деплою дотримуватись чинного runbook із заморозкою сенсорів.
 
+### 6.3 Canonical payment contract (mock + Telegram Stars)
+
+Єдиний контракт для обох провайдерів (`BUSINESS_PAYMENT_PROVIDER=mock|telegram_stars`):
+- джерело правди про оплату: `business_payment_events`;
+- всі UI/handler шляхи йдуть через `apply_payment_event(...)`;
+- однакові entitlement-наслідки для однакових canonical events.
+
+Canonical events:
+- `invoice_created`
+- `pre_checkout_ok`
+- `payment_succeeded`
+- `payment_failed`
+- `payment_canceled`
+- `refund`
+
+Entitlement rules:
+- `payment_succeeded` -> paid tier active, `places.is_verified=1`
+- `payment_failed|payment_canceled` -> entitlement не активується
+- `refund` -> негайний rollback: `tier=free`, `status=inactive`, `is_verified=0`
+
+Idempotency:
+- дубль того ж `external_payment_id` не застосовується вдруге;
+- дубль `refund` не створює повторний ефект.
+
+Regression verification (test):
+```bash
+python3 scripts/smoke_business_payments.py
+python3 scripts/smoke_business_telegram_stars_flow.py
+python3 scripts/smoke_business_telegram_stars_precheckout_idempotency.py
+python3 scripts/smoke_business_telegram_stars_terminal_events.py
+python3 scripts/smoke_business_payment_provider_parity.py
+python3 scripts/smoke_business_refund_event.py
+python3 scripts/smoke_business_telegram_stars_refund_update.py
+python3 scripts/smoke_business_subscription_lifecycle.py
+python3 scripts/smoke_business_payment_pipeline_policy.py
+```
+
 ## 7) Авто-UAT для Telegram (Playwright-подібно)
 
 Для реального “проклікування” inline-кнопок у Telegram можна запускати E2E через userbot (Telethon).
