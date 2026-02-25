@@ -23,13 +23,13 @@ def _load_matcher():
     if str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
 
-    from adbot.matcher import match_intent
+    from adbot.matcher import analyze_intent_match, match_intent
 
-    return match_intent
+    return match_intent, analyze_intent_match
 
 
 def main() -> None:
-    match_intent = _load_matcher()
+    match_intent, analyze_intent_match = _load_matcher()
 
     tests = [
         # Positive
@@ -87,6 +87,19 @@ def main() -> None:
     _assert(
         boundary is None,
         "Long non-target text should not trigger matcher (anti-false-positive guard).",
+    )
+
+    # Runtime regression: even with stricter min_len, short RU light questions must match.
+    strict_runtime = analyze_intent_match("Есть ли дома свет?", min_len=14, max_len=280, min_confidence=120)
+    _assert(
+        strict_runtime.intent is not None and strict_runtime.intent.code == "light_status",
+        f"Strict runtime short-RU query should match light_status, got={strict_runtime}",
+    )
+
+    strict_runtime_short = analyze_intent_match("Свет есть?", min_len=14, max_len=280, min_confidence=120)
+    _assert(
+        strict_runtime_short.intent is not None and strict_runtime_short.intent.code == "light_status",
+        f"Strict runtime short-RU query should match light_status, got={strict_runtime_short}",
     )
 
     print("OK: adbot matcher smoke passed.")

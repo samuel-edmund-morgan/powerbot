@@ -66,6 +66,38 @@ class AdbotListener:
         self._correlations: dict[str, CorrelationRecord] = {}
         self._correlation_ttl_sec = 6 * 3600
 
+    @staticmethod
+    def _chat_id_variants(chat_id: int) -> tuple[int, ...]:
+        value = int(chat_id or 0)
+        if value == 0:
+            return (0,)
+
+        variants: list[int] = [value]
+        raw = str(abs(value))
+
+        # Bot API supergroup/chat id format -> Telethon short format.
+        if value < 0 and raw.startswith("100") and len(raw) > 3:
+            try:
+                variants.append(-int(raw[3:]))
+            except Exception:
+                pass
+
+        # Telethon short format -> Bot API supergroup/chat id format.
+        if value < 0 and not raw.startswith("100"):
+            try:
+                variants.append(-int(f"100{raw}"))
+            except Exception:
+                pass
+
+        return tuple(dict.fromkeys(variants))
+
+    def _resolve_light_binding(self, source_chat_id: int) -> tuple[int, int] | None:
+        for chat_id in self._chat_id_variants(int(source_chat_id)):
+            binding = self._light_chat_bindings.get(int(chat_id))
+            if binding is not None:
+                return binding
+        return None
+
     async def _deliver_source_response(
         self,
         *,
@@ -319,7 +351,7 @@ class AdbotListener:
 
         effective_query = str(intent.inline_query or "").strip()
         if intent.code == LIGHT_STATUS_INTENT_CODE:
-            binding = self._light_chat_bindings.get(int(source_chat_id))
+            binding = self._resolve_light_binding(int(source_chat_id))
             if binding:
                 bound_building_id, bound_section_id = binding
                 effective_query = f"light_bind:{int(bound_building_id)}:{int(bound_section_id)}"

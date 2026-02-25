@@ -361,6 +361,26 @@ async def _run() -> None:
         f"light-bound query must be rewritten for internal pipeline: {internal_pipeline.calls}",
     )
 
+    # Binding must also work if source chat id comes in Telethon short format.
+    evt_light_bound_short_id = _FakeEvent(
+        text="Є світло?",
+        chat_id=-128,
+        msg_id=953,
+        forwarder=forwarder,
+    )
+    handled_light_bound_short_id = await listener.process(
+        evt_light_bound_short_id,
+        source_chat_id=evt_light_bound_short_id.chat_id,
+    )
+    _assert(
+        handled_light_bound_short_id is True,
+        "light-bound intent should be handled for Telethon short chat id format",
+    )
+    _assert(
+        ("light_bind:1:2", 777001, 700001) in internal_pipeline.calls,
+        f"light-bound query must resolve via chat-id variant mapping: {internal_pipeline.calls}",
+    )
+
     # Unbound light-status chat: must keep generic query (no light_bind rewrite).
     evt_light_unbound = _FakeEvent(
         text="Чи є світло?",

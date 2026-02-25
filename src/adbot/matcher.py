@@ -54,14 +54,35 @@ def _is_question_like(text_norm: str) -> bool:
         "чи ",
         "чому ",
         "хто ",
+        "где ",
+        "как ",
+        "когда ",
+        "есть ли ",
+        "чи є ",
         "підкажіть",
+        "подскажите",
         "скажіть",
+        "скажите",
         "дайте",
         "потрібен номер",
+        "нужен номер",
         "є номер",
         "контакти ",
+        "контакты ",
     )
     return any(value.startswith(prefix) for prefix in question_prefixes)
+
+
+def _looks_like_short_light_query(text_norm: str) -> bool:
+    if _is_question_like(text_norm):
+        return True
+    markers = (
+        "є світло",
+        "нема світла",
+        "есть свет",
+        "нет света",
+    )
+    return any(marker in text_norm for marker in markers)
 
 
 def analyze_intent_match(
@@ -74,8 +95,6 @@ def analyze_intent_match(
     """Analyze text against adbot intents with detailed diagnostics."""
     norm = normalize(text)
     text_len = len(norm)
-    if text_len < min_len:
-        return MatchDiagnostics(intent=None, reason="below_min_len", text_len=text_len, token_count=0)
     if text_len > max_len:
         return MatchDiagnostics(intent=None, reason="above_max_len", text_len=text_len, token_count=0)
 
@@ -128,6 +147,41 @@ def analyze_intent_match(
             best_confidence=best_confidence,
             best_signals=best_signals,
         )
+
+    # Keep global min_len strict, but allow short high-signal light-status questions
+    # (e.g. "Есть свет?", "А є світло?") which are common in resident chats.
+    if text_len < min_len:
+        if best_intent.code != "light_status":
+            return MatchDiagnostics(
+                intent=None,
+                reason="below_min_len",
+                text_len=text_len,
+                token_count=token_count,
+                best_intent=best_intent.code,
+                best_confidence=best_confidence,
+                best_signals=best_signals,
+            )
+        if text_len < 6 or not _looks_like_short_light_query(norm):
+            return MatchDiagnostics(
+                intent=None,
+                reason="below_min_len",
+                text_len=text_len,
+                token_count=token_count,
+                best_intent=best_intent.code,
+                best_confidence=best_confidence,
+                best_signals=best_signals,
+            )
+        # Extra guard for very short inputs.
+        if best_confidence < max(int(min_confidence), 180):
+            return MatchDiagnostics(
+                intent=None,
+                reason="below_min_confidence",
+                text_len=text_len,
+                token_count=token_count,
+                best_intent=best_intent.code,
+                best_confidence=best_confidence,
+                best_signals=best_signals,
+            )
 
     # Additional anti-false-positive guard:
     # long non-question discussions with incidental keywords must not trigger adbot.
