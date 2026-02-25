@@ -95,6 +95,8 @@ def analyze_intent_match(
     """Analyze text against adbot intents with detailed diagnostics."""
     norm = normalize(text)
     text_len = len(norm)
+    if text_len < min_len and not _looks_like_short_light_query(norm):
+        return MatchDiagnostics(intent=None, reason="below_min_len", text_len=text_len, token_count=0)
     if text_len > max_len:
         return MatchDiagnostics(intent=None, reason="above_max_len", text_len=text_len, token_count=0)
 
