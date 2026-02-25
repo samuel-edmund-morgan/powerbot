@@ -42,6 +42,8 @@ def main() -> None:
     required_env_keys = (
         "ADBOT_SOURCE_CHAT_TITLES=",
         "ADBOT_INTERNAL_CHAT_TITLE=",
+        "ADBOT_PAIR_1_SOURCE_CHAT_TITLE=",
+        "ADBOT_PAIR_1_INTERNAL_CHAT_TITLE=",
         "ADBOT_E2E_SOURCE_CHAT_TITLE=",
         "ADBOT_E2E_INTERNAL_CHAT_TITLE=",
     )

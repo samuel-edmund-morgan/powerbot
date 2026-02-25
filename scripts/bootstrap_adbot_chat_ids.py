@@ -128,8 +128,32 @@ def main() -> None:
     internal_title = str(env.get("ADBOT_INTERNAL_CHAT_TITLE", "")).strip() or DEFAULT_INTERNAL_TITLE
     e2e_source_title = str(env.get("ADBOT_E2E_SOURCE_CHAT_TITLE", "")).strip() or DEFAULT_SOURCE_TITLE
     e2e_internal_title = str(env.get("ADBOT_E2E_INTERNAL_CHAT_TITLE", "")).strip() or DEFAULT_INTERNAL_TITLE
+    try:
+        pair_count = max(int(str(env.get("ADBOT_PAIR_COUNT", "")).strip() or "0"), 0)
+    except Exception:
+        pair_count = 0
+    pair_title_keys: list[tuple[str, str]] = []
+    for idx in range(1, pair_count + 1):
+        src_title_key = f"ADBOT_PAIR_{idx}_SOURCE_CHAT_TITLE"
+        int_title_key = f"ADBOT_PAIR_{idx}_INTERNAL_CHAT_TITLE"
+        src_title = str(env.get(src_title_key, "")).strip()
+        int_title = str(env.get(int_title_key, "")).strip()
+        if src_title:
+            pair_title_keys.append((f"ADBOT_PAIR_{idx}_SOURCE_CHAT_ID", src_title))
+        if int_title:
+            pair_title_keys.append((f"ADBOT_PAIR_{idx}_INTERNAL_CHAT_ID", int_title))
 
-    all_titles = tuple(dict.fromkeys([*source_titles, internal_title, e2e_source_title, e2e_internal_title]))
+    all_titles = tuple(
+        dict.fromkeys(
+            [
+                *source_titles,
+                internal_title,
+                e2e_source_title,
+                e2e_internal_title,
+                *[title for _, title in pair_title_keys],
+            ]
+        )
+    )
     try:
         resolved = asyncio.run(_resolve_titles_to_ids(session, api_id, api_hash, all_titles))
     except Exception as exc:
@@ -165,6 +189,15 @@ def main() -> None:
             lines = _set_env_key(lines, "ADBOT_E2E_INTERNAL_CHAT_ID", e2e_internal_id)
             env["ADBOT_E2E_INTERNAL_CHAT_ID"] = e2e_internal_id
             updates.append("ADBOT_E2E_INTERNAL_CHAT_ID=<auto>")
+
+    for target_key, title in pair_title_keys:
+        if not _is_placeholder(env.get(target_key, "")):
+            continue
+        resolved_id = str(resolved.get(title, "")).strip()
+        if re.fullmatch(r"-?\d+", resolved_id):
+            lines = _set_env_key(lines, target_key, resolved_id)
+            env[target_key] = resolved_id
+            updates.append(f"{target_key}=<auto>")
 
     if updates:
         try:

@@ -5,6 +5,7 @@ Contract smoke for scripts/smoke_telethon_env_contract.py.
 Validates key fail-fast cases:
 - short/invalid StringSession is rejected when runner is enabled;
 - non-numeric chat ids are rejected for adbot/adbot_e2e;
+- pair-mode contract is validated when ADBOT_PAIR_COUNT>0;
 - valid-looking inputs pass.
 """
 
@@ -83,6 +84,24 @@ def main() -> None:
     )
     _assert(res_bad_adbot_e2e.returncode != 0, "invalid adbot e2e contract must fail")
 
+    # 4a) Pair mode must validate required pair fields.
+    res_bad_pair = _run_preflight(
+        common
+        + "ADBOT_ENABLED=1\nADBOT_TEST_MODE=0\n"
+        + f"ADBOT_STRING_SESSION={long_session}\n"
+        + "ADBOT_PAIR_COUNT=1\n"
+        + "ADBOT_PAIR_1_SOURCE_CHAT_ID=-100111\n"
+        + "ADBOT_PAIR_1_INTERNAL_CHAT_ID=not-num\n"
+        + "ADBOT_PAIR_1_SENSOR_UUID=\n"
+        + "ADBOT_PAIR_1_FALLBACK_BUILDING_ID=0\n"
+        + "ADBOT_PAIR_1_FALLBACK_SECTION_ID=1\n"
+    )
+    _assert(res_bad_pair.returncode != 0, "invalid pair-mode env must fail")
+    _assert(
+        "ADBOT_PAIR_1_INTERNAL_CHAT_ID" in (res_bad_pair.stdout + res_bad_pair.stderr),
+        "expected pair-mode internal chat diagnostics",
+    )
+
     # 4b) If adbot and e2e-driver sessions are identical, self-outgoing guard must be enabled.
     res_same_session_guard = _run_preflight(
         common
@@ -101,6 +120,20 @@ def main() -> None:
         "ADBOT_ALLOW_SELF_OUTGOING_E2E=1" in (res_same_session_guard.stdout + res_same_session_guard.stderr),
         "expected same-session guard diagnostics",
     )
+
+    # 4c) Valid pair-mode env should pass without legacy ADBOT_SOURCE_CHAT_IDS/ADBOT_INTERNAL_CHAT_ID.
+    res_pair_ok = _run_preflight(
+        common
+        + "ADBOT_ENABLED=1\nADBOT_TEST_MODE=0\n"
+        + f"ADBOT_STRING_SESSION={long_session}\n"
+        + "ADBOT_PAIR_COUNT=1\n"
+        + "ADBOT_PAIR_1_SOURCE_CHAT_ID=-100111\n"
+        + "ADBOT_PAIR_1_INTERNAL_CHAT_ID=-100333\n"
+        + "ADBOT_PAIR_1_SENSOR_UUID=esp32-newcastle-001\n"
+        + "ADBOT_PAIR_1_FALLBACK_BUILDING_ID=1\n"
+        + "ADBOT_PAIR_1_FALLBACK_SECTION_ID=2\n"
+    )
+    _assert(res_pair_ok.returncode == 0, f"valid pair-mode env must pass, got={res_pair_ok.stdout}{res_pair_ok.stderr}")
 
     # 5) Valid-looking runner env should pass.
     res_ok = _run_preflight(

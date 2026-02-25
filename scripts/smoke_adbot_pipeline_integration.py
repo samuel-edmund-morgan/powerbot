@@ -7,12 +7,17 @@ Checks:
 - audit forward is emitted
 - cooldown dedupe suppresses identical repeated triggers
 - fallback is used when inline provider returns no result
+- pair-mode routes source->internal per configured pair and applies hybrid light binding.
+- per-pair cooldown override works independently from global default.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import sqlite3
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -138,7 +143,7 @@ async def _run() -> None:
     _bootstrap_imports()
 
     from adbot.cooldown import CooldownGuard
-    from adbot.listener import AdbotListener
+    from adbot.listener import AdbotListener, AdbotRuntimePair
     from adbot.pipeline import PowerbotInlineClient, ResponsePipeline
 
     # Positive flow: electrician query resolved via inline result.
@@ -397,6 +402,158 @@ async def _run() -> None:
         ("світло", 777001, 700001) in internal_pipeline.calls,
         f"unbound light chat must use generic query: {internal_pipeline.calls}",
     )
+
+    # Pair-mode integration:
+    # - route each source chat to its own internal chat;
+    # - use sensor_uuid for light binding when active;
+    # - fallback to building/section when sensor is missing/inactive;
+    # - support per-pair cooldown override.
+    with tempfile.NamedTemporaryFile(suffix=".db") as tmp_db:
+        db_path = tmp_db.name
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE sensors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT,
+                    building_id INTEGER,
+                    section_id INTEGER,
+                    is_active INTEGER
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO sensors(uuid, building_id, section_id, is_active) VALUES(?, ?, ?, ?)",
+                ("esp32-newcastle-001", 1, 2, 1),
+            )
+            conn.execute(
+                "INSERT INTO sensors(uuid, building_id, section_id, is_active) VALUES(?, ?, ?, ?)",
+                ("esp32-oxford-001", 12, 1, 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        old_db_path = os.environ.get("DB_PATH")
+        os.environ["DB_PATH"] = db_path
+        try:
+            pair_forwarder = _FakeForwarder()
+            pair_internal_pipeline = _FakeInternalPipeline(
+                {
+                    "електрик": ("⚡ Електрик\n📞 067-576-22-42", None),
+                    "light_bind:1:2": ("☀️ Стан електропостачання в Ньюкасл секція 2", None),
+                    "light_bind:12:1": ("☀️ Стан електропостачання в Оксфорд секція 1", None),
+                }
+            )
+            pair_listener = AdbotListener(
+                matcher_min_len=10,
+                matcher_max_len=280,
+                matcher_min_confidence=120,
+                cooldown=CooldownGuard(3600),  # global default
+                pipeline=pipeline,
+                internal_pipeline=pair_internal_pipeline,
+                internal_chat_id=None,
+                chat_pairs=(
+                    AdbotRuntimePair(
+                        idx=1,
+                        source_chat_id=-1007771,
+                        internal_chat_id=-1009001,
+                        sensor_uuid="esp32-newcastle-001",
+                        fallback_building_id=1,
+                        fallback_section_id=2,
+                        reply_cooldown_sec=3600,
+                        label="newcastle",
+                    ),
+                    AdbotRuntimePair(
+                        idx=2,
+                        source_chat_id=-1007772,
+                        internal_chat_id=-1009002,
+                        sensor_uuid="esp32-oxford-001",
+                        fallback_building_id=12,
+                        fallback_section_id=1,
+                        reply_cooldown_sec=0,  # override: no cooldown
+                        label="oxford",
+                    ),
+                ),
+                require_real_internal_reply=True,
+            )
+
+            pair_evt_1 = _FakeEvent(
+                text="Дайте номер електрика, будь ласка",
+                chat_id=-1007771,
+                msg_id=2001,
+                forwarder=pair_forwarder,
+            )
+            _assert(
+                await pair_listener.process(pair_evt_1, source_chat_id=pair_evt_1.chat_id) is True,
+                "pair #1 electrician intent should be handled",
+            )
+            _assert(
+                any(call[1] == -1009001 for call in pair_internal_pipeline.calls),
+                f"pair #1 must route to internal #1: {pair_internal_pipeline.calls}",
+            )
+
+            # Pair #2 has cooldown override=0, so repeated same intent in same chat should pass twice.
+            pair_evt_2a = _FakeEvent(
+                text="Дайте номер електрика, будь ласка",
+                chat_id=-1007772,
+                msg_id=2101,
+                forwarder=pair_forwarder,
+            )
+            pair_evt_2b = _FakeEvent(
+                text="Дайте номер електрика, будь ласка",
+                chat_id=-1007772,
+                msg_id=2102,
+                forwarder=pair_forwarder,
+            )
+            _assert(
+                await pair_listener.process(pair_evt_2a, source_chat_id=pair_evt_2a.chat_id) is True,
+                "pair #2 first intent should be handled",
+            )
+            _assert(
+                await pair_listener.process(pair_evt_2b, source_chat_id=pair_evt_2b.chat_id) is True,
+                "pair #2 cooldown override=0 should allow repeated intent",
+            )
+            _assert(
+                sum(1 for call in pair_internal_pipeline.calls if call[1] == -1009002 and call[0] == "електрик") >= 2,
+                f"pair #2 must route repeated intents to internal #2: {pair_internal_pipeline.calls}",
+            )
+
+            pair_light_1 = _FakeEvent(
+                text="Чи є світло?",
+                chat_id=-1007771,
+                msg_id=2201,
+                forwarder=pair_forwarder,
+            )
+            _assert(
+                await pair_listener.process(pair_light_1, source_chat_id=pair_light_1.chat_id) is True,
+                "pair #1 light intent should be handled",
+            )
+            _assert(
+                ("light_bind:1:2", -1009001, 700001) in pair_internal_pipeline.calls,
+                f"pair #1 light should route via active sensor mapping: {pair_internal_pipeline.calls}",
+            )
+
+            pair_light_2 = _FakeEvent(
+                text="Є світло?",
+                chat_id=-1007772,
+                msg_id=2202,
+                forwarder=pair_forwarder,
+            )
+            _assert(
+                await pair_listener.process(pair_light_2, source_chat_id=pair_light_2.chat_id) is True,
+                "pair #2 light intent should be handled",
+            )
+            _assert(
+                ("light_bind:12:1", -1009002, 700001) in pair_internal_pipeline.calls,
+                f"pair #2 light should fallback to configured building/section: {pair_internal_pipeline.calls}",
+            )
+        finally:
+            if old_db_path is None:
+                os.environ.pop("DB_PATH", None)
+            else:
+                os.environ["DB_PATH"] = old_db_path
 
 
 def main() -> None:

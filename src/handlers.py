@@ -59,6 +59,27 @@ ADBOT_INTERNAL_CHAT_ID = _parse_int_env("ADBOT_INTERNAL_CHAT_ID")
 ADBOT_LIGHT_BIND_RE = re.compile(r"^\s*light_bind:(\d+):(\d+)\s*$", re.IGNORECASE)
 
 
+def _parse_adbot_internal_chat_allowlist() -> set[int]:
+    allow: set[int] = set()
+    legacy = _parse_int_env("ADBOT_INTERNAL_CHAT_ID")
+    if legacy is not None:
+        allow.update(_chat_id_variants(int(legacy)))
+
+    pair_count_raw = str(os.getenv("ADBOT_PAIR_COUNT", "")).strip()
+    try:
+        pair_count = max(int(pair_count_raw), 0) if pair_count_raw else 0
+    except Exception:
+        pair_count = 0
+    for idx in range(1, pair_count + 1):
+        raw = str(os.getenv(f"ADBOT_PAIR_{idx}_INTERNAL_CHAT_ID", "")).strip()
+        try:
+            parsed = int(raw)
+        except Exception:
+            continue
+        allow.update(_chat_id_variants(int(parsed)))
+    return allow
+
+
 def _parse_adbot_light_bind_query(raw_query: str) -> tuple[int, int] | None:
     match = ADBOT_LIGHT_BIND_RE.match(str(raw_query or ""))
     if not match:
@@ -102,6 +123,9 @@ def _chat_id_variants(chat_id: int) -> set[int]:
         except Exception:
             pass
     return variants
+
+
+ADBOT_INTERNAL_CHAT_IDS_ALLOWLIST = _parse_adbot_internal_chat_allowlist()
 
 
 def _resident_verified_tier_title(raw_tier: str | None) -> str:
@@ -4171,19 +4195,16 @@ async def handle_adbot_internal_command(message: Message):
     user_id = int(message.from_user.id) if message.from_user else 0
     chat_id = int(message.chat.id) if message.chat else 0
     is_admin = user_id > 0 and user_id in set(CFG.admin_ids)
-    is_adbot_internal_chat = (
-        ADBOT_INTERNAL_CHAT_ID is not None
-        and chat_id != 0
-        and int(ADBOT_INTERNAL_CHAT_ID) in _chat_id_variants(chat_id)
-    )
+    is_adbot_internal_chat = bool(chat_id != 0 and _chat_id_variants(chat_id) & ADBOT_INTERNAL_CHAT_IDS_ALLOWLIST)
     if not is_admin and not is_adbot_internal_chat:
         logger.info(
-            "adbot_internal_command denied: user_id=%s chat_id=%s is_admin=%s is_internal=%s env_internal_chat_id=%s",
+            "adbot_internal_command denied: user_id=%s chat_id=%s is_admin=%s is_internal=%s env_internal_chat_id=%s allowlist_size=%s",
             user_id,
             chat_id,
             is_admin,
             is_adbot_internal_chat,
             ADBOT_INTERNAL_CHAT_ID,
+            len(ADBOT_INTERNAL_CHAT_IDS_ALLOWLIST),
         )
         return
 

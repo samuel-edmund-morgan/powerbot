@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass
 
 from adbot.cooldown import CooldownGuard
-from adbot.listener import AdbotListener
+from adbot.listener import AdbotListener, AdbotRuntimePair
 from adbot.pipeline import InternalReplyPipeline, PowerbotInlineClient, ResponsePipeline
 from adbot.audit import build_decision_payload, configure_decision_logging, log_decision
 from adbot_main_config import AdbotConfig, build_config
@@ -29,6 +29,25 @@ class _PolledMessageEvent:
         await self.client.send_message(self.chat_id, text, reply_to=reply_to)
 
 
+def _chat_id_variants(chat_id: int) -> tuple[int, ...]:
+    value = int(chat_id or 0)
+    if value == 0:
+        return (0,)
+    variants: list[int] = [value]
+    raw = str(abs(value))
+    if value < 0 and raw.startswith("100") and len(raw) > 3:
+        try:
+            variants.append(-int(raw[3:]))
+        except Exception:
+            pass
+    if value < 0 and not raw.startswith("100"):
+        try:
+            variants.append(-int(f"100{raw}"))
+        except Exception:
+            pass
+    return tuple(dict.fromkeys(variants))
+
+
 async def _process_new_message_event(
     *,
     event,
@@ -37,22 +56,28 @@ async def _process_new_message_event(
     enabled: bool,
 ) -> bool:
     """Process one Telegram event and return True if delegated to listener."""
-    if source_chat_ids and event.chat_id not in source_chat_ids:
-        message_obj = event.message if hasattr(event, "message") else None
-        text = (getattr(message_obj, "text", "") or "").strip()
-        sender_id = getattr(message_obj, "sender_id", None)
-        try:
-            log_decision(
-                build_decision_payload(
-                    chat_id=int(event.chat_id),
-                    user_id=int(sender_id) if sender_id else None,
-                    reason="source_chat_not_allowed",
-                    message_text=text,
+    if source_chat_ids:
+        allowed = False
+        for variant in _chat_id_variants(int(event.chat_id)):
+            if int(variant) in source_chat_ids:
+                allowed = True
+                break
+        if not allowed:
+            message_obj = event.message if hasattr(event, "message") else None
+            text = (getattr(message_obj, "text", "") or "").strip()
+            sender_id = getattr(message_obj, "sender_id", None)
+            try:
+                log_decision(
+                    build_decision_payload(
+                        chat_id=int(event.chat_id),
+                        user_id=int(sender_id) if sender_id else None,
+                        reason="source_chat_not_allowed",
+                        message_text=text,
+                    )
                 )
-            )
-        except Exception:
-            logger.exception("failed to log source filter decision")
-        return False
+            except Exception:
+                logger.exception("failed to log source filter decision")
+            return False
 
     # Test mode can optionally disable source filtering for QA.
     if not enabled:
@@ -217,6 +242,19 @@ async def _run(config: AdbotConfig) -> None:
         answer_provider=powerbot_inline,
         fallback_ms=config.pipeline_timeout_ms,
     )
+    runtime_pairs = tuple(
+        AdbotRuntimePair(
+            idx=int(pair.idx),
+            source_chat_id=int(pair.source_chat_id),
+            internal_chat_id=int(pair.internal_chat_id),
+            sensor_uuid=str(pair.sensor_uuid),
+            fallback_building_id=int(pair.fallback_building_id),
+            fallback_section_id=int(pair.fallback_section_id),
+            reply_cooldown_sec=int(pair.reply_cooldown_sec),
+            label=str(pair.label),
+        )
+        for pair in (config.chat_pairs or ())
+    )
     internal_pipeline = InternalReplyPipeline(
         tg_client=client,
         target_powerbot_username=config.target_powerbot_username,
@@ -234,6 +272,7 @@ async def _run(config: AdbotConfig) -> None:
         pipeline=pipeline,
         internal_pipeline=internal_pipeline,
         internal_chat_id=config.internal_chat_id,
+        chat_pairs=runtime_pairs,
         light_chat_bindings=config.light_chat_bindings,
         require_real_internal_reply=config.internal_require_real_bot_reply,
         require_source_forwarded=config.source_require_forwarded,
@@ -268,10 +307,18 @@ async def _run(config: AdbotConfig) -> None:
         )
 
     logger.info(
-        "adbot started. source_chats=%s self_user_id=%s allow_self_outgoing_e2e=%s",
+        "adbot started. enabled=%s pair_mode=%s pair_count=%s source_chats=%s internal_chat_id=%s target=%s test_mode=%s source_require_forwarded=%s source_text_fallback=%s self_outgoing_e2e=%s self_user_id=%s",
+        config.enabled,
+        bool(config.pair_mode),
+        len(runtime_pairs),
         sorted(source_chat_ids) if source_chat_ids is not None else "<all>",
-        self_user_id,
+        config.internal_chat_id,
+        config.target_powerbot_username,
+        config.test_mode,
+        config.source_require_forwarded,
+        config.source_allow_text_fallback_on_forward_failure,
         config.allow_self_outgoing_e2e,
+        self_user_id,
     )
     try:
         await client.run_until_disconnected()

@@ -5,6 +5,7 @@ Static smoke-check: prod adbot config guard in deploy script.
 Policy:
 - deploy_prod must validate adbot prod env before enabling adbot profile.
 - guard must reject test mode and placeholder/missing critical vars.
+- guard must support pair-mode contract when ADBOT_PAIR_COUNT>0.
 """
 
 from __future__ import annotations
@@ -52,6 +53,12 @@ def main() -> None:
         "TELETHON_API_HASH is empty or placeholder when ADBOT_ENABLED=1.",
         "ADBOT_STRING_SESSION is empty or placeholder when ADBOT_ENABLED=1.",
         "ADBOT_TARGET_POWERBOT_USERNAME is empty or placeholder when ADBOT_ENABLED=1.",
+        "ADBOT_PAIR_COUNT",
+        "ADBOT_PAIR_${idx}_SOURCE_CHAT_ID",
+        "ADBOT_PAIR_${idx}_INTERNAL_CHAT_ID",
+        "ADBOT_PAIR_${idx}_SENSOR_UUID",
+        "ADBOT_PAIR_${idx}_FALLBACK_BUILDING_ID",
+        "ADBOT_PAIR_${idx}_FALLBACK_SECTION_ID",
         "ADBOT_SOURCE_CHAT_IDS must contain at least one numeric chat id when ADBOT_ENABLED=1.",
         "ADBOT_INTERNAL_CHAT_ID must be a numeric chat id when ADBOT_ENABLED=1.",
         "ensure_adbot_prod_config \"${PROD_DIR}/.env\"",

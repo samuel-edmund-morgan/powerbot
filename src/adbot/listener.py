@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
+import os
+import sqlite3
 from dataclasses import dataclass
 
 from adbot.audit import build_audit_payload, build_decision_payload, log_decision, log_match
@@ -25,6 +27,18 @@ class CorrelationRecord:
     created_at_ts: float
 
 
+@dataclass(frozen=True)
+class AdbotRuntimePair:
+    idx: int
+    source_chat_id: int
+    internal_chat_id: int
+    sensor_uuid: str
+    fallback_building_id: int
+    fallback_section_id: int
+    reply_cooldown_sec: int
+    label: str
+
+
 class AdbotListener:
     def __init__(
         self,
@@ -36,6 +50,7 @@ class AdbotListener:
         pipeline: ResponsePipeline,
         internal_pipeline: InternalReplyPipeline,
         internal_chat_id: int | None = None,
+        chat_pairs: tuple[AdbotRuntimePair, ...] | None = None,
         light_chat_bindings: dict[int, tuple[int, int]] | None = None,
         require_real_internal_reply: bool = True,
         require_source_forwarded: bool = False,
@@ -48,10 +63,20 @@ class AdbotListener:
         self._matcher_max_len = matcher_max_len
         self._matcher_min_confidence = matcher_min_confidence
         self._cooldown = cooldown
+        self._global_cooldown_sec = int(getattr(cooldown, "cooldown_sec", 0) or 0)
         self._pipeline = pipeline
         self._internal_pipeline = internal_pipeline
         self._internal_chat_id = internal_chat_id
         self._light_chat_bindings = dict(light_chat_bindings or {})
+        self._chat_pairs = tuple(chat_pairs or ())
+        self._pair_mode = len(self._chat_pairs) > 0
+        self._pairs_by_source_variant: dict[int, AdbotRuntimePair] = {}
+        self._pair_cooldowns: dict[int, CooldownGuard] = {}
+        for pair in self._chat_pairs:
+            self._pair_cooldowns[int(pair.idx)] = CooldownGuard(int(pair.reply_cooldown_sec))
+            for variant in self._chat_id_variants(int(pair.source_chat_id)):
+                self._pairs_by_source_variant[int(variant)] = pair
+        self._db_path = str(os.getenv("DB_PATH", "/data/state.db")).strip() or "/data/state.db"
         self._require_real_internal_reply = bool(require_real_internal_reply)
         self._require_source_forwarded = bool(require_source_forwarded)
         self._allow_text_fallback_on_forward_failure = bool(allow_text_fallback_on_forward_failure)
@@ -236,6 +261,43 @@ class AdbotListener:
                 k: v for k, v in self._correlations.items() if v.created_at_ts >= cutoff
             }
 
+    def _resolve_pair(self, source_chat_id: int) -> AdbotRuntimePair | None:
+        for variant in self._chat_id_variants(int(source_chat_id)):
+            pair = self._pairs_by_source_variant.get(int(variant))
+            if pair is not None:
+                return pair
+        return None
+
+    def _resolve_pair_light_binding(self, pair: AdbotRuntimePair) -> tuple[int, int, str]:
+        uuid = str(pair.sensor_uuid or "").strip()
+        if uuid:
+            try:
+                conn = sqlite3.connect(self._db_path, timeout=5)
+                try:
+                    row = conn.execute(
+                        """
+                        SELECT building_id, section_id, is_active
+                        FROM sensors
+                        WHERE uuid=?
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (uuid,),
+                    ).fetchone()
+                finally:
+                    conn.close()
+
+                if row is not None:
+                    building_id = int(row[0] or 0)
+                    section_id = int(row[1] or 0)
+                    is_active = int(row[2] or 0)
+                    if building_id > 0 and section_id > 0 and is_active == 1:
+                        return building_id, section_id, "sensor"
+            except Exception:
+                logger.exception("adbot pair sensor resolve failed: pair_idx=%s uuid=%s", pair.idx, uuid)
+
+        return int(pair.fallback_building_id), int(pair.fallback_section_id), "fallback"
+
     async def process(self, event, *, source_chat_id: int) -> bool:
         """
         Process one incoming group message. Returns True if a response sent.
@@ -304,6 +366,39 @@ class AdbotListener:
             )
             return False
 
+        pair = self._resolve_pair(int(source_chat_id)) if self._pair_mode else None
+        if self._pair_mode and pair is None:
+            log_decision(
+                build_decision_payload(
+                    chat_id=source_chat_id,
+                    user_id=int(sender_id),
+                    reason="source_chat_not_allowed",
+                    message_text=text,
+                    meta={"pair_mode": True},
+                )
+            )
+            return False
+
+        pair_meta: dict[str, int | str | bool] = {"pair_mode": bool(self._pair_mode)}
+        if pair is not None:
+            pair_meta.update(
+                {
+                    "pair_idx": int(pair.idx),
+                    "pair_label": str(pair.label),
+                    "pair_source_chat_id": int(pair.source_chat_id),
+                    "pair_internal_chat_id": int(pair.internal_chat_id),
+                    "pair_sensor_uuid": str(pair.sensor_uuid),
+                }
+            )
+
+        effective_internal_chat_id = int(
+            pair.internal_chat_id if pair is not None else int(self._internal_chat_id or 0)
+        )
+        effective_cooldown_sec = int(
+            pair.reply_cooldown_sec if pair is not None else int(self._global_cooldown_sec)
+        )
+        cooldown_guard = self._pair_cooldowns.get(int(pair.idx), self._cooldown) if pair else self._cooldown
+
         analysis = analyze_intent_match(
             text,
             min_len=self._matcher_min_len,
@@ -319,6 +414,7 @@ class AdbotListener:
                     reason="no_intent_match",
                     message_text=text,
                     meta={
+                        **pair_meta,
                         "match_reason": analysis.reason,
                         "text_len": analysis.text_len,
                         "token_count": analysis.token_count,
@@ -333,7 +429,7 @@ class AdbotListener:
 
         # In test E2E mode we intentionally allow repeated prefixed probes
         # without waiting full chat-level cooldown window.
-        if (not is_e2e_prefixed) and (not self._cooldown.allow(source_chat_id, intent.code, text)):
+        if (not is_e2e_prefixed) and (not cooldown_guard.allow(source_chat_id, intent.code, text)):
             log_decision(
                 build_decision_payload(
                     chat_id=source_chat_id,
@@ -342,19 +438,27 @@ class AdbotListener:
                     message_text=text,
                     intent_code=intent.code,
                     meta={
+                        **pair_meta,
                         "match_reason": analysis.reason,
                         "best_confidence": analysis.best_confidence,
+                        "effective_cooldown_sec": int(effective_cooldown_sec),
                     },
                 )
             )
             return False
 
         effective_query = str(intent.inline_query or "").strip()
+        light_route_source: str | None = None
         if intent.code == LIGHT_STATUS_INTENT_CODE:
-            binding = self._resolve_light_binding(int(source_chat_id))
-            if binding:
-                bound_building_id, bound_section_id = binding
+            if pair is not None:
+                bound_building_id, bound_section_id, light_route_source = self._resolve_pair_light_binding(pair)
                 effective_query = f"light_bind:{int(bound_building_id)}:{int(bound_section_id)}"
+            else:
+                binding = self._resolve_light_binding(int(source_chat_id))
+                if binding:
+                    bound_building_id, bound_section_id = binding
+                    light_route_source = "legacy_binding"
+                    effective_query = f"light_bind:{int(bound_building_id)}:{int(bound_section_id)}"
 
         # Keep old pipeline call for telemetry parity / fallback mode support.
         _ = await self._pipeline.answer(effective_query, intent.fallback_reply)
@@ -366,10 +470,10 @@ class AdbotListener:
         )
         forwarded_message_id: int | None = None
         # Forward audit log (non-blocking on failures).
-        if self._internal_chat_id:
+        if effective_internal_chat_id:
             audit_meta = await log_match(
                 payload,
-                internal_chat_id=self._internal_chat_id,
+                internal_chat_id=int(effective_internal_chat_id),
                 forwarder=event.client,
                 original_message=message_obj,
             )
@@ -383,7 +487,7 @@ class AdbotListener:
         internal_result = await self._internal_pipeline.get_via_internal(
             query=effective_query,
             fallback=intent.fallback_reply,
-            internal_chat_id=int(self._internal_chat_id or 0),
+            internal_chat_id=int(effective_internal_chat_id),
             reply_to_message_id=forwarded_message_id,
         )
         response_text = str(internal_result.text or "").strip()
@@ -397,13 +501,16 @@ class AdbotListener:
                         message_text=text,
                         intent_code=intent.code,
                         meta={
+                            **pair_meta,
                             "match_reason": analysis.reason,
                             "best_confidence": analysis.best_confidence,
-                            "internal_chat_id": int(self._internal_chat_id or 0),
+                            "internal_chat_id": int(effective_internal_chat_id or 0),
                             "forwarded_message_id": forwarded_message_id or 0,
                             "internal_reply_message_id": int(internal_result.internal_message_id or 0),
                             "require_real": self._require_real_internal_reply,
                             "via_bot_id": int(internal_result.via_bot_id or 0),
+                            "effective_cooldown_sec": int(effective_cooldown_sec),
+                            "light_route_source": light_route_source or "",
                         },
                     )
                 )
@@ -417,14 +524,17 @@ class AdbotListener:
                     message_text=text,
                     intent_code=intent.code,
                     meta={
+                        **pair_meta,
                         "source_reason": str(internal_result.reason),
                         "match_reason": analysis.reason,
                         "best_confidence": analysis.best_confidence,
-                        "internal_chat_id": int(self._internal_chat_id or 0),
+                        "internal_chat_id": int(effective_internal_chat_id or 0),
                         "forwarded_message_id": forwarded_message_id or 0,
                         "internal_reply_message_id": int(internal_result.internal_message_id or 0),
                         "require_real": self._require_real_internal_reply,
                         "via_bot_id": int(internal_result.via_bot_id or 0),
+                        "effective_cooldown_sec": int(effective_cooldown_sec),
+                        "light_route_source": light_route_source or "",
                     },
                 )
             )
@@ -438,11 +548,14 @@ class AdbotListener:
                     message_text=text,
                     intent_code=intent.code,
                     meta={
+                        **pair_meta,
                         "match_reason": analysis.reason,
                         "best_confidence": analysis.best_confidence,
-                        "internal_chat_id": int(self._internal_chat_id or 0),
+                        "internal_chat_id": int(effective_internal_chat_id or 0),
                         "forwarded_message_id": forwarded_message_id or 0,
                         "internal_reply_message_id": int(internal_result.internal_message_id or 0),
+                        "effective_cooldown_sec": int(effective_cooldown_sec),
+                        "light_route_source": light_route_source or "",
                     },
                 )
             )
@@ -453,7 +566,7 @@ class AdbotListener:
             source_chat_id=int(source_chat_id),
             source_message_id=int(getattr(message_obj, "id", 0) or 0),
             response_text=response_text,
-            internal_chat_id=int(self._internal_chat_id or 0),
+            internal_chat_id=int(effective_internal_chat_id),
             internal_reply_message_id=int(internal_result.internal_message_id or 0) or None,
         )
         if not delivered:
@@ -465,11 +578,14 @@ class AdbotListener:
                     message_text=text,
                     intent_code=intent.code,
                     meta={
+                        **pair_meta,
                         "match_reason": analysis.reason,
                         "best_confidence": analysis.best_confidence,
-                        "internal_chat_id": int(self._internal_chat_id or 0),
+                        "internal_chat_id": int(effective_internal_chat_id or 0),
                         "forwarded_message_id": forwarded_message_id or 0,
                         "internal_reply_message_id": int(internal_result.internal_message_id or 0),
+                        "effective_cooldown_sec": int(effective_cooldown_sec),
+                        "light_route_source": light_route_source or "",
                     },
                 )
             )
@@ -489,12 +605,15 @@ class AdbotListener:
                 message_text=text,
                 intent_code=intent.code,
                 meta={
+                    **pair_meta,
                     "match_reason": analysis.reason,
                     "best_confidence": analysis.best_confidence,
-                    "internal_chat_id": int(self._internal_chat_id or 0),
+                    "internal_chat_id": int(effective_internal_chat_id or 0),
                     "forwarded_message_id": forwarded_message_id or 0,
                     "internal_reply_message_id": int(internal_result.internal_message_id or 0),
                     "delivery_mode": str(delivery_mode),
+                    "effective_cooldown_sec": int(effective_cooldown_sec),
+                    "light_route_source": light_route_source or "",
                 },
             )
         )

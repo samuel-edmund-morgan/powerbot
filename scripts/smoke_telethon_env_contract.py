@@ -115,6 +115,15 @@ def _require_numeric_chat_id_list(
         errors.append(f"{ctx}: `{key}` contains non-numeric chat_id values: {', '.join(bad)}")
 
 
+def _parse_non_negative_int(raw: str | None) -> int:
+    value = str(raw or "").strip()
+    if not value:
+        return 0
+    if not re.fullmatch(r"[0-9]+", value):
+        return 0
+    return max(int(value), 0)
+
+
 def _same_non_empty(a: str | None, b: str | None) -> bool:
     left = str(a or "").strip()
     right = str(b or "").strip()
@@ -145,8 +154,48 @@ def main() -> None:
         _require_valid_string_session(errors, env, "ADBOT_STRING_SESSION", ctx)
         _require_non_placeholder(errors, env, "ADBOT_TARGET_POWERBOT_USERNAME", ctx)
         if not _is_true(env.get("ADBOT_TEST_MODE")):
-            _require_numeric_chat_id_list(errors, env, "ADBOT_SOURCE_CHAT_IDS", ctx)
-            _require_numeric_chat_id(errors, env, "ADBOT_INTERNAL_CHAT_ID", ctx)
+            raw_pair_count = str(env.get("ADBOT_PAIR_COUNT", "")).strip()
+            if raw_pair_count and not re.fullmatch(r"[0-9]+", raw_pair_count):
+                errors.append(f"{ctx}: `ADBOT_PAIR_COUNT` must be numeric")
+            pair_count = _parse_non_negative_int(raw_pair_count)
+            if pair_count > 0:
+                seen_source: set[str] = set()
+                seen_internal: set[str] = set()
+                for idx in range(1, pair_count + 1):
+                    source_key = f"ADBOT_PAIR_{idx}_SOURCE_CHAT_ID"
+                    internal_key = f"ADBOT_PAIR_{idx}_INTERNAL_CHAT_ID"
+                    sensor_key = f"ADBOT_PAIR_{idx}_SENSOR_UUID"
+                    fallback_building_key = f"ADBOT_PAIR_{idx}_FALLBACK_BUILDING_ID"
+                    fallback_section_key = f"ADBOT_PAIR_{idx}_FALLBACK_SECTION_ID"
+                    cooldown_key = f"ADBOT_PAIR_{idx}_REPLY_COOLDOWN_SEC"
+                    _require_numeric_chat_id(errors, env, source_key, ctx)
+                    _require_numeric_chat_id(errors, env, internal_key, ctx)
+                    _require_non_placeholder(errors, env, sensor_key, ctx)
+
+                    fb = str(env.get(fallback_building_key, "")).strip()
+                    fs = str(env.get(fallback_section_key, "")).strip()
+                    if not re.fullmatch(r"[0-9]+", fb) or int(fb) <= 0:
+                        errors.append(f"{ctx}: `{fallback_building_key}` must be integer > 0")
+                    if not re.fullmatch(r"[0-9]+", fs) or int(fs) <= 0:
+                        errors.append(f"{ctx}: `{fallback_section_key}` must be integer > 0")
+
+                    cd = str(env.get(cooldown_key, "")).strip()
+                    if cd and (not re.fullmatch(r"-?[0-9]+", cd) or int(cd) < 0):
+                        errors.append(f"{ctx}: `{cooldown_key}` must be integer >= 0")
+
+                    source_val = str(env.get(source_key, "")).strip()
+                    internal_val = str(env.get(internal_key, "")).strip()
+                    if source_val:
+                        if source_val in seen_source:
+                            errors.append(f"{ctx}: duplicate `{source_key}` value `{source_val}`")
+                        seen_source.add(source_val)
+                    if internal_val:
+                        if internal_val in seen_internal:
+                            errors.append(f"{ctx}: duplicate `{internal_key}` value `{internal_val}`")
+                        seen_internal.add(internal_val)
+            else:
+                _require_numeric_chat_id_list(errors, env, "ADBOT_SOURCE_CHAT_IDS", ctx)
+                _require_numeric_chat_id(errors, env, "ADBOT_INTERNAL_CHAT_ID", ctx)
 
     if _is_true(env.get("ADBOT_E2E_ENABLED")):
         ctx = "adbot_e2e"

@@ -59,10 +59,12 @@ async def _run() -> None:
     import handlers
 
     old_internal_chat_id = handlers.ADBOT_INTERNAL_CHAT_ID
+    old_internal_chat_allowlist = set(handlers.ADBOT_INTERNAL_CHAT_IDS_ALLOWLIST)
     old_formatter = handlers.format_light_status
     captured: dict[str, int | bool] = {}
     try:
         handlers.ADBOT_INTERNAL_CHAT_ID = -100777001
+        handlers.ADBOT_INTERNAL_CHAT_IDS_ALLOWLIST = {-100777001}
 
         async def _fake_format_light_status(
             *,
@@ -98,6 +100,7 @@ async def _run() -> None:
         _assert(not msg.answers, "reply path should succeed without answer fallback")
     finally:
         handlers.ADBOT_INTERNAL_CHAT_ID = old_internal_chat_id
+        handlers.ADBOT_INTERNAL_CHAT_IDS_ALLOWLIST = old_internal_chat_allowlist
         handlers.format_light_status = old_formatter
 
 

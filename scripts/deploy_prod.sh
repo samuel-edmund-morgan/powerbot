@@ -87,9 +87,31 @@ count_numeric_chat_ids() {
   echo "${count}"
 }
 
+chat_id_variants() {
+  local value="${1:-}"
+  local abs raw
+  if [[ ! "${value}" =~ ^-?[0-9]+$ ]]; then
+    echo ""
+    return 0
+  fi
+  abs="${value#-}"
+  raw="${abs}"
+  if [[ "${value}" =~ ^- ]] && [[ "${raw}" == 100* ]] && [[ "${#raw}" -gt 3 ]]; then
+    echo "${value} -${raw:3}"
+    return 0
+  fi
+  if [[ "${value}" =~ ^- ]] && [[ "${raw}" != 100* ]]; then
+    echo "${value} -100${raw}"
+    return 0
+  fi
+  echo "${value}"
+}
+
 ensure_adbot_prod_config() {
   local env_file="$1"
   local adbot_test_mode api_id api_hash session source_ids internal_id target_username source_count
+  local pair_count_raw pair_count pair_mode idx source_key internal_key sensor_key fallback_building_key fallback_section_key cooldown_key
+  local source_id pair_internal_id sensor_uuid fallback_building fallback_section cooldown_raw
 
   adbot_test_mode="$(get_env_value "ADBOT_TEST_MODE" "$env_file")"
   if env_flag_true "${adbot_test_mode}"; then
@@ -122,17 +144,100 @@ ensure_adbot_prod_config() {
     exit 1
   fi
 
-  source_ids="$(get_env_value "ADBOT_SOURCE_CHAT_IDS" "$env_file")"
-  source_count="$(count_numeric_chat_ids "${source_ids}")"
-  if [[ "${source_count}" -lt 1 ]]; then
-    echo "ERROR: ADBOT_SOURCE_CHAT_IDS must contain at least one numeric chat id when ADBOT_ENABLED=1."
-    exit 1
+  pair_count_raw="$(get_env_value "ADBOT_PAIR_COUNT" "$env_file")"
+  pair_count=0
+  if [[ -n "${pair_count_raw}" ]]; then
+    if [[ ! "${pair_count_raw}" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: ADBOT_PAIR_COUNT must be numeric when set."
+      exit 1
+    fi
+    pair_count="${pair_count_raw}"
+  fi
+  pair_mode=0
+  if [[ "${pair_count}" -gt 0 ]]; then
+    pair_mode=1
   fi
 
-  internal_id="$(get_env_value "ADBOT_INTERNAL_CHAT_ID" "$env_file")"
-  if [[ ! "${internal_id}" =~ ^-?[0-9]+$ ]]; then
-    echo "ERROR: ADBOT_INTERNAL_CHAT_ID must be a numeric chat id when ADBOT_ENABLED=1."
-    exit 1
+  if [[ "${pair_mode}" -eq 1 ]]; then
+    declare -A seen_source_variants=()
+    declare -A seen_internal_variants=()
+    for idx in $(seq 1 "${pair_count}"); do
+      source_key="ADBOT_PAIR_${idx}_SOURCE_CHAT_ID"
+      internal_key="ADBOT_PAIR_${idx}_INTERNAL_CHAT_ID"
+      sensor_key="ADBOT_PAIR_${idx}_SENSOR_UUID"
+      fallback_building_key="ADBOT_PAIR_${idx}_FALLBACK_BUILDING_ID"
+      fallback_section_key="ADBOT_PAIR_${idx}_FALLBACK_SECTION_ID"
+      cooldown_key="ADBOT_PAIR_${idx}_REPLY_COOLDOWN_SEC"
+
+      source_id="$(get_env_value "${source_key}" "$env_file")"
+      if [[ ! "${source_id}" =~ ^-?[0-9]+$ ]]; then
+        echo "ERROR: ${source_key} must be a numeric chat id in pair-mode."
+        exit 1
+      fi
+
+      pair_internal_id="$(get_env_value "${internal_key}" "$env_file")"
+      if [[ ! "${pair_internal_id}" =~ ^-?[0-9]+$ ]]; then
+        echo "ERROR: ${internal_key} must be a numeric chat id in pair-mode."
+        exit 1
+      fi
+
+      sensor_uuid="$(get_env_value "${sensor_key}" "$env_file")"
+      if is_placeholder_value "${sensor_uuid}"; then
+        echo "ERROR: ${sensor_key} is empty or placeholder in pair-mode."
+        exit 1
+      fi
+
+      fallback_building="$(get_env_value "${fallback_building_key}" "$env_file")"
+      if [[ ! "${fallback_building}" =~ ^[0-9]+$ ]] || [[ "${fallback_building}" -le 0 ]]; then
+        echo "ERROR: ${fallback_building_key} must be integer > 0 in pair-mode."
+        exit 1
+      fi
+
+      fallback_section="$(get_env_value "${fallback_section_key}" "$env_file")"
+      if [[ ! "${fallback_section}" =~ ^[0-9]+$ ]] || [[ "${fallback_section}" -le 0 ]]; then
+        echo "ERROR: ${fallback_section_key} must be integer > 0 in pair-mode."
+        exit 1
+      fi
+
+      cooldown_raw="$(get_env_value "${cooldown_key}" "$env_file")"
+      if [[ -n "${cooldown_raw}" ]] && { [[ ! "${cooldown_raw}" =~ ^-?[0-9]+$ ]] || [[ "${cooldown_raw}" -lt 0 ]]; }; then
+        echo "ERROR: ${cooldown_key} must be integer >= 0 when set."
+        exit 1
+      fi
+
+      for variant in $(chat_id_variants "${source_id}"); do
+        if [[ -n "${seen_source_variants[${variant}]:-}" ]]; then
+          echo "ERROR: ${source_key} duplicates another source chat id (including variants) in pair-mode."
+          exit 1
+        fi
+      done
+      for variant in $(chat_id_variants "${source_id}"); do
+        seen_source_variants["${variant}"]=1
+      done
+
+      for variant in $(chat_id_variants "${pair_internal_id}"); do
+        if [[ -n "${seen_internal_variants[${variant}]:-}" ]]; then
+          echo "ERROR: ${internal_key} duplicates another internal chat id (including variants) in pair-mode."
+          exit 1
+        fi
+      done
+      for variant in $(chat_id_variants "${pair_internal_id}"); do
+        seen_internal_variants["${variant}"]=1
+      done
+    done
+  else
+    source_ids="$(get_env_value "ADBOT_SOURCE_CHAT_IDS" "$env_file")"
+    source_count="$(count_numeric_chat_ids "${source_ids}")"
+    if [[ "${source_count}" -lt 1 ]]; then
+      echo "ERROR: ADBOT_SOURCE_CHAT_IDS must contain at least one numeric chat id when ADBOT_ENABLED=1."
+      exit 1
+    fi
+
+    internal_id="$(get_env_value "ADBOT_INTERNAL_CHAT_ID" "$env_file")"
+    if [[ ! "${internal_id}" =~ ^-?[0-9]+$ ]]; then
+      echo "ERROR: ADBOT_INTERNAL_CHAT_ID must be a numeric chat id when ADBOT_ENABLED=1."
+      exit 1
+    fi
   fi
 }
 

@@ -72,6 +72,33 @@ def _base_env() -> dict[str, str]:
     }
 
 
+def _base_pair_env() -> dict[str, str]:
+    base = _base_env()
+    base.update(
+        {
+            "ADBOT_SOURCE_CHAT_IDS": "",
+            "ADBOT_INTERNAL_CHAT_ID": "",
+            "ADBOT_LIGHT_CHAT_BINDINGS": "-100111:1:2",
+            "ADBOT_PAIR_COUNT": "2",
+            "ADBOT_PAIR_1_SOURCE_CHAT_ID": "-100111",
+            "ADBOT_PAIR_1_INTERNAL_CHAT_ID": "-100333",
+            "ADBOT_PAIR_1_SENSOR_UUID": "esp32-newcastle-001",
+            "ADBOT_PAIR_1_FALLBACK_BUILDING_ID": "1",
+            "ADBOT_PAIR_1_FALLBACK_SECTION_ID": "2",
+            "ADBOT_PAIR_1_REPLY_COOLDOWN_SEC": "3600",
+            "ADBOT_PAIR_1_LABEL": "newcastle",
+            "ADBOT_PAIR_2_SOURCE_CHAT_ID": "-100222",
+            "ADBOT_PAIR_2_INTERNAL_CHAT_ID": "-100444",
+            "ADBOT_PAIR_2_SENSOR_UUID": "esp32-oxford-001",
+            "ADBOT_PAIR_2_FALLBACK_BUILDING_ID": "12",
+            "ADBOT_PAIR_2_FALLBACK_SECTION_ID": "1",
+            "ADBOT_PAIR_2_REPLY_COOLDOWN_SEC": "",
+            "ADBOT_PAIR_2_LABEL": "oxford",
+        }
+    )
+    return base
+
+
 def main() -> None:
     _bootstrap_imports()
     from adbot_main_config import build_config, parse_chat_ids, parse_light_chat_bindings
@@ -115,6 +142,43 @@ def main() -> None:
             cfg.light_chat_bindings == {-100111: (1, 2), -100222: (13, 1)},
             f"unexpected light chat bindings: {cfg.light_chat_bindings}",
         )
+
+    # Valid pair-mode config
+    with _patched_env(**_base_pair_env()):
+        cfg = build_config()
+        _assert(cfg.pair_mode is True, "pair_mode should be active")
+        _assert(len(cfg.chat_pairs) == 2, f"unexpected pair count: {cfg.chat_pairs}")
+        _assert(cfg.source_chat_ids == (-100111, -100222), f"unexpected pair source ids: {cfg.source_chat_ids}")
+        _assert(cfg.internal_chat_id is None, "legacy internal chat should remain optional in pair mode")
+        _assert(cfg.light_chat_bindings == {}, "legacy light bindings must be ignored in pair mode")
+        _assert(cfg.chat_pairs[0].reply_cooldown_sec == 3600, "pair cooldown override must parse")
+        _assert(
+            cfg.chat_pairs[1].reply_cooldown_sec == 10800,
+            "pair cooldown must fallback to global ADBOT_REPLY_COOLDOWN_SEC",
+        )
+
+    # Non-test pair mode with invalid pair must fail fast.
+    with _patched_env(**{**_base_pair_env(), "ADBOT_PAIR_1_SENSOR_UUID": ""}):
+        try:
+            build_config()
+        except ValueError as exc:
+            _assert("ADBOT_PAIR_1" in str(exc), f"unexpected pair error: {exc}")
+        else:
+            raise AssertionError("expected ValueError for invalid pair in non-test mode")
+
+    # Test mode may skip invalid pair entries.
+    with _patched_env(
+        **{
+            **_base_pair_env(),
+            "ADBOT_TEST_MODE": "1",
+            "ADBOT_PAIR_1_SENSOR_UUID": "",
+            "ADBOT_PAIR_2_SENSOR_UUID": "",
+        }
+    ):
+        cfg = build_config()
+        _assert(cfg.test_mode is True, "test_mode should be True")
+        _assert(cfg.chat_pairs == (), "invalid pairs must be skipped in test mode")
+        _assert(cfg.pair_mode is False, "pair_mode must be false when all pairs are skipped")
 
     # Username should be sanitized from leading @.
     with _patched_env(**{**_base_env(), "ADBOT_TARGET_POWERBOT_USERNAME": "@TestNaButlerBot"}):

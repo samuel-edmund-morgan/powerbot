@@ -21,8 +21,10 @@ def main() -> None:
     target = repo_root / "src" / "adbot_main.py"
     text = target.read_text(encoding="utf-8")
 
-    condition = "if source_chat_ids and event.chat_id not in source_chat_ids:"
-    _assert(condition in text, "source allowlist condition missing in adbot_main.py")
+    condition = "if source_chat_ids:"
+    _assert(condition in text, "source allowlist guard missing in adbot_main.py")
+    _assert("_chat_id_variants(" in text, "chat-id variants resolver missing in source filter")
+    _assert("if int(variant) in source_chat_ids:" in text, "variant-based source filter missing")
 
     reason = "source_chat_not_allowed"
     _assert(reason in text, "missing source filter decision reason token")
