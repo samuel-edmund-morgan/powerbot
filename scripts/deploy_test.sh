@@ -343,6 +343,10 @@ python3 "${REPO_DIR}/scripts/smoke_prod_adbot_activation_checklist.py"
 echo "Running adbot chat-bootstrap policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_chat_bootstrap_policy.py"
 
+# Automated smoke: adbot chat-id bootstrap runtime behavior (multi-pair placeholders and no-overwrite).
+echo "Running adbot chat-bootstrap runtime smoke test..."
+python3 "${REPO_DIR}/scripts/smoke_adbot_chat_bootstrap_runtime.py"
+
 # Automated smoke: adbot chat-analysis tool must stay runnable in container and via script wrapper.
 echo "Running adbot chat-analysis tool policy smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_chat_analysis_tool_policy.py"
