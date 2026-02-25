@@ -99,6 +99,29 @@ def _base_pair_env() -> dict[str, str]:
     return base
 
 
+def _base_pair_env_scaled(pair_count: int = 15) -> dict[str, str]:
+    base = _base_env()
+    base.update(
+        {
+            "ADBOT_SOURCE_CHAT_IDS": "",
+            "ADBOT_INTERNAL_CHAT_ID": "",
+            "ADBOT_LIGHT_CHAT_BINDINGS": "-100111:1:2",
+            "ADBOT_PAIR_COUNT": str(pair_count),
+        }
+    )
+    for idx in range(1, pair_count + 1):
+        base[f"ADBOT_PAIR_{idx}_SOURCE_CHAT_ID"] = str(-1000000000000 - idx)
+        base[f"ADBOT_PAIR_{idx}_INTERNAL_CHAT_ID"] = str(-1000001000000 - idx)
+        base[f"ADBOT_PAIR_{idx}_SENSOR_UUID"] = f"esp32-scale-{idx:02d}"
+        base[f"ADBOT_PAIR_{idx}_FALLBACK_BUILDING_ID"] = str(((idx - 1) % 14) + 1)
+        base[f"ADBOT_PAIR_{idx}_FALLBACK_SECTION_ID"] = str(2 if idx % 2 == 0 else 1)
+        base[f"ADBOT_PAIR_{idx}_REPLY_COOLDOWN_SEC"] = ""
+        base[f"ADBOT_PAIR_{idx}_LABEL"] = f"scale_{idx:02d}"
+    # Keep one explicit per-pair override to verify mixed cooldown behavior at scale.
+    base["ADBOT_PAIR_7_REPLY_COOLDOWN_SEC"] = "1800"
+    return base
+
+
 def main() -> None:
     _bootstrap_imports()
     from adbot_main_config import build_config, parse_chat_ids, parse_light_chat_bindings
@@ -155,6 +178,24 @@ def main() -> None:
         _assert(
             cfg.chat_pairs[1].reply_cooldown_sec == 10800,
             "pair cooldown must fallback to global ADBOT_REPLY_COOLDOWN_SEC",
+        )
+
+    # Pair-mode must scale to 15+ pairs without duplicate/variant collisions.
+    with _patched_env(**_base_pair_env_scaled(15)):
+        cfg = build_config()
+        _assert(cfg.pair_mode is True, "scaled pair_mode should be active")
+        _assert(len(cfg.chat_pairs) == 15, f"unexpected scaled pair count: {len(cfg.chat_pairs)}")
+        _assert(
+            len(cfg.source_chat_ids) == 15,
+            f"unexpected scaled source allowlist size: {len(cfg.source_chat_ids)}",
+        )
+        _assert(cfg.light_chat_bindings == {}, "legacy light bindings must be ignored in scaled pair mode")
+        _assert(cfg.chat_pairs[0].label == "scale_01", f"unexpected first pair label: {cfg.chat_pairs[0].label}")
+        _assert(cfg.chat_pairs[-1].label == "scale_15", f"unexpected last pair label: {cfg.chat_pairs[-1].label}")
+        _assert(cfg.chat_pairs[6].reply_cooldown_sec == 1800, "scaled override cooldown must parse")
+        _assert(
+            cfg.chat_pairs[14].reply_cooldown_sec == 10800,
+            "scaled cooldown must fallback to global value",
         )
 
     # Non-test pair mode with invalid pair must fail fast.
