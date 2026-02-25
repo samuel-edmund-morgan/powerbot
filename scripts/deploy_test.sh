@@ -375,6 +375,10 @@ python3 "${REPO_DIR}/scripts/smoke_adbot_pipeline_integration.py"
 echo "Running adbot light-bind runtime smoke test..."
 docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_adbot_light_bind_runtime.py"
 
+# Runtime smoke: adbot pair-mode light routing (sensor_uuid -> fallback) in live runtime image.
+echo "Running adbot pair light runtime smoke test..."
+docker compose exec -T powerbot python - < "${REPO_DIR}/scripts/smoke_adbot_pair_light_runtime.py"
+
 # Automated smoke: adbot decision logging contract (reasoned match/no-match logs).
 echo "Running adbot decision logging smoke test..."
 python3 "${REPO_DIR}/scripts/smoke_adbot_decision_logging.py"
