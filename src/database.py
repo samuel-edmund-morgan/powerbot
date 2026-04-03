@@ -3078,20 +3078,26 @@ async def get_place_likes_count(place_id: int) -> int:
 
 
 async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
-    """Отримати заклади категорії з кількістю лайків, відсортовані за лайками."""
+    """Отримати заклади категорії з кількістю лайків, відсортовані за лайками.
+
+    Включає заклади з primary service_id ТА заклади з secondary категорією
+    через place_extra_categories.
+    """
     async with open_db() as db:
         async with db.execute(
             """SELECT p.id, p.service_id, p.name, p.description, p.address, p.keywords,
                       COALESCE(l.likes_count, 0) as likes_count
                FROM places p
                LEFT JOIN (
-                   SELECT place_id, COUNT(*) as likes_count 
-                   FROM place_likes 
+                   SELECT place_id, COUNT(*) as likes_count
+                   FROM place_likes
                    GROUP BY place_id
                ) l ON p.id = l.place_id
-               WHERE p.service_id = ? AND p.is_published = 1
+               WHERE (p.service_id = ?
+                      OR p.id IN (SELECT place_id FROM place_extra_categories WHERE service_id = ?))
+                     AND p.is_published = 1
                ORDER BY likes_count DESC, p.name ASC""",
-            (service_id,)
+            (service_id, service_id)
         ) as cur:
             rows = await cur.fetchall()
             return [
@@ -3099,6 +3105,45 @@ async def get_places_by_service_with_likes(service_id: int) -> list[dict]:
                  "address": r[4], "keywords": r[5], "likes_count": r[6]}
                 for r in rows
             ]
+
+
+async def get_place_extra_categories(place_id: int) -> list[dict]:
+    """Повернути список додаткових категорій для закладу."""
+    async with open_db() as db:
+        async with db.execute(
+            """SELECT gs.id, gs.name
+               FROM place_extra_categories pec
+               JOIN general_services gs ON gs.id = pec.service_id
+               WHERE pec.place_id = ?
+               ORDER BY gs.name COLLATE NOCASE""",
+            (place_id,)
+        ) as cur:
+            return [{"id": r[0], "name": r[1]} for r in await cur.fetchall()]
+
+
+async def add_place_extra_category(place_id: int, service_id: int) -> bool:
+    """Додати secondary категорію до закладу. Повертає True якщо додано."""
+    async with open_db() as db:
+        try:
+            await db.execute(
+                "INSERT OR IGNORE INTO place_extra_categories (place_id, service_id) VALUES (?, ?)",
+                (place_id, service_id),
+            )
+            await db.commit()
+            return db.total_changes > 0
+        except Exception:
+            return False
+
+
+async def remove_place_extra_category(place_id: int, service_id: int) -> bool:
+    """Видалити secondary категорію з закладу."""
+    async with open_db() as db:
+        await db.execute(
+            "DELETE FROM place_extra_categories WHERE place_id = ? AND service_id = ?",
+            (place_id, service_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
 
 
 async def get_partner_places_for_sponsored() -> list[dict]:

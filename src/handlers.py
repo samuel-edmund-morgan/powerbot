@@ -2849,8 +2849,14 @@ async def _render_place_detail_message(message: Message, *, place_id: int, user_
     place = await get_place(place_id)
     if not place:
         return False
+    from database import get_place_extra_categories
     service = await get_general_service(int(place.get("service_id") or 0))
     service_name = str(service.get("name") or "").strip() if service else ""
+    extra_cats = await get_place_extra_categories(place_id)
+    if extra_cats:
+        extra_names = [str(c.get("name") or "").strip() for c in extra_cats if str(c.get("name") or "").strip()]
+        if extra_names:
+            service_name = ", ".join([service_name] + extra_names) if service_name else ", ".join(extra_names)
 
     # Best-effort analytics: do not break UX on failure.
     await record_place_view(place_id)

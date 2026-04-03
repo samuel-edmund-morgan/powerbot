@@ -201,8 +201,10 @@ class BusinessRepository:
         *,
         is_published: int | None,
     ) -> int:
-        query = "SELECT COUNT(*) AS cnt FROM places WHERE service_id = ?"
-        params: list[Any] = [int(service_id)]
+        query = ("SELECT COUNT(*) AS cnt FROM places"
+                 " WHERE (service_id = ?"
+                 " OR id IN (SELECT place_id FROM place_extra_categories WHERE service_id = ?))")
+        params: list[Any] = [int(service_id), int(service_id)]
         if is_published is not None:
             query += " AND is_published = ?"
             params.append(1 if int(is_published) else 0)
@@ -226,10 +228,11 @@ class BusinessRepository:
                 SELECT id, name, address
                   FROM places
                  WHERE service_id = ?
+                    OR id IN (SELECT place_id FROM place_extra_categories WHERE service_id = ?)
                  ORDER BY name COLLATE NOCASE
                  LIMIT ? OFFSET ?
                 """,
-                (int(service_id), safe_limit, safe_offset),
+                (int(service_id), int(service_id), safe_limit, safe_offset),
             ) as cur:
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]

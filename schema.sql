@@ -194,6 +194,19 @@ CREATE TABLE IF NOT EXISTS adbot_pattern_stats_daily (
     PRIMARY KEY (date, chat_tag, intent)
 );
 
+-- Додаткові категорії закладів (many-to-many: place може бути у кількох категоріях)
+-- service_id у places залишається primary-категорією; ця таблиця додає secondary.
+CREATE TABLE IF NOT EXISTS place_extra_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id INTEGER NOT NULL,
+    service_id INTEGER NOT NULL,
+    FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE,
+    FOREIGN KEY (service_id) REFERENCES general_services(id) ON DELETE CASCADE,
+    UNIQUE(place_id, service_id)
+);
+CREATE INDEX IF NOT EXISTS idx_place_extra_categories_service
+    ON place_extra_categories (service_id, place_id);
+
 -- Укриття (спрощений список місць)
 CREATE TABLE IF NOT EXISTS shelter_places (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
